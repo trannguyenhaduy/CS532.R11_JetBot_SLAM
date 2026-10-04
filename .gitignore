@@ -1,0 +1,18 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Official NVIDIA JetBot repo (đã cài sẵn trên Jetson Nano OS)
+jetbot/
+
+# Cấu hình nội bộ của IDE
+.agents/
+.system_generated/
+*.log
+
+# Windows / Editor artifacts
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
