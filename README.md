@@ -58,3 +58,5 @@ roslaunch jetbot_slam master_system.launch
 
 Mở trình duyệt truy cập Web Cockpit: `http://<IP_ROBOT>:8080` (hoặc `http://localhost:8080`).
 
+> 📖 **Xem hướng dẫn chi tiết từng bước cho nhóm:** [HUONG_DAN_CHAY_WEB_JETBOT.md](HUONG_DAN_CHAY_WEB_JETBOT.md)
+
