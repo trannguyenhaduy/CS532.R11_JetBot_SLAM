@@ -3,6 +3,9 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# Tài liệu học tập cá nhân (không đưa vào repo nhóm)
+tutorial_*.md
+
 # Official NVIDIA JetBot repo (đã cài sẵn trên Jetson Nano OS)
 jetbot/
 
