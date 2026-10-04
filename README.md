@@ -12,7 +12,7 @@ Hệ thống xe tự hành thông minh kết hợp **Visual SLAM (RTAB-Map)**, *
 | **Thành viên 2** | Khởi động camera OAK-D S2, Pipeline Tiny YOLO VPU, Lọc tọa độ không gian 3D | `camera_ai.launch`, `spatial_perception_node.py` |
 | **Thành viên 3 (Lead)** | Kiến trúc hệ thống, RTAB-Map SLAM, Gom cụm ngữ nghĩa 3D, WebGL Cockpit & Benchmark | `master_system.launch`, `semantic_mapping_node.py`, `slam_web_dashboard.py` |
 
-Chi tiết kế hoạch và hợp đồng: xem [KE_HOACH_THUC_HIEN_NHOM.md](KE_HOACH_THUC_HIEN_NHOM.md), [skill_tv1.md](skill_tv1.md), [skill_tv2.md](skill_tv2.md), [skill_tv3.md](skill_tv3.md).
+Các thành viên phát triển module độc lập và tích hợp qua Hợp đồng giao tiếp ROS Topics chuẩn hóa bên dưới.
 
 ---
 
@@ -58,12 +58,3 @@ roslaunch jetbot_slam master_system.launch
 
 Mở trình duyệt truy cập Web Cockpit: `http://<IP_ROBOT>:8080` (hoặc `http://localhost:8080`).
 
----
-
-## 🧪 Kiểm thử độc lập (Unit Test)
-
-Kiểm tra thuật toán gom cụm khoảng cách 3D Euclid và logic chấm điểm Benchmark:
-```bash
-python test_semantic_clustering.py
-```
-*(Kết quả: 4/4 Test Cases PASS 100%)*

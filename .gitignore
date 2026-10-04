@@ -3,8 +3,11 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-# Tài liệu học tập cá nhân (không đưa vào repo nhóm)
+# Tài liệu cá nhân & Hướng dẫn kỹ năng nội bộ nhóm
 tutorial_*.md
+skill_*.md
+KE_HOACH_THUC_HIEN_NHOM.md
+test_semantic_clustering.py
 
 # Official NVIDIA JetBot repo (đã cài sẵn trên Jetson Nano OS)
 jetbot/
