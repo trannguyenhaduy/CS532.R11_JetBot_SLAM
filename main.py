@@ -22,7 +22,7 @@ ON  = True
 OFF = False
 
 MOTOR    = ON   # 1. ĐỘNG CƠ: BẬT (Giai đoạn 1 - Lái xe bằng phím WASD, chip PCA9685 0x60)
-PIN      = OFF  # 2. ĐO PIN: Tắt để cô lập kiểm tra động cơ (Bật ở Giai đoạn 2)
+PIN      = ON   # 2. ĐO PIN: BẬT (Giai đoạn 2 - Giám sát pin thời gian thực INA219 0x41)
 BATTERY  = PIN  # (Bí danh tương đương PIN)
 CAMERA   = OFF  # 3. CAMERA: Tắt để cô lập lỗi (Bật ở Giai đoạn 3)
 YOLO     = OFF  # 4. AI NHẬN DIỆN: Tắt (Bật ở Giai đoạn 3)
