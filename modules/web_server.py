@@ -86,6 +86,21 @@ class WebHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.end_headers()
             self.wfile.write(b'OK')
+        elif self.path.startswith('/api/toggle'):
+            flag_name = None
+            if '?' in self.path:
+                for p in self.path.split('?')[1].split('&'):
+                    if p.startswith('flag='): flag_name = p.split('=')[1]
+            if inst and flag_name:
+                res = inst.toggle_feature(flag_name)
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({"flag": flag_name, "state": res}).encode())
+                return
+            self.send_response(400)
+            self.end_headers()
         else:
             self.send_response(404)
             self.end_headers()

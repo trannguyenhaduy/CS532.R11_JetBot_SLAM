@@ -53,22 +53,32 @@ class PersonTracker:
         x = float(target.get('x', 0.0))
         z = float(target.get('z', 0.0))
 
+        # Kiểm tra độ hợp lệ của cự ly chiều sâu Z
+        valid_depth = (z > 0.20 and z < 5.0)
+
         dt = max(0.01, now - self.last_ctrl_time)
-        ez = z - self.target_dist
-        dez = (ez - self.last_ez) / dt
+        if valid_depth:
+            ez = z - self.target_dist
+            dez = (ez - self.last_ez) / dt
+            # Khóa an toàn: Nếu người quá gần (< 0.40m), dừng tiến để không va chạm
+            if z < 0.40:
+                v = 0.0
+            else:
+                v = (self.kp_dist * ez) + (self.kd_dist * dez) if abs(ez) > 0.08 else 0.0
+            self.last_ez = ez
+        else:
+            v = 0.0
 
         ex = x
         dex = (ex - self.last_ex) / dt
 
-        # Bộ điều khiển PD
-        v = (self.kp_dist * ez) + (self.kd_dist * dez) if abs(ez) > 0.08 else 0.0
+        # Bộ điều khiển PD cho góc quay (Góc lệch X tâm camera)
         w = (-self.kp_ang * ex) - (self.kd_ang * dex) if abs(ex) > 0.05 else 0.0
 
-        # Giới hạn an toàn
-        v = max(-0.20, min(0.30, v))
+        # Giới hạn an toàn (Vận tốc tuyến tính và vận tốc góc)
+        v = max(-0.15, min(0.30, v))
         w = max(-1.00, min(1.00, w))
 
-        self.last_ez = ez
         self.last_ex = ex
         self.last_ctrl_time = now
         self.last_person_time = now

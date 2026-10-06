@@ -169,7 +169,12 @@
   <div class="bottom-grid">
     <!-- Teleop Controls -->
     <div class="card">
-      <div class="card-hdr">🎮 ĐIỀU KHIỂN XE (PHÍM W, A, S, D)</div>
+      <div class="card-hdr" style="display:flex; justify-content:space-between; align-items:center;">
+        <span>🎮 ĐIỀU KHIỂN XE (W, A, S, D)</span>
+        <button id="btn-toggle-follower" class="tab-btn" onclick="toggleFollower()" style="border-color:var(--dim); color:var(--dim); font-size:0.72rem; padding:3px 8px; cursor:pointer;">
+          🎯 BÁM NGƯỜI: TẮT
+        </button>
+      </div>
       <div class="dpad-container">
         <div class="dpad-row"><button class="btn-drive" onmousedown="sendDrive(0.2,0)" onmouseup="sendDrive(0,0)" ontouchstart="sendDrive(0.2,0)" ontouchend="sendDrive(0,0)">▲</button></div>
         <div class="dpad-row">
@@ -824,9 +829,15 @@
             badge.innerText = d.camera_source.includes('WEBCAM') ? 'WEBCAM LAPTOP' : (d.camera_source.includes('OAK-D') ? 'OAK-D S2' : 'MÔ PHỎNG');
             badge.style.color = d.camera_source.includes('WEBCAM') ? 'var(--emerald)' : 'var(--cyan)';
           }
-          const hud = document.getElementById('cam-hud');
-          if (hud) {
-            hud.innerText = `${d.camera_source} · ${(d.calc_fps || 15).toFixed(1)} FPS`;
+            const hud = document.getElementById('cam-hud');
+            if (hud) {
+              hud.innerText = `${d.camera_source} · ${(d.calc_fps || 15).toFixed(1)} FPS`;
+            }
+          }
+
+          // Cập nhật trạng thái nút bấm Tự hành Bám người HRI
+          if (d.follower_enabled !== undefined) {
+            updateFollowerBtn(d.follower_enabled);
           }
         }
       } catch (e) {}
@@ -889,6 +900,33 @@
       ctx.fillStyle = '#00f0ff'; ctx.beginPath(); ctx.arc(0, 0, 7, 0, Math.PI*2); ctx.fill();
       ctx.strokeStyle = '#ff2a6d'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(14,0); ctx.stroke();
       ctx.restore(); ctx.restore();
+    }
+
+    // Chuyển đổi trạng thái Tự hành Bám người HRI
+    function toggleFollower() {
+      fetch('/api/toggle?flag=follow')
+        .then(r => r.json())
+        .then(data => {
+          updateFollowerBtn(data.state);
+        }).catch(e => {});
+    }
+
+    function updateFollowerBtn(enabled) {
+      const btn = document.getElementById('btn-toggle-follower');
+      if (!btn) return;
+      if (enabled) {
+        btn.innerText = '🎯 BÁM NGƯỜI: ĐANG BẬT';
+        btn.style.borderColor = 'var(--emerald)';
+        btn.style.color = 'var(--emerald)';
+        btn.style.background = 'rgba(0, 255, 163, 0.18)';
+        btn.style.boxShadow = '0 0 10px rgba(0, 255, 163, 0.4)';
+      } else {
+        btn.innerText = '🎯 BÁM NGƯỜI: TẮT';
+        btn.style.borderColor = 'rgba(255, 255, 255, 0.2)';
+        btn.style.color = 'var(--dim)';
+        btn.style.background = 'transparent';
+        btn.style.boxShadow = 'none';
+      }
     }
 
     // Điều khiển động cơ

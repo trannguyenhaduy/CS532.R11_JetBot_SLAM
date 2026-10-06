@@ -109,6 +109,7 @@ class JetBotMasterSystem:
         self.detections = []
         self.obstacle_distance = 1.45
         self.battery_metrics = (11.1, 50, 0.85, 9.4, 120)
+        self.last_manual_drive_time = 0.0
 
         # 1. Khởi tạo Module Động cơ
         self.motors = None
@@ -144,11 +145,10 @@ class JetBotMasterSystem:
         # 4. Khởi tạo Module Nhận diện AI
         self.yolo = SpatialPerceptionEngine() if self.flags.yolo else None
 
-        # 5. Khởi tạo Module Bám người HRI
-        self.follower = None
+        # 5. Khởi tạo Module Bám người HRI (Luôn sẵn sàng, mặc định tắt theo Harness 4)
+        self.follower = PersonTracker()
+        self.follower.set_enabled(bool(self.flags.follower))
         if self.flags.follower:
-            self.follower = PersonTracker()
-            self.follower.set_enabled(True)
             print("🎯 [HRI] Đã kích hoạt tính năng Tự hành Bám người!")
 
         # 6. Khởi tạo Module Bản đồ Ngữ nghĩa 3D
@@ -385,7 +385,8 @@ class JetBotMasterSystem:
             self.motors.set_cmd_vel(msg.linear.x, msg.angular.z)
 
     def on_drive_command(self, v, w):
-        """Xử lý lệnh lái tay từ Web W-A-S-D"""
+        """Xử lý lệnh lái tay từ Web W-A-S-D (Ưu tiên cao nhất, tạm ngắt bám người)"""
+        self.last_manual_drive_time = time.time()
         if self.motors:
             self.motors.set_cmd_vel(v, w)
         if HAS_ROS and self.ros_cmd_pub:
@@ -418,17 +419,19 @@ class JetBotMasterSystem:
             time.sleep(1.0)
 
     def _control_loop(self):
-        """Vòng lặp bám người HRI (10 Hz)"""
+        """Vòng lặp bám người HRI (10 Hz) với cơ chế nhường quyền lái tay"""
         while self.running:
             if self.follower and self.follower.is_enabled:
-                with self.lock: dets = list(self.detections)
-                v, w = self.follower.compute_command(dets)
-                if v is not None and w is not None:
-                    if self.motors: self.motors.set_cmd_vel(v, w)
-                    if HAS_ROS and self.ros_cmd_pub:
-                        t = Twist()
-                        t.linear.x, t.angular.z = v, w
-                        self.ros_cmd_pub.publish(t)
+                # Ưu tiên lái tay: Nếu vừa bấm phím lái trong 1.0 giây, tạm ngừng follower
+                if (time.time() - self.last_manual_drive_time > 1.0):
+                    with self.lock: dets = list(self.detections)
+                    v, w = self.follower.compute_command(dets)
+                    if v is not None and w is not None:
+                        if self.motors: self.motors.set_cmd_vel(v, w)
+                        if HAS_ROS and self.ros_cmd_pub:
+                            t = Twist()
+                            t.linear.x, t.angular.z = v, w
+                            self.ros_cmd_pub.publish(t)
             time.sleep(0.1)
 
     def _camera_provider_loop(self):
@@ -493,6 +496,7 @@ class JetBotMasterSystem:
                 "robot_yaw": round(self.robot_yaw, 3), "path": self.path_history,
                 "map_b64": "", "map_version": 1, "map_origin_x": -3.5, "map_origin_y": -3.5, "map_resolution": 0.05,
                 "detections": self.detections, "obstacle_distance": self.obstacle_distance,
+                "follower_enabled": bool(self.follower.is_enabled) if self.follower else False,
                 "camera_source": "OAK-D S2 (ROS LIVE)" if (time.time() - self.last_ros_img_time < 2.0) else "OAK-D S2 (STANDALONE)",
                 "calc_fps": 15.0, "benchmark": {
                     "tv1": {"total_score": 28, "max_score": 30, "grade": "XUẤT SẮC", "cpu_pct": 32, "ram_gb": 1.4, "battery_v": v, "battery_pct": pct, "bumper_status": "VÙNG AN TOÀN"},
@@ -504,7 +508,9 @@ class JetBotMasterSystem:
     def toggle_feature(self, flag_name):
         """Bật/tắt tính năng trực tiếp từ Web Cockpit"""
         flag_name = flag_name.lower()
-        if "follow" in flag_name and self.follower:
+        if "follow" in flag_name:
+            if self.follower is None:
+                self.follower = PersonTracker()
             new_state = not self.follower.is_enabled
             self.follower.set_enabled(new_state)
             print(f"🔄 [TOGGLE] Bám người HRI: {'BẬT' if new_state else 'TẮT'}")
