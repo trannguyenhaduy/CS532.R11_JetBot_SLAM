@@ -17,14 +17,9 @@
   <node pkg="tf2_ros" type="static_transform_publisher" name="base_to_camera_tf"
         args="$(arg cam_pos_x) $(arg cam_pos_y) $(arg cam_pos_z) 0 0 0 $(arg parent_frame) oak-d_frame" />
 
-  <!-- 2. KHỞI CHẠY CAMERA OAK-D S2 QUA USB 3.0 VỚI PIPELINE DEPTHAI TRÊN VPU MYRIAD X -->
-  <!-- Sử dụng driver depthai_examples chuẩn ROS theo yêu cầu trong skill_tv2.md -->
+  <!-- 2. KHỞI CHẠY CAMERA OAK-D S2 QUA USB 3.0 (TẮT RVIZ VÌ ĐÃ CÓ WEB COCKPIT) -->
   <include file="$(find depthai_examples)/launch/stereo_inertial_node.launch">
-    <arg name="parent_frame" value="$(arg parent_frame)"/>
-    <arg name="camera_name"  value="$(arg camera_name)"/>
-    <arg name="mode"         value="$(arg mode)"/>
-    <arg name="lr_check"     value="$(arg lr_check)"/>
-    <arg name="confidence"   value="$(arg confidence)"/>
+    <arg name="enableRviz" value="false"/>
   </include>
 
 </launch>
