@@ -110,6 +110,9 @@ class JetBotMasterSystem:
         self.battery = None
         if self.flags.battery:
             self.battery = BatteryMonitor(bus_num=config.I2C_BUS, addr=config.INA219_ADDR)
+            init_metrics = self.battery.read_metrics()
+            self.battery_metrics = init_metrics
+            print(f"⚡ [BATTERY] Đã kích hoạt giám sát pin INA219: {init_metrics[0]}V ({init_metrics[1]}%), Dòng {init_metrics[2]}A ({init_metrics[3]}W)")
 
         # 3. Khởi tạo Module Camera Streamer
         self.camera = None
@@ -233,7 +236,16 @@ class JetBotMasterSystem:
         """Vòng lặp đo pin định kỳ 1 Hz"""
         while self.running:
             if self.battery:
-                self.battery_metrics = self.battery.read_metrics()
+                try:
+                    m = self.battery.read_metrics()
+                    with self.lock:
+                        self.battery_metrics = m
+                    if HAS_ROS and hasattr(self, 'ros_batt_pub') and self.ros_batt_pub:
+                        msg = Float32MultiArray()
+                        msg.data = [float(m[0]), float(m[1]), float(m[2]), float(m[3]), float(m[4])]
+                        self.ros_batt_pub.publish(msg)
+                except Exception:
+                    pass
             time.sleep(1.0)
 
     def _control_loop(self):
