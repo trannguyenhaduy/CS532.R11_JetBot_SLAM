@@ -409,7 +409,8 @@ class JetBotMasterSystem:
         if self.safety_brake and self.safety_brake.is_enabled:
             v, w, alert = self.safety_brake.evaluate_velocity(v, w, self.obstacle_distance)
             if alert == "EMERGENCY_STOP":
-                print(f"🚨 [PHANH KHẨN CẤP] Cản cách {self.obstacle_distance*100:.1f} cm (< 18cm) -> Đã ngắt tiến, chỉ cho phép lùi/quay!")
+                threshold_cm = int(self.safety_brake.brake_dist_m * 100)
+                print(f"🚨 [PHANH KHẨN CẤP] Cản cách {self.obstacle_distance*100:.1f} cm (< {threshold_cm}cm) -> Đã ngắt tiến, chỉ cho phép lùi/quay!")
 
         if self.motors:
             self.motors.set_cmd_vel(v, w)
