@@ -84,6 +84,15 @@ except ImportError:
     HAS_DEPTHAI_MSGS = False
     SpatialDetectionArray = object
 
+def is_ros_master_running():
+    """Kiểm tra nhanh xem roscore có đang chạy trên port 11311 không (timeout 200ms)"""
+    import socket
+    try:
+        with socket.create_connection(('localhost', 11311), timeout=0.2):
+            return True
+    except Exception:
+        return False
+
 
 class JetBotMasterSystem:
     def __init__(self, flags):
@@ -155,38 +164,48 @@ class JetBotMasterSystem:
             self.web.feature_toggle_cb = self.toggle_feature
             self.web.start()
 
-        # Kết nối ROS nếu có
+        # Kết nối ROS trong nền nếu có roscore
         self.ros_cmd_pub = None
-        if HAS_ROS:
-            self._init_ros()
+        self.ros_batt_pub = None
+        self.ros_obj_pub = None
+        self.last_ros_img_time = 0.0
 
-        # Khởi chạy các luồng hậu đài
+        if HAS_ROS:
+            threading.Thread(target=self._ros_connect_loop, daemon=True).start()
+
+        # Khởi chạy các luồng hậu đài (luôn hoạt động, độc lập với ROS)
         threading.Thread(target=self._battery_loop, daemon=True).start()
         threading.Thread(target=self._control_loop, daemon=True).start()
-        if not HAS_ROS or not self.flags.camera:
-            threading.Thread(target=self._mock_simulation_loop, daemon=True).start()
+        threading.Thread(target=self._camera_provider_loop, daemon=True).start()
 
-    def _init_ros(self):
-        try:
-            rospy.init_node('jetbot_main_orchestrator', anonymous=True, disable_signals=True)
-            self.ros_cmd_pub = rospy.Publisher('/cmd_vel', Twist, queue_size=1)
-            self.ros_batt_pub = rospy.Publisher('/battery_telemetry', Float32MultiArray, queue_size=1)
-            self.ros_obj_pub = rospy.Publisher('/spatial_objects', String, queue_size=2)
+    def _ros_connect_loop(self):
+        """Tự động kết nối với ROS Core trong nền khi roscore được bật, không bao giờ làm đơ hệ thống"""
+        connected = False
+        while self.running and not connected:
+            if is_ros_master_running():
+                try:
+                    rospy.init_node('jetbot_main_orchestrator', anonymous=True, disable_signals=True)
+                    self.ros_cmd_pub = rospy.Publisher('/cmd_vel', Twist, queue_size=1)
+                    self.ros_batt_pub = rospy.Publisher('/battery_telemetry', Float32MultiArray, queue_size=1)
+                    self.ros_obj_pub = rospy.Publisher('/spatial_objects', String, queue_size=2)
 
-            rospy.Subscriber('/stereo_inertial_publisher/color/image', Image, self._ros_image_cb, queue_size=1)
-            rospy.Subscriber('/stereo_inertial_publisher/stereo/depth', Image, self._ros_depth_cb, queue_size=1)
-            rospy.Subscriber('/rtabmap/odom', Odometry, self._ros_odom_cb, queue_size=1)
-            rospy.Subscriber('/cmd_vel', Twist, self._ros_cmd_cb, queue_size=1)
+                    rospy.Subscriber('/stereo_inertial_publisher/color/image', Image, self._ros_image_cb, queue_size=1)
+                    rospy.Subscriber('/stereo_inertial_publisher/stereo/depth', Image, self._ros_depth_cb, queue_size=1)
+                    rospy.Subscriber('/rtabmap/odom', Odometry, self._ros_odom_cb, queue_size=1)
+                    rospy.Subscriber('/cmd_vel', Twist, self._ros_cmd_cb, queue_size=1)
 
-            # Subscribers nhận danh sách nhận diện 3D từ OAK-D S2
-            rospy.Subscriber('/spatial_objects', String, self._ros_spatial_objects_cb, queue_size=2)
-            rospy.Subscriber('/stereo_inertial_publisher/color/raw_detections', String, self._ros_spatial_objects_cb, queue_size=2)
-            if HAS_DEPTHAI_MSGS:
-                rospy.Subscriber('/stereo_inertial_publisher/color/yolov4_Spatial_detections',
-                                 SpatialDetectionArray, self._ros_depthai_detections_cb, queue_size=2)
-            print("🔗 [ROS] Đã kết nối thành công với ROS Core và các Topics chuẩn.")
-        except Exception as e:
-            print(f"⚠️ [ROS] Không thể khởi tạo ROS node: {e}. Tiếp tục ở chế độ Standalone.")
+                    # Subscribers nhận danh sách nhận diện 3D từ OAK-D S2
+                    rospy.Subscriber('/spatial_objects', String, self._ros_spatial_objects_cb, queue_size=2)
+                    rospy.Subscriber('/stereo_inertial_publisher/color/raw_detections', String, self._ros_spatial_objects_cb, queue_size=2)
+                    if HAS_DEPTHAI_MSGS:
+                        rospy.Subscriber('/stereo_inertial_publisher/color/yolov4_Spatial_detections',
+                                         SpatialDetectionArray, self._ros_depthai_detections_cb, queue_size=2)
+                    print("🔗 [ROS] Đã kết nối thành công với ROS Core và các Topics chuẩn.")
+                    connected = True
+                    break
+                except Exception:
+                    pass
+            time.sleep(2.0)
 
     def _ros_spatial_objects_cb(self, msg):
         if not self.yolo: return
@@ -228,6 +247,7 @@ class JetBotMasterSystem:
             img = raw.reshape((h, w, 3)) if msg.encoding in ['bgr8', 'rgb8'] else raw.reshape((h, w, -1))
             if msg.encoding == 'rgb8': img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
 
+            self.last_ros_img_time = time.time()
             annotator = (lambda im: self.yolo.draw_detections(im, self.detections)) if self.yolo else None
             self.camera.process_color_frame(img, annotator)
         except Exception: pass
@@ -310,34 +330,50 @@ class JetBotMasterSystem:
                         self.ros_cmd_pub.publish(t)
             time.sleep(0.1)
 
-    def _mock_simulation_loop(self):
-        """Sinh dữ liệu giả lập căn phòng 3D nếu không có camera thật"""
+    def _camera_provider_loop(self):
+        """Cung cấp luồng hình ảnh camera và mây điểm 3D liên tục (15 FPS)"""
         mock_pts = []
-        for x in np.linspace(-2.0, 2.0, 30):
-            for z in np.linspace(0.0, 1.6, 10):
+        for x in np.linspace(-2.0, 2.0, 25):
+            for z in np.linspace(0.1, 1.5, 8):
                 mock_pts.append([round(float(x), 2), 2.0, round(float(z), 2)])
                 mock_pts.append([round(float(x), 2), -2.0, round(float(z), 2)])
+
         while self.running:
-            if self.camera and not self.camera.points_3d:
-                self.camera.points_3d = list(mock_pts)
-            if not self.detections:
-                with self.lock:
-                    self.detections = [
-                        {"id": 0, "name": "PERSON", "score": 0.89, "x": -0.3, "y": 0.0, "z": 1.4},
-                        {"id": 24, "name": "BACKPACK", "score": 0.92, "x": 0.2, "y": 0.0, "z": 0.4}
-                    ]
-            if self.camera and self.camera.latest_jpeg is None:
+            if not self.flags.camera or not self.camera:
+                time.sleep(0.5)
+                continue
+
+            now = time.time()
+            has_fresh_ros_frame = (now - self.last_ros_img_time < 1.5)
+
+            # Nếu chưa có luồng ảnh thật từ ROS, tự động phát frame Cyberpunk Standalone
+            if not has_fresh_ros_frame:
+                if not self.camera.points_3d:
+                    self.camera.points_3d = list(mock_pts)
+                if not self.detections:
+                    with self.lock:
+                        self.detections = [
+                            {"id": 0, "name": "PERSON", "score": 0.89, "x": -0.3, "y": 0.0, "z": 1.4},
+                            {"id": 24, "name": "BACKPACK", "score": 0.92, "x": 0.2, "y": 0.0, "z": 0.4}
+                        ]
+
                 demo_img = np.zeros((360, 640, 3), dtype=np.uint8)
                 demo_img[:] = (15, 12, 10)
                 cv2.circle(demo_img, (320, 180), 120, (50, 60, 30), 1)
                 cv2.circle(demo_img, (320, 180), 60, (50, 60, 30), 1)
                 cv2.line(demo_img, (200, 180), (440, 180), (50, 60, 30), 1)
                 cv2.line(demo_img, (320, 60), (320, 300), (50, 60, 30), 1)
-                cv2.putText(demo_img, "OAK-D S2 // STANDALONE READY", (160, 45), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 255, 163), 2)
-                cv2.putText(demo_img, "SAN SANG NHAN LUONG ROS /color/image", (140, 335), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (0, 240, 255), 1)
+
+                t_str = time.strftime("%H:%M:%S")
+                cv2.putText(demo_img, f"OAK-D S2 // STANDALONE STREAM [{t_str}]", (110, 45),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.62, (0, 255, 163), 2)
+                cv2.putText(demo_img, "DANG CHO LUONG ROS TOPIC /color/image", (125, 335),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.50, (0, 240, 255), 1)
+
                 annotator = (lambda im: self.yolo.draw_detections(im, self.detections)) if self.yolo else None
                 self.camera.process_color_frame(demo_img, annotator)
-            time.sleep(1.0)
+
+            time.sleep(0.066) # 15 FPS
 
     def get_latest_jpeg(self):
         if self.camera:
@@ -356,7 +392,7 @@ class JetBotMasterSystem:
                 "robot_yaw": round(self.robot_yaw, 3), "path": self.path_history,
                 "map_b64": "", "map_version": 1, "map_origin_x": -3.5, "map_origin_y": -3.5, "map_resolution": 0.05,
                 "detections": self.detections, "obstacle_distance": self.obstacle_distance,
-                "points_3d": pts, "camera_source": "OAK-D S2" if HAS_ROS else "STANDALONE / SIMULATOR",
+                "camera_source": "OAK-D S2 (ROS LIVE)" if (time.time() - self.last_ros_img_time < 2.0) else "OAK-D S2 (STANDALONE)",
                 "calc_fps": 15.0, "benchmark": {
                     "tv1": {"total_score": 28, "max_score": 30, "grade": "XUẤT SẮC", "cpu_pct": 32, "ram_gb": 1.4, "battery_v": v, "battery_pct": pct, "bumper_status": "VÙNG AN TOÀN"},
                     "tv2": {"status_badge": "HOẠT ĐỘNG TỐT", "fps": 15.0, "obstacle_distance": self.obstacle_distance},

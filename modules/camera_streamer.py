@@ -36,11 +36,12 @@ class CameraStreamer:
 
     def process_color_frame(self, bgr_img, detections_annotator=None):
         """Xử lý frame màu và nén thành JPEG phục vụ Web MJPEG stream"""
-        self._img_counter += 1
-        if self._img_counter % self.img_skip != 0:
+        if bgr_img is None:
             return self.latest_jpeg
 
-        if bgr_img is None:
+        self._img_counter += 1
+        # Frame đầu tiên luôn nén ngay, sau đó mới áp dụng skip để giảm tải CPU
+        if self.latest_jpeg is not None and self._img_counter % self.img_skip != 0:
             return self.latest_jpeg
 
         annotated = bgr_img.copy()
