@@ -184,13 +184,13 @@
         <button class="tab-btn" id="spd-fast" onclick="setSpeed(0.25, 0.60, 'fast')" style="padding:3px 8px; font-size:0.72rem; cursor:pointer;">⚡ Nhanh (25%)</button>
       </div>
       <div class="dpad-container">
-        <div class="dpad-row"><button class="btn-drive" id="btn-up" onmousedown="sendDrive(speedLinear,0)" onmouseup="sendDrive(0,0)" ontouchstart="sendDrive(speedLinear,0)" ontouchend="sendDrive(0,0)">▲</button></div>
+        <div class="dpad-row"><button class="btn-drive" id="btn-up" onmousedown="sendDrive(speedLinear,0)" onmouseup="emergencyStop()" ontouchstart="sendDrive(speedLinear,0)" ontouchend="emergencyStop()">▲</button></div>
         <div class="dpad-row">
-          <button class="btn-drive" id="btn-left" onmousedown="sendDrive(0,speedAngular)" onmouseup="sendDrive(0,0)" ontouchstart="sendDrive(0,speedAngular)" ontouchend="sendDrive(0,0)">◀</button>
-          <button class="btn-drive btn-stop" id="btn-stop" onclick="sendDrive(0,0)">■</button>
-          <button class="btn-drive" id="btn-right" onmousedown="sendDrive(0,-speedAngular)" onmouseup="sendDrive(0,0)" ontouchstart="sendDrive(0,-speedAngular)" ontouchend="sendDrive(0,0)">▶</button>
+          <button class="btn-drive" id="btn-left" onmousedown="sendDrive(0,speedAngular)" onmouseup="emergencyStop()" ontouchstart="sendDrive(0,speedAngular)" ontouchend="emergencyStop()">◀</button>
+          <button class="btn-drive btn-stop" id="btn-stop" onclick="emergencyStop()">■ DỪNG</button>
+          <button class="btn-drive" id="btn-right" onmousedown="sendDrive(0,-speedAngular)" onmouseup="emergencyStop()" ontouchstart="sendDrive(0,-speedAngular)" ontouchend="emergencyStop()">▶</button>
         </div>
-        <div class="dpad-row"><button class="btn-drive" id="btn-down" onmousedown="sendDrive(-speedLinear,0)" onmouseup="sendDrive(0,0)" ontouchstart="sendDrive(-speedLinear,0)" ontouchend="sendDrive(0,0)">▼</button></div>
+        <div class="dpad-row"><button class="btn-drive" id="btn-down" onmousedown="sendDrive(-speedLinear,0)" onmouseup="emergencyStop()" ontouchstart="sendDrive(-speedLinear,0)" ontouchend="emergencyStop()">▼</button></div>
       </div>
     </div>
 
@@ -740,6 +740,9 @@
 
         if (brakeBanner) {
           if (obsDist < 0.35) {
+            if (driveTimer && lastDriveV > 0) {
+              emergencyStop();
+            }
             brakeBanner.style.borderColor = 'var(--rose)';
             brakeBanner.style.color = 'var(--rose)';
             brakeBanner.style.background = 'rgba(255, 42, 109, 0.2)';
@@ -995,6 +998,19 @@
     let driveTimer = null;
     let speedLinear = 0.20;
     let speedAngular = 0.50;
+    let lastDriveV = 0.0;
+
+    function emergencyStop() {
+      if (driveTimer) {
+        clearInterval(driveTimer);
+        driveTimer = null;
+      }
+      lastDriveV = 0.0;
+      fetch('/api/drive?v=0&w=0', { cache: 'no-store' }).catch(() => {});
+      ['btn-up', 'btn-down', 'btn-left', 'btn-right'].forEach(id => setBtnActive(id, false));
+      setBtnActive('btn-stop', true);
+      setTimeout(() => setBtnActive('btn-stop', false), 250);
+    }
 
     function setSpeed(lin, ang, mode) {
       speedLinear = lin;
@@ -1018,11 +1034,19 @@
     }
 
     function sendDrive(linear, angular) {
-      if (driveTimer) clearInterval(driveTimer);
-      fetch('/api/drive?v=' + linear + '&w=' + angular).catch(() => {});
-      if (linear !== 0 || angular !== 0) {
-        driveTimer = setInterval(() => fetch('/api/drive?v=' + linear + '&w=' + angular).catch(() => {}), 150);
+      if (driveTimer) {
+        clearInterval(driveTimer);
+        driveTimer = null;
       }
+      lastDriveV = linear;
+      if (linear === 0 && angular === 0) {
+        emergencyStop();
+        return;
+      }
+      fetch('/api/drive?v=' + linear + '&w=' + angular, { cache: 'no-store' }).catch(() => {});
+      driveTimer = setInterval(() => {
+        fetch('/api/drive?v=' + linear + '&w=' + angular, { cache: 'no-store' }).catch(() => {});
+      }, 120);
     }
 
     function setBtnActive(id, active) {
@@ -1042,22 +1066,26 @@
       else if (k === 's' || code === 'KeyS' || k === 'arrowdown') { sendDrive(-speedLinear, 0); setBtnActive('btn-down', true); }
       else if (k === 'a' || code === 'KeyA' || k === 'arrowleft') { sendDrive(0, speedAngular); setBtnActive('btn-left', true); }
       else if (k === 'd' || code === 'KeyD' || k === 'arrowright') { sendDrive(0, -speedAngular); setBtnActive('btn-right', true); }
-      else if (k === ' ' || k === 'escape' || code === 'Space') { sendDrive(0, 0); setBtnActive('btn-stop', true); }
+      else if (k === ' ' || k === 'escape' || code === 'Space') { emergencyStop(); }
     });
 
     window.addEventListener('keyup', (e) => {
       const k = e.key.toLowerCase();
       const code = e.code;
-      if (k === 'w' || code === 'KeyW' || k === 'arrowup') setBtnActive('btn-up', false);
-      if (k === 's' || code === 'KeyS' || k === 'arrowdown') setBtnActive('btn-down', false);
-      if (k === 'a' || code === 'KeyA' || k === 'arrowleft') setBtnActive('btn-left', false);
-      if (k === 'd' || code === 'KeyD' || k === 'arrowright') setBtnActive('btn-right', false);
-      if (k === ' ' || k === 'escape' || code === 'Space') setBtnActive('btn-stop', false);
-
       if (['w','s','a','d','arrowup','arrowdown','arrowleft','arrowright'].includes(k) ||
           ['KeyW','KeyS','KeyA','KeyD','Space'].includes(code)) {
-        sendDrive(0, 0);
+        emergencyStop();
       }
+    });
+
+    window.addEventListener('mouseup', () => {
+      if (driveTimer) emergencyStop();
+    });
+    window.addEventListener('touchend', () => {
+      if (driveTimer) emergencyStop();
+    });
+    window.addEventListener('blur', () => {
+      if (driveTimer) emergencyStop();
     });
   </script>
 </body>

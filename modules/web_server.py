@@ -79,12 +79,18 @@ class WebHandler(BaseHTTPRequestHandler):
             v, w = 0.0, 0.0
             if '?' in self.path:
                 for p in self.path.split('?')[1].split('&'):
-                    if p.startswith('v='): v = float(p.split('=')[1])
-                    if p.startswith('w='): w = float(p.split('=')[1])
+                    if p.startswith('v='):
+                        try: v = float(p.split('=')[1])
+                        except Exception: v = 0.0
+                    if p.startswith('w='):
+                        try: w = float(p.split('=')[1])
+                        except Exception: w = 0.0
             if inst:
-                inst.on_drive_command(v, w)
+                try: inst.on_drive_command(v, w)
+                except Exception as e: print(f"⚠️ [WEB DRIVE ERR]: {e}")
             self.send_response(200)
             self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
             self.end_headers()
             self.wfile.write(b'OK')
         elif self.path.startswith('/api/toggle'):
@@ -112,11 +118,18 @@ class WebHandler(BaseHTTPRequestHandler):
             v, w = 0.0, 0.0
             if '?' in self.path:
                 for p in self.path.split('?')[1].split('&'):
-                    if p.startswith('v='): v = float(p.split('=')[1])
-                    if p.startswith('w='): w = float(p.split('=')[1])
+                    if p.startswith('v='):
+                        try: v = float(p.split('=')[1])
+                        except Exception: v = 0.0
+                    if p.startswith('w='):
+                        try: w = float(p.split('=')[1])
+                        except Exception: w = 0.0
             if inst:
-                inst.on_drive_command(v, w)
+                try: inst.on_drive_command(v, w)
+                except Exception as e: print(f"⚠️ [WEB DRIVE ERR]: {e}")
             self.send_response(200)
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
             self.end_headers()
             self.wfile.write(b'OK')
         elif self.path.startswith('/api/toggle'):

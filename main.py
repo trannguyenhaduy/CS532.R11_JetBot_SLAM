@@ -99,7 +99,7 @@ class JetBotMasterSystem:
     def __init__(self, flags):
         self.flags = flags
         self.running = True
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
 
         # Trạng thái tổng thể xe
         self.robot_x = 0.0
@@ -431,8 +431,17 @@ class JetBotMasterSystem:
             if len(self.path_history) > 400: self.path_history.pop(0)
 
     def _ros_cmd_cb(self, msg):
+        # Bỏ qua nếu lệnh vừa được phát từ Web Cockpit nội bộ trong 0.3s để tránh lặp kênh
+        if time.time() - self.last_manual_drive_time < 0.30:
+            return
+        v, w = float(msg.linear.x), float(msg.angular.z)
+        if self.safety_brake and self.safety_brake.is_enabled:
+            v, w, alert = self.safety_brake.evaluate_velocity(v, w, self.obstacle_distance)
         if self.motors:
-            self.motors.set_cmd_vel(msg.linear.x, msg.angular.z)
+            if abs(v) < 0.01 and abs(w) < 0.01:
+                self.motors.stop()
+            else:
+                self.motors.set_cmd_vel(v, w)
 
     def on_drive_command(self, v, w):
         """Xử lý lệnh lái tay từ Web W-A-S-D (Ưu tiên cao nhất, tạm ngắt bám người)"""
@@ -446,7 +455,11 @@ class JetBotMasterSystem:
                 print(f"🚨 [PHANH KHẨN CẤP] Cản cách {self.obstacle_distance*100:.1f} cm (< {threshold_cm}cm) -> Đã ngắt tiến, chỉ cho phép lùi/quay!")
 
         if self.motors:
-            self.motors.set_cmd_vel(v, w)
+            if abs(v) < 0.01 and abs(w) < 0.01:
+                self.motors.stop()
+            else:
+                self.motors.set_cmd_vel(v, w)
+
         if HAS_ROS and self.ros_cmd_pub:
             t = Twist()
             t.linear.x, t.angular.z = v, w

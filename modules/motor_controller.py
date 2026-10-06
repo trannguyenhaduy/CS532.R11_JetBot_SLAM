@@ -199,7 +199,7 @@ class MotorController:
         self.obstacle_distance_m = 99.0
         self.last_cmd_time = time.time()
         self.last_log_time = 0.0
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
         self.is_connected = False
         self.driver_name = "SIMULATOR"
         self.driver = None
@@ -243,7 +243,7 @@ class MotorController:
         if not self.is_connected:
             print("⚠️ [MOTOR] Không phát hiện phần cứng I2C động cơ. Chạy chế độ GIẢ LẬP.")
 
-        # Khởi chạy luồng Watchdog an toàn (0.5s)
+        # Khởi chạy luồng Watchdog an toàn (0.35s)
         self.running = True
         self.watchdog_thread = threading.Thread(target=self._watchdog_loop, daemon=True)
         self.watchdog_thread.start()
@@ -252,18 +252,32 @@ class MotorController:
         with self.lock:
             self.obstacle_distance_m = float(dist_m)
             if self.enable_brake and self.obstacle_distance_m < self.brake_dist and self.target_v > 0.0:
+                print(f"🛑 [EMERGENCY BRAKE] Cản ở {self.obstacle_distance_m*100:.1f}cm (< {self.brake_dist*100:.0f}cm) -> NGẮT ĐỘNG CƠ LẬP TỨC!")
                 self.target_v = 0.0
-                self.stop()
+                self.target_w = 0.0
+                if self.is_connected and self.driver:
+                    self.driver.stop()
 
     def set_cmd_vel(self, v: float, w: float):
         with self.lock:
             self.last_cmd_time = time.time()
             if self.enable_brake and self.obstacle_distance_m < self.brake_dist and v > 0.0:
-                print(f"🛑 [MOTOR PHANH] Khóa tiến do cản ở {self.obstacle_distance_m:.2f}m (< {self.brake_dist:.2f}m)!")
+                print(f"🛑 [MOTOR PHANH] Khóa tiến do cản ở {self.obstacle_distance_m*100:.1f}cm (< {self.brake_dist*100:.0f}cm)!")
                 v = 0.0
+                if abs(w) < 0.01:
+                    self.target_v = 0.0
+                    self.target_w = 0.0
+                    if self.is_connected and self.driver:
+                        self.driver.stop()
+                    return
 
             self.target_v = v
             self.target_w = w
+
+            if abs(v) < 0.01 and abs(w) < 0.01:
+                if self.is_connected and self.driver:
+                    self.driver.stop()
+                return
 
             actual_v = -v if self.invert_linear else v
             actual_w = w
@@ -326,22 +340,25 @@ class MotorController:
 
     def _watchdog_loop(self):
         while self.running:
-            with self.lock:
-                # 1. Tự động ngắt khẩn cấp nếu có vật cản trước mặt khi xe đang chạy tiến
-                if self.target_v > 0.0 and self.obstacle_distance_m < self.brake_dist:
-                    self.target_v = 0.0
-                    self.target_w = 0.0
-                    if self.is_connected and self.driver:
-                        self.driver.stop()
+            try:
+                with self.lock:
+                    # 1. Tự động ngắt khẩn cấp nếu có vật cản trước mặt khi xe đang chạy tiến
+                    if self.enable_brake and self.target_v > 0.0 and self.obstacle_distance_m < self.brake_dist:
+                        self.target_v = 0.0
+                        self.target_w = 0.0
+                        if self.is_connected and self.driver:
+                            self.driver.stop()
 
-                # 2. Watchdog ngắt động cơ nếu mất kết nối lái tay quá 0.5s
-                elapsed = time.time() - self.last_cmd_time
-                if elapsed > 0.5 and (abs(self.target_v) > 0.01 or abs(self.target_w) > 0.01):
-                    self.target_v = 0.0
-                    self.target_w = 0.0
-                    if self.is_connected and self.driver:
-                        self.driver.stop()
-            time.sleep(0.05)
+                    # 2. Watchdog ngắt động cơ nếu mất kết nối lái tay quá 0.35s
+                    elapsed = time.time() - self.last_cmd_time
+                    if elapsed > 0.35 and (abs(self.target_v) > 0.01 or abs(self.target_w) > 0.01):
+                        self.target_v = 0.0
+                        self.target_w = 0.0
+                        if self.is_connected and self.driver:
+                            self.driver.stop()
+            except Exception:
+                pass
+            time.sleep(0.04)
 
     def shutdown(self):
         self.running = False
