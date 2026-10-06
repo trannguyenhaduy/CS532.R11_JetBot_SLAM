@@ -39,6 +39,20 @@ class SpatialPerceptionEngine:
     DEPTH_MIN = 0.20
     DEPTH_MAX = 10.00
 
+    def __init__(self):
+        self.face_cascade = None
+        self.upper_cascade = None
+        try:
+            import os
+            p_face = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+            if os.path.exists(p_face):
+                self.face_cascade = cv2.CascadeClassifier(p_face)
+            p_upper = cv2.data.haarcascades + 'haarcascade_upperbody.xml'
+            if os.path.exists(p_upper):
+                self.upper_cascade = cv2.CascadeClassifier(p_upper)
+        except Exception:
+            pass
+
     @classmethod
     def filter_detections(cls, raw_list):
         """Lọc và chuẩn hóa danh sách vật thể từ VPU"""
@@ -75,15 +89,80 @@ class SpatialPerceptionEngine:
             if z < cls.DEPTH_MIN or z > cls.DEPTH_MAX: continue
             if score < 0.30: continue
 
-            filtered.append({
+            d_entry = {
                 "id": target_id if target_id is not None else 0,
                 "name": target_name,
                 "score": round(score, 2),
                 "x": round(x, 2),
                 "y": round(y, 2),
                 "z": round(z, 2)
-            })
+            }
+            if "bbox" in det:
+                d_entry["bbox"] = det["bbox"]
+
+            filtered.append(d_entry)
         return filtered
+
+    def detect_fallback(self, bgr_img, depth_frame=None, fx=450.0, fy=450.0, cx=320.0, cy=200.0):
+        """Nhận diện dự phòng thông minh trên CPU (Face & UpperBody) khi chưa bật VPU YOLO"""
+        if bgr_img is None: return []
+        h, w = bgr_img.shape[:2]
+        if h < 40 or w < 40: return []
+
+        scale = 0.5
+        small = cv2.resize(bgr_img, (int(w * scale), int(h * scale)))
+        gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+
+        detections = []
+        found_boxes = []
+
+        if self.face_cascade and not self.face_cascade.empty():
+            faces = self.face_cascade.detectMultiScale(gray, scaleFactor=1.2, minNeighbors=4, minSize=(20, 20))
+            for (fx_b, fy_b, fw, fh) in faces:
+                found_boxes.append((int(fx_b / scale), int(fy_b / scale), int(fw / scale), int(fh / scale), "PERSON", 0.92))
+
+        if not found_boxes and self.upper_cascade and not self.upper_cascade.empty():
+            uppers = self.upper_cascade.detectMultiScale(gray, scaleFactor=1.25, minNeighbors=3, minSize=(30, 30))
+            for (ux, uy, uw, uh) in uppers:
+                found_boxes.append((int(ux / scale), int(uy / scale), int(uw / scale), int(uh / scale), "PERSON", 0.85))
+
+        for (bx, by, bw, bh, name, score) in found_boxes:
+            u_center = bx + bw // 2
+            v_center = by + bh // 2
+
+            z_m = 0.0
+            if depth_frame is not None and isinstance(depth_frame, np.ndarray):
+                try:
+                    dh, dw = depth_frame.shape[:2]
+                    du1 = max(0, min(dw - 1, int(bx * dw / w)))
+                    dv1 = max(0, min(dh - 1, int(by * dh / h)))
+                    du2 = max(0, min(dw - 1, int((bx + bw) * dw / w)))
+                    dv2 = max(0, min(dh - 1, int((by + bh) * dh / h)))
+                    roi = depth_frame[dv1:dv2, du1:du2]
+                    valid = roi[(roi > 200) & (roi < 6000)]
+                    if len(valid) > 10:
+                        z_m = float(np.median(valid)) / 1000.0
+                except Exception: pass
+
+            # Nếu depth map chưa có hoặc quá gần, ước tính cự ly qua độ rộng khuôn mặt chuẩn ~16cm
+            if z_m < 0.25 or z_m > 8.0:
+                z_m = round(float(fx * 0.16 / max(bw, 1)), 2)
+                z_m = max(0.30, min(4.5, z_m))
+
+            x_m = round(float((u_center - cx) * z_m / fx), 2)
+            y_m = round(float((v_center - cy) * z_m / fy), 2)
+
+            detections.append({
+                "id": 0,
+                "name": name,
+                "score": score,
+                "x": x_m,
+                "y": y_m,
+                "z": round(z_m, 2),
+                "bbox": [bx, by, bx + bw, by + bh]
+            })
+
+        return self.filter_detections(detections)
 
     @staticmethod
     def calculate_obstacle_distance(depth_frame):
@@ -117,18 +196,24 @@ class SpatialPerceptionEngine:
                 xm, ym, zm = float(det['x']), float(det['y']), float(det['z'])
                 name = str(det.get('name', 'OBJ'))
                 score = float(det.get('score', 0.8))
-                if zm > 0.15:
+
+                if 'bbox' in det:
+                    x1, y1, x2, y2 = det['bbox']
+                elif zm > 0.15:
                     u = int(cx + (xm * fx / zm))
                     v = int(cy + (ym * fy / zm))
                     if 10 <= u < w - 10 and 10 <= v < h - 10:
-                        bw = max(35, min(200, int(160.0 / zm)))
-                        bh = max(50, min(300, int(240.0 / zm)))
+                        bw = max(35, min(400, int(180.0 / zm)))
+                        bh = max(50, min(500, int(260.0 / zm)))
                         x1, y1 = max(0, u - bw // 2), max(0, v - bh // 2)
                         x2, y2 = min(w - 1, u + bw // 2), min(h - 1, v + bh // 2)
-                        col = (42, 42, 255) if 'PERSON' in name else (0, 255, 163)
-                        cv2.rectangle(img, (x1, y1), (x2, y2), col, 2)
-                        cv2.putText(img, f"{name} {int(score*100)}% ({zm:.1f}m)",
-                                    (x1, max(22, y1 - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.52, col, 2)
+                    else: continue
+                else: continue
+
+                col = (42, 42, 255) if 'PERSON' in name else (0, 255, 163)
+                cv2.rectangle(img, (x1, y1), (x2, y2), col, 2)
+                cv2.putText(img, f"{name} {int(score*100)}% ({zm:.1f}m)",
+                            (x1, max(22, y1 - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.52, col, 2)
             except Exception: pass
         return img
 

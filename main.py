@@ -169,6 +169,10 @@ class JetBotMasterSystem:
         self.ros_batt_pub = None
         self.ros_obj_pub = None
         self.last_ros_img_time = 0.0
+        self.last_vpu_det_time = 0.0
+        self.last_fallback_found_time = 0.0
+        self.latest_raw_bgr = None
+        self.latest_depth_np = None
 
         if HAS_ROS:
             threading.Thread(target=self._ros_connect_loop, daemon=True).start()
@@ -177,6 +181,7 @@ class JetBotMasterSystem:
         threading.Thread(target=self._battery_loop, daemon=True).start()
         threading.Thread(target=self._control_loop, daemon=True).start()
         threading.Thread(target=self._camera_provider_loop, daemon=True).start()
+        threading.Thread(target=self._ai_inference_loop, daemon=True).start()
 
     def _ros_connect_loop(self):
         """Tự động kết nối với ROS Core trong nền khi roscore được bật, không bao giờ làm đơ hệ thống"""
@@ -189,16 +194,28 @@ class JetBotMasterSystem:
                     self.ros_batt_pub = rospy.Publisher('/battery_telemetry', Float32MultiArray, queue_size=1)
                     self.ros_obj_pub = rospy.Publisher('/spatial_objects', String, queue_size=2)
 
+                    # Subscribers nhận hình ảnh RGB từ nhiều loại node DepthAI
                     rospy.Subscriber('/stereo_inertial_publisher/color/image', Image, self._ros_image_cb, queue_size=1)
+                    rospy.Subscriber('/yolov4_publisher/color/image', Image, self._ros_image_cb, queue_size=1)
+                    rospy.Subscriber('/mobilenet_publisher/color/image', Image, self._ros_image_cb, queue_size=1)
+
+                    # Subscribers nhận bản đồ độ sâu Depth
                     rospy.Subscriber('/stereo_inertial_publisher/stereo/depth', Image, self._ros_depth_cb, queue_size=1)
+                    rospy.Subscriber('/yolov4_publisher/stereo/depth', Image, self._ros_depth_cb, queue_size=1)
+                    rospy.Subscriber('/mobilenet_publisher/stereo/depth', Image, self._ros_depth_cb, queue_size=1)
+
                     rospy.Subscriber('/rtabmap/odom', Odometry, self._ros_odom_cb, queue_size=1)
                     rospy.Subscriber('/cmd_vel', Twist, self._ros_cmd_cb, queue_size=1)
 
-                    # Subscribers nhận danh sách nhận diện 3D từ OAK-D S2
+                    # Subscribers nhận danh sách nhận diện 3D từ OAK-D S2 VPU
                     rospy.Subscriber('/spatial_objects', String, self._ros_spatial_objects_cb, queue_size=2)
                     rospy.Subscriber('/stereo_inertial_publisher/color/raw_detections', String, self._ros_spatial_objects_cb, queue_size=2)
                     if HAS_DEPTHAI_MSGS:
                         rospy.Subscriber('/stereo_inertial_publisher/color/yolov4_Spatial_detections',
+                                         SpatialDetectionArray, self._ros_depthai_detections_cb, queue_size=2)
+                        rospy.Subscriber('/yolov4_publisher/color/yolov4_Spatial_detections',
+                                         SpatialDetectionArray, self._ros_depthai_detections_cb, queue_size=2)
+                        rospy.Subscriber('/mobilenet_publisher/color/mobilenet_spatial_detections',
                                          SpatialDetectionArray, self._ros_depthai_detections_cb, queue_size=2)
                     print("🔗 [ROS] Đã kết nối thành công với ROS Core và các Topics chuẩn.")
                     connected = True
@@ -215,6 +232,7 @@ class JetBotMasterSystem:
                 filtered = self.yolo.filter_detections(data)
                 with self.lock:
                     self.detections = filtered
+                    self.last_vpu_det_time = time.time()
         except Exception: pass
 
     def _ros_depthai_detections_cb(self, msg):
@@ -237,7 +255,30 @@ class JetBotMasterSystem:
             filtered = self.yolo.filter_detections(raw_list)
             with self.lock:
                 self.detections = filtered
+                self.last_vpu_det_time = time.time()
         except Exception: pass
+
+    def _ai_inference_loop(self):
+        """Vòng lặp AI dự phòng: Tự động chạy nhận diện thông minh trên CPU khi VPU chưa phát topic"""
+        while self.running:
+            if self.flags.yolo and self.yolo:
+                now = time.time()
+                # Nếu không có tin nhắn nhận diện từ VPU trong 1.2s và đang có ảnh camera
+                if (now - self.last_vpu_det_time > 1.2) and (self.latest_raw_bgr is not None):
+                    try:
+                        img_copy = self.latest_raw_bgr.copy()
+                        depth_copy = self.latest_depth_np
+                        dets = self.yolo.detect_fallback(img_copy, depth_copy)
+                        if dets:
+                            with self.lock:
+                                self.detections = dets
+                            self.last_fallback_found_time = now
+                        elif now - self.last_fallback_found_time > 1.5:
+                            with self.lock:
+                                self.detections = []
+                    except Exception:
+                        pass
+            time.sleep(0.25)
 
     def _ros_image_cb(self, msg):
         if not self.camera: return
@@ -248,6 +289,7 @@ class JetBotMasterSystem:
             if msg.encoding == 'rgb8': img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
 
             self.last_ros_img_time = time.time()
+            self.latest_raw_bgr = img
             annotator = (lambda im: self.yolo.draw_detections(im, self.detections)) if self.yolo else None
             self.camera.process_color_frame(img, annotator)
         except Exception: pass
@@ -257,6 +299,7 @@ class JetBotMasterSystem:
         try:
             w, h = msg.width, msg.height
             depth_np = np.frombuffer(msg.data, dtype=np.uint16).reshape((h, w))
+            self.latest_depth_np = depth_np
             with self.lock:
                 rx, ry, rz, yaw = self.robot_x, self.robot_y, self.robot_z, self.robot_yaw
             self.camera.process_depth_frame(depth_np, rx, ry, rz, yaw)
