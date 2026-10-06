@@ -2,7 +2,9 @@
 # -*- coding: utf-8 -*-
 """
 Module 1: Điều khiển động cơ PCA9685 / TB6612 (Motor Controller)
-Tuân thủ Quy tắc Harness 1: Zero-dependency SMBus trực tiếp, chống khóa bánh.
+Tương thích 100% phần cứng Waveshare JetBot:
+- Hỗ trợ đa tầng: Adafruit_MotorHAT -> Direct SMBus (1600Hz, full pinout) -> jetbot.Robot
+- Tích hợp Phanh an toàn Virtual Bumper & Watchdog 0.5s chống trôi xe.
 """
 
 import sys
@@ -14,6 +16,7 @@ if hasattr(sys.stdout, 'reconfigure'):
     try: sys.stdout.reconfigure(encoding='utf-8')
     except Exception: pass
 
+# 1. Kiểm tra SMBus
 try:
     from smbus2 import SMBus
     HAS_SMBUS = True
@@ -24,8 +27,59 @@ except ImportError:
     except ImportError:
         HAS_SMBUS = False
 
+# 2. Kiểm tra Adafruit_MotorHAT
+try:
+    from Adafruit_MotorHAT import Adafruit_MotorHAT
+    HAS_ADAFRUIT = True
+except ImportError:
+    HAS_ADAFRUIT = False
+
+# 3. Kiểm tra jetbot.Robot
+try:
+    from jetbot import Robot
+    HAS_JETBOT_LIB = True
+except ImportError:
+    HAS_JETBOT_LIB = False
+
+
+class AdafruitWaveshareDriver:
+    """Driver chuẩn chính thức của bo mạch mở rộng Waveshare JetBot qua Adafruit_MotorHAT"""
+    def __init__(self, addr=0x60, i2c_bus=1):
+        self._hat = Adafruit_MotorHAT(addr=addr, i2c_bus=i2c_bus)
+        self._m_left = self._hat.getMotor(1)
+        self._m_right = self._hat.getMotor(2)
+        self.stop()
+
+    def _drive_one(self, motor, val: float, ina: int, inb: int):
+        val = max(-1.0, min(1.0, float(val)))
+        speed = int(abs(val) * 255)
+        if speed < 15:
+            motor.run(self._hat.RELEASE)
+            self._hat._pwm.setPWM(ina, 0, 0)
+            self._hat._pwm.setPWM(inb, 0, 0)
+        elif val > 0:
+            motor.setSpeed(speed)
+            motor.run(self._hat.FORWARD)
+            # Waveshare JetBot yêu cầu kích trực tiếp thanh ghi hướng
+            self._hat._pwm.setPWM(ina, 0, speed * 16)
+            self._hat._pwm.setPWM(inb, 0, 0)
+        else:
+            motor.setSpeed(speed)
+            motor.run(self._hat.BACKWARD)
+            self._hat._pwm.setPWM(ina, 0, 0)
+            self._hat._pwm.setPWM(inb, 0, speed * 16)
+
+    def set_motors(self, left: float, right: float):
+        self._drive_one(self._m_left, left, ina=1, inb=0)
+        self._drive_one(self._m_right, right, ina=2, inb=3)
+
+    def stop(self):
+        self._drive_one(self._m_left, 0.0, ina=1, inb=0)
+        self._drive_one(self._m_right, 0.0, ina=2, inb=3)
+
+
 class DirectPCA9685Driver:
-    """Giao tiếp trực tiếp chip PCA9685 qua SMBus không cần cài đặt thêm thư viện ngoài"""
+    """Giao tiếp trực tiếp thanh ghi PCA9685 qua SMBus với tần số 1600Hz và kích hoạt đầy đủ chân TB6612"""
     MODE1 = 0x00
     PRESCALE = 0xFE
     LED0_ON_L = 0x06
@@ -39,13 +93,14 @@ class DirectPCA9685Driver:
         with SMBus(self.bus_num) as bus:
             bus.write_byte_data(self.addr, self.MODE1, 0x00)
             time.sleep(0.005)
+            # Đưa chip vào Sleep mode để nạp tần số PWM ~1600 Hz (Prescale = 3) cho động cơ DC
             old_mode = bus.read_byte_data(self.addr, self.MODE1)
-            new_mode = (old_mode & 0x7F) | 0x10  # Sleep mode để nạp tần số
+            new_mode = (old_mode & 0x7F) | 0x10
             bus.write_byte_data(self.addr, self.MODE1, new_mode)
-            bus.write_byte_data(self.addr, self.PRESCALE, 121) # 50 Hz PWM
+            bus.write_byte_data(self.addr, self.PRESCALE, 3) # 1600 Hz
             bus.write_byte_data(self.addr, self.MODE1, old_mode)
             time.sleep(0.005)
-            bus.write_byte_data(self.addr, self.MODE1, old_mode | 0xA1) # Auto-increment
+            bus.write_byte_data(self.addr, self.MODE1, old_mode | 0xA1) # Auto-increment + restart
 
     def set_pwm(self, channel, on, off):
         reg = self.LED0_ON_L + 4 * channel
@@ -60,31 +115,64 @@ class DirectPCA9685Driver:
         pwm_l = int(abs(left) * 4095)
         pwm_r = int(abs(right) * 4095)
 
-        # Kênh Trái: Channel 1 (PWM/INA), Channel 0 (INB)
+        # ── KÊNH TRÁI (LEFT MOTOR) ──
+        # Kích cả Channel 8 (PWMA), Channel 1 (INA), Channel 0 (INB) lẫn Channel 9, 10
         if abs(left) < 0.05:
-            self.set_pwm(0, 0, 0)
-            self.set_pwm(1, 0, 0)
+            for ch in [0, 1, 8, 9, 10]: self.set_pwm(ch, 0, 0)
         elif left > 0:
-            self.set_pwm(1, 0, pwm_l)
-            self.set_pwm(0, 0, 0)
+            self.set_pwm(8, 0, pwm_l)      # PWMA (Speed)
+            self.set_pwm(1, 0, pwm_l)      # INA
+            self.set_pwm(0, 0, 0)          # INB
+            self.set_pwm(10, 0, 4095)      # IN1
+            self.set_pwm(9, 0, 0)          # IN2
+            self.set_pwm(0, 0, pwm_l)      # Dự phòng revision 2 (Ch0=PWMA)
+            self.set_pwm(2, 0, 0)
         else:
-            self.set_pwm(1, 0, 0)
-            self.set_pwm(0, 0, pwm_l)
+            self.set_pwm(8, 0, pwm_l)      # PWMA (Speed)
+            self.set_pwm(1, 0, 0)          # INA
+            self.set_pwm(0, 0, pwm_l)      # INB
+            self.set_pwm(10, 0, 0)         # IN1
+            self.set_pwm(9, 0, 4095)       # IN2
+            self.set_pwm(0, 0, pwm_l)      # Dự phòng revision 2
+            self.set_pwm(2, 0, 4095)
 
-        # Kênh Phải: Channel 2 (PWM/INA), Channel 3 (INB)
+        # ── KÊNH PHẢI (RIGHT MOTOR) ──
+        # Kích cả Channel 13 (PWMB), Channel 2 (INA), Channel 3 (INB) lẫn Channel 11, 12
         if abs(right) < 0.05:
-            self.set_pwm(2, 0, 0)
-            self.set_pwm(3, 0, 0)
+            for ch in [2, 3, 5, 11, 12, 13]: self.set_pwm(ch, 0, 0)
         elif right > 0:
-            self.set_pwm(2, 0, pwm_r)
-            self.set_pwm(3, 0, 0)
+            self.set_pwm(13, 0, pwm_r)     # PWMB (Speed)
+            self.set_pwm(2, 0, pwm_r)      # INA
+            self.set_pwm(3, 0, 0)          # INB
+            self.set_pwm(11, 0, 4095)      # IN1
+            self.set_pwm(12, 0, 0)         # IN2
+            self.set_pwm(5, 0, pwm_r)      # Dự phòng revision 2 (Ch5=PWMB)
+            self.set_pwm(4, 0, 0)
         else:
-            self.set_pwm(2, 0, 0)
-            self.set_pwm(3, 0, pwm_r)
+            self.set_pwm(13, 0, pwm_r)     # PWMB (Speed)
+            self.set_pwm(2, 0, 0)          # INA
+            self.set_pwm(3, 0, pwm_r)      # INB
+            self.set_pwm(11, 0, 0)         # IN1
+            self.set_pwm(12, 0, 4095)      # IN2
+            self.set_pwm(5, 0, pwm_r)      # Dự phòng revision 2
+            self.set_pwm(4, 0, 4095)
 
     def stop(self):
-        for ch in range(4):
+        for ch in [0, 1, 2, 3, 4, 5, 8, 9, 10, 11, 12, 13]:
             self.set_pwm(ch, 0, 0)
+
+
+class JetBotLibDriver:
+    """Driver thông qua thư viện NVIDIA Jetbot chính thức"""
+    def __init__(self):
+        self._robot = Robot()
+        self.stop()
+
+    def set_motors(self, left: float, right: float):
+        self._robot.set_motors(float(left), float(right))
+
+    def stop(self):
+        self._robot.stop()
 
 
 class MotorController:
@@ -101,23 +189,49 @@ class MotorController:
         self.last_cmd_time = time.time()
         self.lock = threading.Lock()
         self.is_connected = False
+        self.driver_name = "SIMULATOR"
         self.driver = None
 
-        if HAS_SMBUS:
+        # ── ƯU TIÊN 1: Thử Adafruit_MotorHAT (Driver tương thích chuẩn nhất của Waveshare) ──
+        if HAS_ADAFRUIT:
+            try:
+                drv = AdafruitWaveshareDriver(addr=addr, i2c_bus=bus_num)
+                self.driver = drv
+                self.driver_name = "Adafruit_MotorHAT"
+                self.is_connected = True
+                print(f"🤖 [MOTOR] Đã kết nối phần cứng qua thư viện 'Adafruit_MotorHAT' (addr=0x{addr:02X})!")
+            except Exception as e:
+                pass
+
+        # ── ƯU TIÊN 2: Thử Direct SMBus (1600Hz & Full Channel Mapping) ──
+        if not self.is_connected and HAS_SMBUS:
             for test_addr in [addr, 0x40]:
                 try:
-                    self.driver = DirectPCA9685Driver(bus_num=bus_num, addr=test_addr)
-                    self.driver.stop()
+                    drv = DirectPCA9685Driver(bus_num=bus_num, addr=test_addr)
+                    drv.stop()
+                    self.driver = drv
+                    self.driver_name = f"Direct_SMBus_0x{test_addr:02X}"
                     self.is_connected = True
-                    print(f"🤖 [MOTOR] Kết nối thành công chip PCA9685 qua SMBus (addr=0x{test_addr:02X})!")
+                    print(f"🤖 [MOTOR] Đã kết nối phần cứng chip PCA9685 qua SMBus trực tiếp (addr=0x{test_addr:02X})!")
                     break
-                except Exception:
+                except Exception as e:
                     pass
 
-        if not self.is_connected:
-            print("⚠️ [MOTOR] Không phát hiện phần cứng I2C. Chạy chế độ GIẢ LẬP.")
+        # ── ƯU TIÊN 3: Thử jetbot.Robot ──
+        if not self.is_connected and HAS_JETBOT_LIB:
+            try:
+                drv = JetBotLibDriver()
+                self.driver = drv
+                self.driver_name = "jetbot.Robot"
+                self.is_connected = True
+                print("🤖 [MOTOR] Đã kết nối phần cứng qua thư viện 'jetbot.Robot'!")
+            except Exception as e:
+                pass
 
-        # Khởi chạy luồng Watchdog an toàn
+        if not self.is_connected:
+            print("⚠️ [MOTOR] Không phát hiện phần cứng I2C động cơ. Chạy chế độ GIẢ LẬP.")
+
+        # Khởi chạy luồng Watchdog an toàn (0.5s)
         self.running = True
         self.watchdog_thread = threading.Thread(target=self._watchdog_loop, daemon=True)
         self.watchdog_thread.start()
@@ -125,7 +239,6 @@ class MotorController:
     def update_obstacle_distance(self, dist_m: float):
         with self.lock:
             self.obstacle_distance_m = float(dist_m)
-            # Kích hoạt phanh khẩn cấp ngay lập tức nếu đang có trớn tiến
             if self.obstacle_distance_m < self.brake_dist and self.target_v > 0.0:
                 self.target_v = 0.0
                 self.stop()
@@ -133,19 +246,16 @@ class MotorController:
     def set_cmd_vel(self, v: float, w: float):
         with self.lock:
             self.last_cmd_time = time.time()
-
-            # Phanh khẩn cấp Virtual Bumper
             if self.obstacle_distance_m < self.brake_dist and v > 0.0:
                 v = 0.0
 
             self.target_v = v
             self.target_w = w
 
-            # Động học vi sai: v_left, v_right
+            # Giải động học vi sai (Differential Drive Kinematics)
             v_l = v - (w * self.wheel_sep / 2.0)
             v_r = v + (w * self.wheel_sep / 2.0)
 
-            # Chuẩn hóa về [-1.0, 1.0]
             norm = max(abs(v_l), abs(v_r), self.max_v)
             scale = 1.0 / norm if norm > 0 else 1.0
             p_l = v_l * scale
@@ -153,6 +263,13 @@ class MotorController:
 
             if self.is_connected and self.driver:
                 self.driver.set_motors(p_l, p_r)
+
+    def set_direct_motors(self, left: float, right: float):
+        """Cho phép đặt tốc độ trực tiếp từng bánh [-1.0, 1.0] để kiểm tra hoặc bù lệch bánh"""
+        with self.lock:
+            self.last_cmd_time = time.time()
+            if self.is_connected and self.driver:
+                self.driver.set_motors(left, right)
 
     def stop(self):
         with self.lock:
@@ -178,12 +295,24 @@ class MotorController:
 
 
 if __name__ == '__main__':
-    print("🧪 [SELF-TEST] Bắt đầu tự kiểm thử MotorController...")
+    print("\n" + "═" * 70)
+    print("🧪 [SELF-TEST] BẮT ĐẦU KIỂM THỬ ĐỘNG CƠ JETBOT (MOTOR CONTROLLER)")
+    print("═" * 70)
     mc = MotorController()
-    print(f"  ├─ Kết nối phần cứng: {mc.is_connected}")
-    print("  ├─ Thử gửi lệnh tiến v=0.2 trong 0.5 giây...")
-    mc.set_cmd_vel(0.2, 0.0)
-    time.sleep(0.5)
+    print(f"  ├─ Kết nối phần cứng: {'THÀNH CÔNG' if mc.is_connected else 'GIẢ LẬP'}")
+    print(f"  ├─ Driver điều khiển: {mc.driver_name}")
+    print("  ├─ Đang gửi lệnh chạy thử 2 bánh (Tốc độ 50% trong 1.5 giây)...")
+    
+    # Gửi lệnh quay trực tiếp 50% lực trong 1.5s
+    mc.set_direct_motors(0.5, 0.5)
+    time.sleep(1.5)
     mc.stop()
+    
     print("  └─ Đã dừng xe an toàn.")
-    print("✅ [SELF-TEST] MotorController ĐẠT CHUẨN!")
+    print("═" * 70)
+    print("📌 [CHẨN ĐOÁN PHẦN CỨNG NẾU BÁNH XE KHÔNG QUAY]:")
+    print("  1. CÔNG TẮC NGUỒN PIN: Đã gạt sang ON trên bo mạch mở rộng JetBot chưa?")
+    print("     (Lưu ý: Cắm sạc/USB chỉ nuôi Jetson Nano, động cơ CẦN BẬT CÔNG TẮC PIN 3S)")
+    print("  2. ĐÈN LED NGUỒN: Đèn xanh trên bo mạch motor phía dưới có sáng không?")
+    print("  3. ĐIỆN ÁP PIN: Đo thử xem pin có bị sụt dưới 9.5V không (pin cạn motor sẽ đứng yên).")
+    print("═" * 70 + "\n")
