@@ -84,6 +84,7 @@ class WebHandler(BaseHTTPRequestHandler):
             if inst:
                 inst.on_drive_command(v, w)
             self.send_response(200)
+            self.send_header('Access-Control-Allow-Origin', '*')
             self.end_headers()
             self.wfile.write(b'OK')
         elif self.path.startswith('/api/toggle'):

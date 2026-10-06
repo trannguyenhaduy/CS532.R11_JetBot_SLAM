@@ -365,7 +365,11 @@ class JetBotMasterSystem:
         if not self.camera: return
         try:
             w, h = msg.width, msg.height
-            depth_np = np.frombuffer(msg.data, dtype=np.uint16).reshape((h, w))
+            if getattr(msg, 'encoding', '') in ['32FC1'] or len(msg.data) == w * h * 4:
+                raw_f = np.frombuffer(msg.data, dtype=np.float32).reshape((h, w))
+                depth_np = (raw_f * 1000.0).astype(np.uint16) if raw_f.max() < 50.0 else raw_f.astype(np.uint16)
+            else:
+                depth_np = np.frombuffer(msg.data, dtype=np.uint16).reshape((h, w))
             self.latest_depth_np = depth_np
             with self.lock:
                 rx, ry, rz, yaw = self.robot_x, self.robot_y, self.robot_z, self.robot_yaw
@@ -404,6 +408,8 @@ class JetBotMasterSystem:
 
         if self.safety_brake and self.safety_brake.is_enabled:
             v, w, alert = self.safety_brake.evaluate_velocity(v, w, self.obstacle_distance)
+            if alert == "EMERGENCY_STOP":
+                print(f"🚨 [PHANH KHẨN CẤP] Cản cách {self.obstacle_distance*100:.1f} cm (< 18cm) -> Đã ngắt tiến, chỉ cho phép lùi/quay!")
 
         if self.motors:
             self.motors.set_cmd_vel(v, w)

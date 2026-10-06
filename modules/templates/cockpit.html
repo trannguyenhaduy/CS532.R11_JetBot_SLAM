@@ -172,17 +172,20 @@
       <div class="card-hdr" style="display:flex; justify-content:space-between; align-items:center;">
         <span>🎮 ĐIỀU KHIỂN XE (W, A, S, D)</span>
         <button id="btn-toggle-follower" class="tab-btn" onclick="toggleFollower()" style="border-color:var(--dim); color:var(--dim); font-size:0.72rem; padding:3px 8px; cursor:pointer;">
-          🎯 BÁM NGƯỜI: TẮT
+          🎯 BÁM NGƯỜI: TẮT (BỎ QUA)
         </button>
       </div>
+      <div id="brake-status-banner" style="margin:8px 12px 0; padding:6px 12px; border-radius:6px; font-size:0.75rem; text-align:center; font-weight:700; border:1px solid var(--emerald); color:var(--emerald); background:rgba(0, 255, 163, 0.1);">
+        🛡️ VÙNG AN TOÀN (CỰ LY CẢN: -- CM)
+      </div>
       <div class="dpad-container">
-        <div class="dpad-row"><button class="btn-drive" id="btn-up" onmousedown="sendDrive(0.25,0)" onmouseup="sendDrive(0,0)" ontouchstart="sendDrive(0.25,0)" ontouchend="sendDrive(0,0)">▲</button></div>
+        <div class="dpad-row"><button class="btn-drive" id="btn-up" onmousedown="sendDrive(0.35,0)" onmouseup="sendDrive(0,0)" ontouchstart="sendDrive(0.35,0)" ontouchend="sendDrive(0,0)">▲</button></div>
         <div class="dpad-row">
-          <button class="btn-drive" id="btn-left" onmousedown="sendDrive(0,0.70)" onmouseup="sendDrive(0,0)" ontouchstart="sendDrive(0,0.70)" ontouchend="sendDrive(0,0)">◀</button>
+          <button class="btn-drive" id="btn-left" onmousedown="sendDrive(0,0.90)" onmouseup="sendDrive(0,0)" ontouchstart="sendDrive(0,0.90)" ontouchend="sendDrive(0,0)">◀</button>
           <button class="btn-drive btn-stop" id="btn-stop" onclick="sendDrive(0,0)">■</button>
-          <button class="btn-drive" id="btn-right" onmousedown="sendDrive(0,-0.70)" onmouseup="sendDrive(0,0)" ontouchstart="sendDrive(0,-0.70)" ontouchend="sendDrive(0,0)">▶</button>
+          <button class="btn-drive" id="btn-right" onmousedown="sendDrive(0,-0.90)" onmouseup="sendDrive(0,0)" ontouchstart="sendDrive(0,-0.90)" ontouchend="sendDrive(0,0)">▶</button>
         </div>
-        <div class="dpad-row"><button class="btn-drive" id="btn-down" onmousedown="sendDrive(-0.25,0)" onmouseup="sendDrive(0,0)" ontouchstart="sendDrive(-0.25,0)" ontouchend="sendDrive(0,0)">▼</button></div>
+        <div class="dpad-row"><button class="btn-drive" id="btn-down" onmousedown="sendDrive(-0.35,0)" onmouseup="sendDrive(0,0)" ontouchstart="sendDrive(-0.35,0)" ontouchend="sendDrive(0,0)">▼</button></div>
       </div>
     </div>
 
@@ -304,98 +307,113 @@
   </div>
 
   <script>
-    // ════ THREE.JS 3D SCENE SETUP ════
-    const container = document.getElementById('three-viewport');
-    const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x0a0e17);
-    scene.fog = new THREE.FogExp2(0x0a0e17, 0.04);
-
-    const camera = new THREE.PerspectiveCamera(50, container.clientWidth / container.clientHeight, 0.1, 50);
-    camera.position.set(0, -3.5, 3.5); // Góc nhìn nghiêng từ phía sau robot
-
-    const renderer = new THREE.WebGLRenderer({ antialias: true });
-    renderer.setSize(container.clientWidth, container.clientHeight);
-    renderer.setPixelRatio(window.devicePixelRatio);
-    container.appendChild(renderer.domElement);
-
-    const controls = new THREE.OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = true;
-    controls.dampingFactor = 0.05;
-    controls.maxPolarAngle = Math.PI / 2 - 0.05; // Không nhìn dưới mặt sàn
-
-    // Ánh sáng
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
-    scene.add(ambientLight);
-    const dirLight = new THREE.DirectionalLight(0x00f0ff, 0.6);
-    dirLight.position.set(5, 5, 10);
-    scene.add(dirLight);
-
-    // Lưới mặt sàn Neon
-    const grid = new THREE.GridHelper(12, 24, 0x00f0ff, 0x1e293b);
-    grid.rotation.x = Math.PI / 2; // Nằm trên mặt phẳng XY
-    scene.add(grid);
-
-    // MÔ HÌNH ROBOT 3D
-    const robotGroup = new THREE.Group();
-    // Thân xe (Cyan Box)
-    const bodyGeo = new THREE.BoxGeometry(0.18, 0.14, 0.08);
-    const bodyMat = new THREE.MeshStandardMaterial({ color: 0x00f0ff, roughness: 0.3, metalness: 0.7 });
-    const bodyMesh = new THREE.Mesh(bodyGeo, bodyMat);
-    bodyMesh.position.z = 0.05;
-    robotGroup.add(bodyMesh);
-
-    // Mắt thần OAK-D S2
-    const camGeo = new THREE.BoxGeometry(0.04, 0.10, 0.03);
-    const camMat = new THREE.MeshStandardMaterial({ color: 0xff2a6d });
-    const camMesh = new THREE.Mesh(camGeo, camMat);
-    camMesh.position.set(0.09, 0, 0.08);
-    robotGroup.add(camMesh);
-
-    // Mũi tên chỉ hướng (Heading Needle)
-    const arrowHelper = new THREE.ArrowHelper(new THREE.Vector3(1, 0, 0), new THREE.Vector3(0.09, 0, 0.08), 0.25, 0x00ffa3);
-    robotGroup.add(arrowHelper);
-
-    scene.add(robotGroup);
-
-    // ĐƯỜNG ĐI 3D (TRAJECTORY RIBBON)
-    const pathGeo = new THREE.BufferGeometry();
-    const pathMat = new THREE.LineBasicMaterial({ color: 0x00ffa3, linewidth: 2 });
-    const pathLine = new THREE.Line(pathGeo, pathMat);
-    scene.add(pathLine);
-
-    // ĐÁM MÂY ĐIỂM 3D (3D POINT CLOUD PARTICLES)
+    // ════ THREE.JS 3D SCENE SETUP (VỚI FALLBACK AN TOÀN CHỐNG CRASH) ════
+    const hasThree = (typeof THREE !== 'undefined' && typeof THREE.OrbitControls !== 'undefined');
+    let scene = null, camera = null, renderer = null, controls = null;
+    let robotGroup = null, pathGeo = null, ptsGeo = null, semanticGroup = null;
     const MAX_PTS = 3000;
-    const ptsGeo = new THREE.BufferGeometry();
-    const ptsPos = new Float32Array(MAX_PTS * 3);
-    const ptsColors = new Float32Array(MAX_PTS * 3);
-    ptsGeo.setAttribute('position', new THREE.BufferAttribute(ptsPos, 3));
-    ptsGeo.setAttribute('color', new THREE.BufferAttribute(ptsColors, 3));
 
-    const ptsMat = new THREE.PointsMaterial({ size: 0.04, vertexColors: true, transparent: true, opacity: 0.85 });
-    const pointsMesh = new THREE.Points(ptsGeo, ptsMat);
-    scene.add(pointsMesh);
+    if (hasThree) {
+      try {
+        const container = document.getElementById('three-viewport');
+        scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x0a0e17);
+        scene.fog = new THREE.FogExp2(0x0a0e17, 0.04);
 
-    // NHÓM VẬT THỂ NGỮ NGHĨA 3D (SEMANTIC BOXES)
-    const semanticGroup = new THREE.Group();
-    scene.add(semanticGroup);
+        camera = new THREE.PerspectiveCamera(50, container.clientWidth / container.clientHeight, 0.1, 50);
+        camera.position.set(0, -3.5, 3.5);
+
+        renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(container.clientWidth, container.clientHeight);
+        renderer.setPixelRatio(window.devicePixelRatio);
+        container.appendChild(renderer.domElement);
+
+        controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+        controls.maxPolarAngle = Math.PI / 2 - 0.05;
+
+        // Ánh sáng
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
+        scene.add(ambientLight);
+        const dirLight = new THREE.DirectionalLight(0x00f0ff, 0.6);
+        dirLight.position.set(5, 5, 10);
+        scene.add(dirLight);
+
+        // Lưới mặt sàn Neon
+        const grid = new THREE.GridHelper(12, 24, 0x00f0ff, 0x1e293b);
+        grid.rotation.x = Math.PI / 2;
+        scene.add(grid);
+
+        // MÔ HÌNH ROBOT 3D
+        robotGroup = new THREE.Group();
+        const bodyGeo = new THREE.BoxGeometry(0.18, 0.14, 0.08);
+        const bodyMat = new THREE.MeshStandardMaterial({ color: 0x00f0ff, roughness: 0.3, metalness: 0.7 });
+        const bodyMesh = new THREE.Mesh(bodyGeo, bodyMat);
+        bodyMesh.position.z = 0.05;
+        robotGroup.add(bodyMesh);
+
+        // Mắt thần OAK-D S2
+        const camGeo = new THREE.BoxGeometry(0.04, 0.10, 0.03);
+        const camMat = new THREE.MeshStandardMaterial({ color: 0xff2a6d });
+        const camMesh = new THREE.Mesh(camGeo, camMat);
+        camMesh.position.set(0.09, 0, 0.08);
+        robotGroup.add(camMesh);
+
+        // Mũi tên chỉ hướng
+        const arrowHelper = new THREE.ArrowHelper(new THREE.Vector3(1, 0, 0), new THREE.Vector3(0.09, 0, 0.08), 0.25, 0x00ffa3);
+        robotGroup.add(arrowHelper);
+        scene.add(robotGroup);
+
+        // ĐƯỜNG ĐI 3D
+        pathGeo = new THREE.BufferGeometry();
+        const pathMat = new THREE.LineBasicMaterial({ color: 0x00ffa3, linewidth: 2 });
+        const pathLine = new THREE.Line(pathGeo, pathMat);
+        scene.add(pathLine);
+
+        // ĐÁM MÂY ĐIỂM 3D
+        ptsGeo = new THREE.BufferGeometry();
+        const ptsPos = new Float32Array(MAX_PTS * 3);
+        const ptsColors = new Float32Array(MAX_PTS * 3);
+        ptsGeo.setAttribute('position', new THREE.BufferAttribute(ptsPos, 3));
+        ptsGeo.setAttribute('color', new THREE.BufferAttribute(ptsColors, 3));
+
+        const ptsMat = new THREE.PointsMaterial({ size: 0.04, vertexColors: true, transparent: true, opacity: 0.85 });
+        const pointsMesh = new THREE.Points(ptsGeo, ptsMat);
+        scene.add(pointsMesh);
+
+        semanticGroup = new THREE.Group();
+        scene.add(semanticGroup);
+
+        function animate() {
+          requestAnimationFrame(animate);
+          controls.update();
+          renderer.render(scene, camera);
+        }
+        animate();
+
+        window.addEventListener('resize', () => {
+          if (container.clientWidth > 0 && container.clientHeight > 0) {
+            camera.aspect = container.clientWidth / container.clientHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(container.clientWidth, container.clientHeight);
+          }
+        });
+      } catch (e) {
+        console.warn("⚠️ Three.js lỗi:", e);
+      }
+    } else {
+      console.warn("⚠️ Không tải được Three.js CDN. Tự động chuyển sang chế độ 2D Grid map an toàn.");
+      const c = document.getElementById('three-viewport');
+      if (c) c.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#00f0ff;font-family:sans-serif;font-size:0.85rem;text-align:center;padding:20px;">🌐 Chế độ 2D Grid Map & Web Cockpit Sẵn Sàng (Offline Mode)</div>';
+    }
 
     function reset3DCamera() {
-      camera.position.set(robotGroup.position.x, robotGroup.position.y - 3.2, 3.2);
-      controls.target.set(robotGroup.position.x, robotGroup.position.y, 0);
+      if (hasThree && camera && controls && robotGroup) {
+        camera.position.set(robotGroup.position.x, robotGroup.position.y - 3.2, 3.2);
+        controls.target.set(robotGroup.position.x, robotGroup.position.y, 0);
+      }
     }
-
-    function animate() {
-      requestAnimationFrame(animate);
-      controls.update();
-      renderer.render(scene, camera);
-    }
-    animate();
-
-    window.addEventListener('resize', () => {
-      camera.aspect = container.clientWidth / container.clientHeight;
-      camera.updateProjectionMatrix();
-      renderer.setSize(container.clientWidth, container.clientHeight);
-    });
 
     // ════ 2D / 3D VIEW TOGGLE ════
     let currentView = '3d';
@@ -656,62 +674,95 @@
         const numPts = (d.points_3d && Array.isArray(d.points_3d)) ? d.points_3d.length : 0;
         document.getElementById('pts-count').innerText = `${numPts} PTS`;
 
-        // 1. Cập nhật vị trí Robot 3D
-        robotGroup.position.set(d.robot_x, d.robot_y, d.robot_z);
-        robotGroup.rotation.z = d.robot_yaw;
+        // 1-4. Cập nhật Three.js 3D (chỉ chạy khi có thư viện 3D)
+        if (hasThree && robotGroup && scene) {
+          try {
+            robotGroup.position.set(d.robot_x, d.robot_y, d.robot_z);
+            robotGroup.rotation.z = d.robot_yaw;
 
-        // 2. Cập nhật Vệt đường đi 3D
-        if (d.path && d.path.length > 1) {
-          const flat = [];
-          for (const pt of d.path) flat.push(pt[0], pt[1], pt[2] || 0.02);
-          pathGeo.setAttribute('position', new THREE.Float32BufferAttribute(flat, 3));
-        }
+            if (d.path && d.path.length > 1 && pathGeo) {
+              const flat = [];
+              for (const pt of d.path) flat.push(pt[0], pt[1], pt[2] || 0.02);
+              pathGeo.setAttribute('position', new THREE.Float32BufferAttribute(flat, 3));
+            }
 
-        // 3. Cập nhật Đám mây điểm 3D (3D Point Cloud)
-        if (d.points_3d && d.points_3d.length > 0) {
-          const positions = ptsGeo.attributes.position.array;
-          const colors = ptsGeo.attributes.color.array;
-          const count = Math.min(d.points_3d.length, MAX_PTS);
+            if (d.points_3d && d.points_3d.length > 0 && ptsGeo) {
+              const positions = ptsGeo.attributes.position.array;
+              const colors = ptsGeo.attributes.color.array;
+              const count = Math.min(d.points_3d.length, MAX_PTS);
+              for (let i = 0; i < count; i++) {
+                const p = d.points_3d[i];
+                positions[i * 3]     = p[0];
+                positions[i * 3 + 1] = p[1];
+                positions[i * 3 + 2] = p[2];
+                const normH = Math.max(0, Math.min(1, p[2] / 1.2));
+                colors[i * 3]     = normH;
+                colors[i * 3 + 1] = 1.0 - normH;
+                colors[i * 3 + 2] = 1.0;
+              }
+              ptsGeo.setDrawRange(0, count);
+              ptsGeo.attributes.position.needsUpdate = true;
+              ptsGeo.attributes.color.needsUpdate = true;
+            }
 
-          for (let i = 0; i < count; i++) {
-            const p = d.points_3d[i];
-            positions[i * 3]     = p[0];
-            positions[i * 3 + 1] = p[1];
-            positions[i * 3 + 2] = p[2];
-
-            // Tô màu theo độ cao Z (từ Cyan đến Tím Sci-Fi)
-            const normH = Math.max(0, Math.min(1, p[2] / 1.2));
-            colors[i * 3]     = normH;          // R
-            colors[i * 3 + 1] = 1.0 - normH;    // G
-            colors[i * 3 + 2] = 1.0;            // B
-          }
-          ptsGeo.setDrawRange(0, count);
-          ptsGeo.attributes.position.needsUpdate = true;
-          ptsGeo.attributes.color.needsUpdate = true;
-        }
-
-        // 4. Cập nhật Khung hộp 3D cho vật thể nhận diện (Semantic 3D Bounding Boxes)
-        while(semanticGroup.children.length > 0) {
-          semanticGroup.remove(semanticGroup.children[0]);
-        }
-        if (d.detections && d.detections.length > 0) {
-          d.detections.forEach(det => {
-            // Tọa độ vật thể trong world frame
-            const wx = d.robot_x + (det.z * Math.cos(d.robot_yaw) - (-det.x) * Math.sin(d.robot_yaw));
-            const wy = d.robot_y + (det.z * Math.sin(d.robot_yaw) + (-det.x) * Math.cos(d.robot_yaw));
-            const wz = 0.3;
-
-            // Khung hộp dây 3D
-            const boxGeo = new THREE.BoxGeometry(0.4, 0.4, 0.6);
-            const edgeGeo = new THREE.EdgesGeometry(boxGeo);
-            const boxMat = new THREE.LineBasicMaterial({ color: det.id === 0 ? 0xff2a6d : 0x00ffa3, linewidth: 2 });
-            const wireBox = new THREE.LineSegments(edgeGeo, boxMat);
-            wireBox.position.set(wx, wy, wz);
-            semanticGroup.add(wireBox);
-          });
+            if (semanticGroup) {
+              while(semanticGroup.children.length > 0) {
+                semanticGroup.remove(semanticGroup.children[0]);
+              }
+              if (d.detections && d.detections.length > 0) {
+                d.detections.forEach(det => {
+                  const wx = d.robot_x + (det.z * Math.cos(d.robot_yaw) - (-det.x) * Math.sin(d.robot_yaw));
+                  const wy = d.robot_y + (det.z * Math.sin(d.robot_yaw) + (-det.x) * Math.cos(d.robot_yaw));
+                  const boxGeo = new THREE.BoxGeometry(0.4, 0.4, 0.6);
+                  const edgeGeo = new THREE.EdgesGeometry(boxGeo);
+                  const boxMat = new THREE.LineBasicMaterial({ color: det.id === 0 ? 0xff2a6d : 0x00ffa3, linewidth: 2 });
+                  const wireBox = new THREE.LineSegments(edgeGeo, boxMat);
+                  wireBox.position.set(wx, wy, 0.3);
+                  semanticGroup.add(wireBox);
+                });
+              }
+            }
+          } catch(e) {}
         }
 
         lastStateData = d;
+
+        // Cập nhật Banner Phanh khẩn cấp & Khóa phím Tiến
+        const obsDist = d.obstacle_distance !== undefined ? d.obstacle_distance : 99.0;
+        const obsCm = (obsDist * 100).toFixed(1);
+        const brakeBanner = document.getElementById('brake-status-banner');
+        const btnUp = document.getElementById('btn-up');
+
+        if (brakeBanner) {
+          if (obsDist < 0.18) {
+            brakeBanner.style.borderColor = 'var(--rose)';
+            brakeBanner.style.color = 'var(--rose)';
+            brakeBanner.style.background = 'rgba(255, 42, 109, 0.2)';
+            brakeBanner.innerHTML = `🚨 PHANH KHẨN CẤP! CẢN ${obsCm} cm (< 18cm) · ĐÃ KHÓA TIẾN (CHO PHÉP LÙI & QUAY)!`;
+            if (btnUp) {
+              btnUp.style.borderColor = 'var(--rose)';
+              btnUp.style.color = 'var(--rose)';
+            }
+          } else if (obsDist < 0.40) {
+            brakeBanner.style.borderColor = 'var(--amber)';
+            brakeBanner.style.color = 'var(--amber)';
+            brakeBanner.style.background = 'rgba(255, 184, 0, 0.15)';
+            brakeBanner.innerHTML = `⚠️ CẢNH BÁO GIẢM TỐC: CẢN ${obsCm} cm (< 40cm)`;
+            if (btnUp) {
+              btnUp.style.borderColor = 'var(--amber)';
+              btnUp.style.color = 'var(--cyan)';
+            }
+          } else {
+            brakeBanner.style.borderColor = 'var(--emerald)';
+            brakeBanner.style.color = 'var(--emerald)';
+            brakeBanner.style.background = 'rgba(0, 255, 163, 0.1)';
+            brakeBanner.innerHTML = (obsDist > 4.0) ? '🛡️ VÙNG AN TOÀN (ĐƯỜNG THOÁNG > 4M)' : `🛡️ VÙNG AN TOÀN (CỰ LY CẢN: ${obsCm} cm)`;
+            if (btnUp) {
+              btnUp.style.borderColor = 'var(--cyan)';
+              btnUp.style.color = 'var(--cyan)';
+            }
+          }
+        }
 
         // 5. Cập nhật 2D Map (nếu bật chế độ 2D)
         if (currentView === '2d') {
@@ -957,21 +1008,26 @@
 
     window.addEventListener('keydown', (e) => {
       if (e.repeat) return;
-      if (['w','W','ArrowUp'].includes(e.key)) { sendDrive(0.25, 0); setBtnActive('btn-up', true); }
-      if (['s','S','ArrowDown'].includes(e.key)) { sendDrive(-0.25, 0); setBtnActive('btn-down', true); }
-      if (['a','A','ArrowLeft'].includes(e.key)) { sendDrive(0, 0.70); setBtnActive('btn-left', true); }
-      if (['d','D','ArrowRight'].includes(e.key)) { sendDrive(0, -0.70); setBtnActive('btn-right', true); }
-      if (e.key === ' ' || e.key === 'Escape') { sendDrive(0, 0); setBtnActive('btn-stop', true); }
+      const k = e.key.toLowerCase();
+      const code = e.code;
+      if (k === 'w' || code === 'KeyW' || k === 'arrowup') { sendDrive(0.35, 0); setBtnActive('btn-up', true); }
+      else if (k === 's' || code === 'KeyS' || k === 'arrowdown') { sendDrive(-0.35, 0); setBtnActive('btn-down', true); }
+      else if (k === 'a' || code === 'KeyA' || k === 'arrowleft') { sendDrive(0, 0.90); setBtnActive('btn-left', true); }
+      else if (k === 'd' || code === 'KeyD' || k === 'arrowright') { sendDrive(0, -0.90); setBtnActive('btn-right', true); }
+      else if (k === ' ' || k === 'escape' || code === 'Space') { sendDrive(0, 0); setBtnActive('btn-stop', true); }
     });
 
     window.addEventListener('keyup', (e) => {
-      if (['w','W','ArrowUp'].includes(e.key)) setBtnActive('btn-up', false);
-      if (['s','S','ArrowDown'].includes(e.key)) setBtnActive('btn-down', false);
-      if (['a','A','ArrowLeft'].includes(e.key)) setBtnActive('btn-left', false);
-      if (['d','D','ArrowRight'].includes(e.key)) setBtnActive('btn-right', false);
-      if (e.key === ' ' || e.key === 'Escape') setBtnActive('btn-stop', false);
+      const k = e.key.toLowerCase();
+      const code = e.code;
+      if (k === 'w' || code === 'KeyW' || k === 'arrowup') setBtnActive('btn-up', false);
+      if (k === 's' || code === 'KeyS' || k === 'arrowdown') setBtnActive('btn-down', false);
+      if (k === 'a' || code === 'KeyA' || k === 'arrowleft') setBtnActive('btn-left', false);
+      if (k === 'd' || code === 'KeyD' || k === 'arrowright') setBtnActive('btn-right', false);
+      if (k === ' ' || k === 'escape' || code === 'Space') setBtnActive('btn-stop', false);
 
-      if (['w','W','s','S','a','A','d','D','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)) {
+      if (['w','s','a','d','arrowup','arrowdown','arrowleft','arrowright'].includes(k) ||
+          ['KeyW','KeyS','KeyA','KeyD','Space'].includes(code)) {
         sendDrive(0, 0);
       }
     });

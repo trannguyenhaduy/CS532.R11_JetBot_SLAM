@@ -45,6 +45,7 @@ except ImportError:
 class AdafruitWaveshareDriver:
     """Driver chuẩn chính thức của bo mạch mở rộng Waveshare JetBot qua Adafruit_MotorHAT"""
     def __init__(self, addr=0x60, i2c_bus=1):
+        self._hat_api = Adafruit_MotorHAT
         self._hat = Adafruit_MotorHAT(addr=addr, i2c_bus=i2c_bus)
         self._m_left = self._hat.getMotor(1)
         self._m_right = self._hat.getMotor(2)
@@ -56,15 +57,15 @@ class AdafruitWaveshareDriver:
         speed = min(max(abs(mapped), 0), 255)
         motor.setSpeed(speed)
         if speed < 15:
-            motor.run(self._hat.RELEASE)
+            motor.run(self._hat_api.RELEASE)
             self._hat._pwm.setPWM(ina, 0, 0)
             self._hat._pwm.setPWM(inb, 0, 0)
         elif mapped < 0:
-            motor.run(self._hat.FORWARD)
+            motor.run(self._hat_api.FORWARD)
             self._hat._pwm.setPWM(ina, 0, 0)
             self._hat._pwm.setPWM(inb, 0, speed * 16)
         else:
-            motor.run(self._hat.BACKWARD)
+            motor.run(self._hat_api.BACKWARD)
             self._hat._pwm.setPWM(ina, 0, speed * 16)
             self._hat._pwm.setPWM(inb, 0, 0)
 
@@ -74,9 +75,11 @@ class AdafruitWaveshareDriver:
 
     def stop(self):
         for motor, ina, inb in ((self._m_left, 1, 0), (self._m_right, 2, 3)):
-            motor.run(self._hat.RELEASE)
-            self._hat._pwm.setPWM(ina, 0, 0)
-            self._hat._pwm.setPWM(inb, 0, 0)
+            if motor:
+                motor.run(self._hat_api.RELEASE)
+            if self._hat and hasattr(self._hat, '_pwm'):
+                self._hat._pwm.setPWM(ina, 0, 0)
+                self._hat._pwm.setPWM(inb, 0, 0)
 
 
 class DirectPCA9685Driver:
@@ -275,10 +278,10 @@ class MotorController:
             p_r = v_r * scale
 
             # Bù lực ma sát tối thiểu (Deadband compensation) để bánh xe không bị đứng im
-            if abs(p_l) > 0.03 and abs(p_l) < 0.25:
-                p_l = 0.25 if p_l > 0 else -0.25
-            if abs(p_r) > 0.03 and abs(p_r) < 0.25:
-                p_r = 0.25 if p_r > 0 else -0.25
+            if abs(p_l) > 0.03 and abs(p_l) < 0.30:
+                p_l = 0.30 if p_l > 0 else -0.30
+            if abs(p_r) > 0.03 and abs(p_r) < 0.30:
+                p_r = 0.30 if p_r > 0 else -0.30
 
             # Đảo cực tính động cơ nếu cần
             if self.invert_left: p_l = -p_l

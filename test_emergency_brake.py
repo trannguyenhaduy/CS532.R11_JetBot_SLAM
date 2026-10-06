@@ -92,11 +92,11 @@ class WaveshareMotorDriver:
             self._driver._pwm.setPWM(inb, 0, 0)
 
     def set_motors(self, left, right):
-        # Bù ma sát tĩnh tối thiểu (Deadband boost)
-        if abs(left) > 0.03 and abs(left) < 0.25:
-            left = 0.25 if left > 0 else -0.25
-        if abs(right) > 0.03 and abs(right) < 0.25:
-            right = 0.25 if right > 0 else -0.25
+        # Bù ma sát tĩnh tối thiểu (Deadband boost) để bánh xe không bị ì
+        if abs(left) > 0.03 and abs(left) < 0.30:
+            left = 0.30 if left > 0 else -0.30
+        if abs(right) > 0.03 and abs(right) < 0.30:
+            right = 0.30 if right > 0 else -0.30
 
         self._set_one(self._left, self._pins[0], left)
         self._set_one(self._right, self._pins[1], right)
@@ -211,19 +211,20 @@ def oak_worker():
                     depth_data = in_raw_depth.getFrame()
                     dh, dw = depth_data.shape[:2]
 
-                    # Vùng kiểm soát trung tâm (Center ROI 80x120 pixel)
-                    center_roi = depth_data[dh//2 - 40 : dh//2 + 40, dw//2 - 60 : dw//2 + 60]
-                    valid_depths = center_roi[(center_roi > 100) & (center_roi < 4500)]
-                    total_pixels = center_roi.size
+                    # Vùng hành lang an toàn trung tâm (Bỏ qua sàn gạch h > 0.55dh và trần nhà h < 0.20dh)
+                    h_start, h_end = int(dh * 0.20), int(dh * 0.55)
+                    w_start, w_end = int(dw * 0.30), int(dw * 0.70)
+                    roi = depth_data[h_start:h_end, w_start:w_end]
+
+                    # Lọc các điểm đo vật lý hợp lệ từ 120mm đến 3500mm
+                    valid_depths = roi[(roi >= 120) & (roi <= 3500)]
                     valid_count = len(valid_depths)
 
-                    # Phát hiện điểm mù siêu cận (< 15cm): Điểm ảnh tụt dưới 20%
-                    if valid_count < (total_pixels * 0.20):
-                        forward_clearance_mm = 0.0
-                    elif valid_count > 40:
+                    # Phải có tối thiểu 35 điểm cản thực tế để tránh nhiễu hạt
+                    if valid_count >= 35:
                         forward_clearance_mm = float(np.percentile(valid_depths, 5))
                     else:
-                        forward_clearance_mm = 9999.0
+                        forward_clearance_mm = 9999.0  # Đường thoáng, không có cản trước mặt
 
                 time.sleep(0.01)
     except Exception as e:
@@ -467,11 +468,13 @@ class WebHandler(BaseHTTPRequestHandler):
 
             last_drive_time = time.time()
 
-            # CAN THIỆP PHANH: Nếu đang gặp cản nguy hiểm (< 18cm) và bấm TIẾN -> KHÓA LỆNH!
-            if (l > 0 or r > 0) and forward_clearance_mm < brake_threshold_mm:
+            # CAN THIỆP PHANH: Nếu cản nguy hiểm (< 18cm) và đang bấm TIẾN -> KHÓA LỆNH TIẾN!
+            # Luôn cho phép LÙI (l < 0, r < 0) hoặc QUAY ĐẦU (l, r trái dấu) để thoát cản
+            is_trying_to_move_forward = (l > 0.05 and r > 0.05)
+            if is_trying_to_move_forward and forward_clearance_mm < brake_threshold_mm:
                 l, r = 0.0, 0.0
                 robot.stop()
-                print(f"🛑 [KHÓA LỆNH TIẾN] Cản cách {forward_clearance_mm/10.0:.1f} cm. Chỉ cho phép LÙI hoặc QUAY!")
+                print(f"🛑 [KHÓA LỆNH TIẾN] Cản cách {forward_clearance_mm/10.0:.1f} cm (< {brake_threshold_mm/10.0:.0f} cm). Cho phép LÙI hoặc QUAY để thoát!")
             else:
                 current_left = l
                 current_right = r
