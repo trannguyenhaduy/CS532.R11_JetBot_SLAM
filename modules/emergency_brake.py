@@ -23,15 +23,17 @@ if hasattr(sys.stdout, 'reconfigure'):
 class EmergencyBrake:
     """Bộ giám sát an toàn và Phanh khẩn cấp Virtual Bumper cho JetBot"""
 
-    def __init__(self, brake_dist_m=0.18, warning_dist_m=0.40, min_pts_threshold=35):
+    def __init__(self, brake_dist_m=0.18, warning_dist_m=0.40, min_pts_threshold=35, is_enabled=False):
         """
         :param brake_dist_m: Ngưỡng cự ly phanh cứng khẩn cấp (mặc định 18cm = 180mm)
         :param warning_dist_m: Ngưỡng cảnh báo giảm tốc (mặc định 40cm)
         :param min_pts_threshold: Số điểm ảnh cản tối thiểu để xác nhận (chống nhiễu hạt)
+        :param is_enabled: Bật/Tắt can thiệp phanh (Mặc định False để lái tự do)
         """
         self.brake_dist_m = float(brake_dist_m)
         self.warning_dist_m = float(warning_dist_m)
         self.min_pts_threshold = int(min_pts_threshold)
+        self.is_enabled = bool(is_enabled)
 
         self.last_clearance_m = 99.0
         self.last_alert_level = "SAFE"
@@ -40,6 +42,8 @@ class EmergencyBrake:
     def calculate_clearance(self, depth_frame):
         """
         Trích xuất cự ly vật cản gần nhất ở vùng trung tâm phía trước mũi xe.
+        LƯU Ý QUAN TRỌNG: Loại trừ 45% phía dưới khung hình (sàn gạch/bóng phản chiếu).
+        Chỉ đo hành lang cản từ độ cao 10cm đến 40cm phía trước xe.
         :param depth_frame: Ma trận ảnh độ sâu numpy (uint16 mm hoặc float mét)
         :return: cự ly vật cản tính bằng mét (float)
         """
@@ -52,9 +56,10 @@ class EmergencyBrake:
             self.last_clearance_m = 99.0
             return 99.0
 
-        # Vùng kiểm soát trung tâm (Middle ROI: 1/3 chiều cao, 1/3 chiều rộng)
-        h_start, h_end = int(h * 0.33), int(h * 0.67)
-        w_start, w_end = int(w * 0.30), int(w * 0.70)
+        # Vùng kiểm soát hành lang cản: 20% đến 55% chiều cao (trên mặt sàn)
+        # Bỏ qua hoàn toàn h > 0.55h để không chạm sàn gạch phản chiếu
+        h_start, h_end = int(h * 0.20), int(h * 0.55)
+        w_start, w_end = int(w * 0.28), int(w * 0.72)
         roi = depth_frame[h_start:h_end, w_start:w_end]
 
         # Chuẩn hóa đơn vị về mét
@@ -63,8 +68,8 @@ class EmergencyBrake:
         else:
             roi_m = roi.astype(np.float32)
 
-        # Lọc các điểm đo vật lý hợp lệ trong cự ly từ 8cm đến 4.0m
-        valid = roi_m[(roi_m >= 0.08) & (roi_m <= 4.0)]
+        # Lọc các điểm đo vật lý hợp lệ trong cự ly từ 10cm đến 3.5m
+        valid = roi_m[(roi_m >= 0.10) & (roi_m <= 3.5)]
 
         # Phải có đủ số lượng điểm tối thiểu để tránh nhiễu do điểm ảnh chết hoặc sàn trơn
         if len(valid) >= self.min_pts_threshold:
@@ -87,6 +92,12 @@ class EmergencyBrake:
         """
         if clearance_m is None:
             clearance_m = self.last_clearance_m
+
+        # Nếu tính năng phanh bị tắt: Cho phép xe chạy 100% tự do
+        if not self.is_enabled:
+            self.is_emergency_active = False
+            self.last_alert_level = "SAFE (BYPASS)"
+            return target_v, target_w, "SAFE"
 
         # 1. TRƯỜNG HỢP NGUY CẤP: Vật cản áp sát dưới ngưỡng phanh
         if clearance_m < self.brake_dist_m:
@@ -122,7 +133,7 @@ if __name__ == '__main__':
     print("🧪 [SELF-TEST] BẮT ĐẦU KIỂM THỬ ĐỘC LẬP MODULE PHANH KHẨN CẤP (EMERGENCY BRAKE)")
     print("═" * 70)
 
-    brake = EmergencyBrake(brake_dist_m=0.18, warning_dist_m=0.40)
+    brake = EmergencyBrake(brake_dist_m=0.18, warning_dist_m=0.40, is_enabled=True)
     print(f"  ├─ Ngưỡng phanh khẩn cấp: {brake.brake_dist_m}m (18cm)")
     print(f"  ├─ Ngưỡng cảnh báo giảm tốc: {brake.warning_dist_m}m (40cm)")
 

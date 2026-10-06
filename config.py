@@ -6,13 +6,14 @@ Chứa tất cả các cờ tính năng (Feature Flags) và thông số kỹ thu
 """
 
 # ─── CỜ BẬT / TẮT TÍNH NĂNG (FEATURE FLAGS) ───────────────────────────────────
-ENABLE_MOTORS    = True   # Bật/Tắt module động cơ (PCA9685 I2C 0x60)
-ENABLE_BATTERY   = True   # Bật/Tắt module đọc pin INA219 (I2C 0x41)
-ENABLE_CAMERA    = True   # Bật/Tắt module Camera OAK-D S2
-ENABLE_YOLO      = True   # Bật/Tắt module lọc nhận diện 3D Spatial AI
-ENABLE_FOLLOWER  = False  # Bật/Tắt module tự hành bám người (MẶC ĐỊNH TẮT ĐỂ ƯU TIÊN LÁI TAY)
-ENABLE_MAPPER    = True   # Bật/Tắt module bản đồ ngữ nghĩa 3D
-ENABLE_WEB       = True   # Bật/Tắt trạm điều khiển Web Cockpit (Port 8080)
+ENABLE_MOTORS       = True   # Bật/Tắt module động cơ (PCA9685 I2C 0x60)
+ENABLE_BATTERY      = True   # Bật/Tắt module đọc pin INA219 (I2C 0x41)
+ENABLE_CAMERA       = True   # Bật/Tắt module Camera OAK-D S2
+ENABLE_YOLO         = True   # Bật/Tắt module lọc nhận diện 3D Spatial AI
+ENABLE_FOLLOWER     = False  # Bật/Tắt module tự hành bám người (MẶC ĐỊNH TẮT ĐỂ ƯU TIÊN LÁI TAY)
+ENABLE_MAPPER       = True   # Bật/Tắt module bản đồ ngữ nghĩa 3D
+ENABLE_WEB          = True   # Bật/Tắt trạm điều khiển Web Cockpit (Port 8080)
+ENABLE_SAFETY_BRAKE = False  # Bật/Tắt phanh ảo Virtual Bumper (Tắt để lái WASD tự do không bị sàn gạch khóa bánh)
 
 # ─── THÔNG SỐ TRẠM ĐIỀU KHIỂN WEB ─────────────────────────────────────────────
 WEB_PORT = 8080
@@ -41,3 +42,4 @@ WATCHDOG_TIMEOUT_S  = 0.50  # Thời gian tự ngắt động cơ khi mất lệ
 DEPTH_SKIP_FRAMES = 5       # Chỉ tính mây điểm 3D 1 trong 5 frame (~3 Hz)
 DEPTH_DOWNSAMPLE_STEP = 25  # Bước nhảy lấy mẫu ma trận điểm ảnh (pixel)
 IMAGE_SKIP_FRAMES = 2       # Bỏ qua 1/2 frame video để nhẹ CPU encode JPEG
+

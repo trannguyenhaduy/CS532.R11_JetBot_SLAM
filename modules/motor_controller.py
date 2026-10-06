@@ -178,7 +178,8 @@ class JetBotLibDriver:
 class MotorController:
     """Bộ điều khiển động cơ vi sai với Phanh an toàn, Watchdog & Đảo kênh chuẩn Waveshare"""
     def __init__(self, bus_num=1, addr=0x60, wheel_sep=0.12, max_v=0.35, max_w=1.20, brake_dist=0.18,
-                 swap_motors=True, invert_linear=True, invert_left=False, invert_right=False):
+                 swap_motors=True, invert_linear=True, invert_left=False, invert_right=False,
+                 enable_brake=False):
         self.wheel_sep = wheel_sep
         self.max_v = max_v
         self.max_w = max_w
@@ -187,11 +188,13 @@ class MotorController:
         self.invert_linear = invert_linear
         self.invert_left = invert_left
         self.invert_right = invert_right
+        self.enable_brake = enable_brake
 
         self.target_v = 0.0
         self.target_w = 0.0
         self.obstacle_distance_m = 99.0
         self.last_cmd_time = time.time()
+        self.last_log_time = 0.0
         self.lock = threading.Lock()
         self.is_connected = False
         self.driver_name = "SIMULATOR"
@@ -204,9 +207,9 @@ class MotorController:
                 self.driver = drv
                 self.driver_name = "Adafruit_MotorHAT"
                 self.is_connected = True
-                print(f"🤖 [MOTOR] Đã kết nối phần cứng qua thư viện 'Adafruit_MotorHAT' (addr=0x{addr:02X})!")
+                print(f"🤖 [MOTOR] Đã kết nối phần cứng qua 'Adafruit_MotorHAT' (addr=0x{addr:02X}, bus={bus_num})!")
             except Exception as e:
-                pass
+                print(f"ℹ️ [MOTOR] Không dùng Adafruit_MotorHAT: {e}")
 
         # ── ƯU TIÊN 2: Thử Direct SMBus (1600Hz & Full Channel Mapping) ──
         if not self.is_connected and HAS_SMBUS:
@@ -220,7 +223,7 @@ class MotorController:
                     print(f"🤖 [MOTOR] Đã kết nối phần cứng chip PCA9685 qua SMBus trực tiếp (addr=0x{test_addr:02X})!")
                     break
                 except Exception as e:
-                    pass
+                    print(f"ℹ️ [MOTOR] SMBus addr=0x{test_addr:02X} không phản hồi: {e}")
 
         # ── ƯU TIÊN 3: Thử jetbot.Robot ──
         if not self.is_connected and HAS_JETBOT_LIB:
@@ -231,7 +234,7 @@ class MotorController:
                 self.is_connected = True
                 print("🤖 [MOTOR] Đã kết nối phần cứng qua thư viện 'jetbot.Robot'!")
             except Exception as e:
-                pass
+                print(f"ℹ️ [MOTOR] jetbot.Robot không khởi tạo được: {e}")
 
         if not self.is_connected:
             print("⚠️ [MOTOR] Không phát hiện phần cứng I2C động cơ. Chạy chế độ GIẢ LẬP.")
@@ -244,14 +247,15 @@ class MotorController:
     def update_obstacle_distance(self, dist_m: float):
         with self.lock:
             self.obstacle_distance_m = float(dist_m)
-            if self.obstacle_distance_m < self.brake_dist and self.target_v > 0.0:
+            if self.enable_brake and self.obstacle_distance_m < self.brake_dist and self.target_v > 0.0:
                 self.target_v = 0.0
                 self.stop()
 
     def set_cmd_vel(self, v: float, w: float):
         with self.lock:
             self.last_cmd_time = time.time()
-            if self.obstacle_distance_m < self.brake_dist and v > 0.0:
+            if self.enable_brake and self.obstacle_distance_m < self.brake_dist and v > 0.0:
+                print(f"🛑 [MOTOR PHANH] Khóa tiến do cản ở {self.obstacle_distance_m:.2f}m (< {self.brake_dist:.2f}m)!")
                 v = 0.0
 
             self.target_v = v
@@ -269,6 +273,12 @@ class MotorController:
             p_l = v_l * scale
             p_r = v_r * scale
 
+            # Bù lực ma sát tối thiểu (Deadband compensation) để bánh xe không bị đứng im
+            if abs(p_l) > 0.03 and abs(p_l) < 0.25:
+                p_l = 0.25 if p_l > 0 else -0.25
+            if abs(p_r) > 0.03 and abs(p_r) < 0.25:
+                p_r = 0.25 if p_r > 0 else -0.25
+
             # Đảo cực tính động cơ nếu cần
             if self.invert_left: p_l = -p_l
             if self.invert_right: p_r = -p_r
@@ -276,6 +286,11 @@ class MotorController:
             # Đảo 2 kênh Trái <-> Phải (Waveshare M1=Phải, M2=Trái) để sửa lỗi quay ngược
             if self.swap_motors:
                 p_l, p_r = p_r, p_l
+
+            now = time.time()
+            if (abs(v) > 0.01 or abs(w) > 0.01) and (now - self.last_log_time > 0.3):
+                self.last_log_time = now
+                print(f"🕹️ [MOTOR] Lệnh: v={v:.2f}, w={w:.2f} -> L={p_l:.2f}, R={p_r:.2f} [{self.driver_name}]")
 
             if self.is_connected and self.driver:
                 self.driver.set_motors(p_l, p_r)

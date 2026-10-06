@@ -176,13 +176,13 @@
         </button>
       </div>
       <div class="dpad-container">
-        <div class="dpad-row"><button class="btn-drive" onmousedown="sendDrive(0.2,0)" onmouseup="sendDrive(0,0)" ontouchstart="sendDrive(0.2,0)" ontouchend="sendDrive(0,0)">▲</button></div>
+        <div class="dpad-row"><button class="btn-drive" id="btn-up" onmousedown="sendDrive(0.25,0)" onmouseup="sendDrive(0,0)" ontouchstart="sendDrive(0.25,0)" ontouchend="sendDrive(0,0)">▲</button></div>
         <div class="dpad-row">
-          <button class="btn-drive" onmousedown="sendDrive(0,0.6)" onmouseup="sendDrive(0,0)" ontouchstart="sendDrive(0,0.6)" ontouchend="sendDrive(0,0)">◀</button>
-          <button class="btn-drive btn-stop" onclick="sendDrive(0,0)">■</button>
-          <button class="btn-drive" onmousedown="sendDrive(0,-0.6)" onmouseup="sendDrive(0,0)" ontouchstart="sendDrive(0,-0.6)" ontouchend="sendDrive(0,0)">▶</button>
+          <button class="btn-drive" id="btn-left" onmousedown="sendDrive(0,0.70)" onmouseup="sendDrive(0,0)" ontouchstart="sendDrive(0,0.70)" ontouchend="sendDrive(0,0)">◀</button>
+          <button class="btn-drive btn-stop" id="btn-stop" onclick="sendDrive(0,0)">■</button>
+          <button class="btn-drive" id="btn-right" onmousedown="sendDrive(0,-0.70)" onmouseup="sendDrive(0,0)" ontouchstart="sendDrive(0,-0.70)" ontouchend="sendDrive(0,0)">▶</button>
         </div>
-        <div class="dpad-row"><button class="btn-drive" onmousedown="sendDrive(-0.2,0)" onmouseup="sendDrive(0,0)" ontouchstart="sendDrive(-0.2,0)" ontouchend="sendDrive(0,0)">▼</button></div>
+        <div class="dpad-row"><button class="btn-drive" id="btn-down" onmousedown="sendDrive(-0.25,0)" onmouseup="sendDrive(0,0)" ontouchstart="sendDrive(-0.25,0)" ontouchend="sendDrive(0,0)">▼</button></div>
       </div>
     </div>
 
@@ -936,23 +936,44 @@
       }
     }
 
-    // Điều khiển động cơ
+    // Điều khiển động cơ với phản hồi trực quan (Visual Teleop Feedback)
     let driveTimer = null;
     function sendDrive(linear, angular) {
       if (driveTimer) clearInterval(driveTimer);
-      fetch('/api/drive?v=' + linear + '&w=' + angular);
-      if (linear !== 0 || angular !== 0) driveTimer = setInterval(() => fetch('/api/drive?v=' + linear + '&w=' + angular), 200);
+      fetch('/api/drive?v=' + linear + '&w=' + angular).catch(() => {});
+      if (linear !== 0 || angular !== 0) {
+        driveTimer = setInterval(() => fetch('/api/drive?v=' + linear + '&w=' + angular).catch(() => {}), 150);
+      }
     }
+
+    function setBtnActive(id, active) {
+      const el = document.getElementById(id);
+      if (el) {
+        el.style.background = active ? 'rgba(0, 240, 255, 0.4)' : '';
+        el.style.borderColor = active ? 'var(--cyan)' : '';
+        el.style.boxShadow = active ? '0 0 12px var(--cyan)' : '';
+      }
+    }
+
     window.addEventListener('keydown', (e) => {
       if (e.repeat) return;
-      if (['w','W'].includes(e.key)) sendDrive(0.2, 0);
-      if (['s','S'].includes(e.key)) sendDrive(-0.2, 0);
-      if (['a','A'].includes(e.key)) sendDrive(0, 0.6);
-      if (['d','D'].includes(e.key)) sendDrive(0, -0.6);
-      if (e.key === ' ') sendDrive(0, 0);
+      if (['w','W','ArrowUp'].includes(e.key)) { sendDrive(0.25, 0); setBtnActive('btn-up', true); }
+      if (['s','S','ArrowDown'].includes(e.key)) { sendDrive(-0.25, 0); setBtnActive('btn-down', true); }
+      if (['a','A','ArrowLeft'].includes(e.key)) { sendDrive(0, 0.70); setBtnActive('btn-left', true); }
+      if (['d','D','ArrowRight'].includes(e.key)) { sendDrive(0, -0.70); setBtnActive('btn-right', true); }
+      if (e.key === ' ' || e.key === 'Escape') { sendDrive(0, 0); setBtnActive('btn-stop', true); }
     });
+
     window.addEventListener('keyup', (e) => {
-      if (['w','W','s','S','a','A','d','D'].includes(e.key)) sendDrive(0, 0);
+      if (['w','W','ArrowUp'].includes(e.key)) setBtnActive('btn-up', false);
+      if (['s','S','ArrowDown'].includes(e.key)) setBtnActive('btn-down', false);
+      if (['a','A','ArrowLeft'].includes(e.key)) setBtnActive('btn-left', false);
+      if (['d','D','ArrowRight'].includes(e.key)) setBtnActive('btn-right', false);
+      if (e.key === ' ' || e.key === 'Escape') setBtnActive('btn-stop', false);
+
+      if (['w','W','s','S','a','A','d','D','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)) {
+        sendDrive(0, 0);
+      }
     });
   </script>
 </body>

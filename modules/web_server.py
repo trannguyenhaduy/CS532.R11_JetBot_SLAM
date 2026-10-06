@@ -52,7 +52,7 @@ class WebHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header('Content-Type', 'text/html; charset=utf-8')
             self.end_headers()
-            content = HTML_PAGE if (HTML_PAGE and len(HTML_PAGE) > 500) else get_cockpit_html()
+            content = get_cockpit_html() or HTML_PAGE
             self.wfile.write(content.encode('utf-8'))
         elif self.path.startswith('/stream.mjpg'):
             self.send_response(200)
