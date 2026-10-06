@@ -1660,7 +1660,14 @@ def mock_simulator_worker():
 
     with state.lock:
         state.points_3d = mock_pts
-        state.detections = []
+        state.detections = [
+            {"id": 0, "name": "PERSON", "score": 0.92, "x": -0.45, "y": 0.05, "z": 1.40},
+            {"id": 56, "name": "CHAIR", "score": 0.86, "x": 0.65, "y": -0.10, "z": 1.75}
+        ]
+        state.obstacle_distance = 1.40
+        state.valid_depth_pct = 95.5
+        state.avg_confidence = 0.89
+        state.camera_source = "OAK-D S2 SIMULATOR"
         state.map_width = map_w
         state.map_height = map_h
         state.map_resolution = 0.05
@@ -1674,16 +1681,7 @@ def mock_simulator_worker():
     sim_capacity_ah = 2.6 * (88.0 / 100.0)
     sim_nominal_ah = 2.6
 
-    # Kết nối trực tiếp Webcam Laptop thật nếu có
-    cap = None
-    try:
-        cap = cv2.VideoCapture(0)
-        if cap.isOpened():
-            print("📷 [SIMULATOR] Đã kết nối Webcam Laptop thành công! Bạn có thể xem hình ảnh thật trên Web Cockpit.")
-        else:
-            cap = None
-    except Exception:
-        cap = None
+    print("📷 [SIMULATOR] Khởi chạy thành công OAK-D S2 Cam Simulator (Mô phỏng 3D Cyber Room 15 FPS)!")
 
     while not is_shutdown():
         try:
@@ -1722,116 +1720,54 @@ def mock_simulator_worker():
                 state.battery_remaining_min = rem_min
                 state.battery_status = status_str
 
-            # Lấy ảnh từ Webcam Laptop hoặc tạo khung hình ảo Cyber Grid
-            got_cam = False
-            if cap is not None:
-                try:
-                    ret, raw_frame = cap.read()
-                    if ret and raw_frame is not None:
-                        frame = cv2.resize(raw_frame, (640, 480))
-                        frame = cv2.flip(frame, 1) # Lật gương cho tự nhiên
-                        got_cam = True
-                except Exception:
-                    got_cam = False
+            # ─── TẠO KHUNG HÌNH 640x480 OAK-D S2 CAM SIMULATOR CHUẨN 15 FPS ───
+            frame = np.zeros((480, 640, 3), dtype=np.uint8)
+            frame[:] = (18, 22, 30) # Nền tối Cyber
 
-            if not got_cam:
-                frame = np.zeros((480, 640, 3), dtype=np.uint8)
-                frame[:] = (18, 22, 30) # Nền tối Cyber
-                for gx in range(0, 640, 40): cv2.line(frame, (gx, 0), (gx, 480), (35, 45, 60), 1)
-                for gy in range(0, 480, 40): cv2.line(frame, (0, gy), (640, gy), (35, 45, 60), 1)
+            # Vẽ lưới không gian ảo (Cyber Perspective Grid)
+            for gx in range(0, 640, 40): cv2.line(frame, (gx, 0), (gx, 480), (35, 45, 60), 1)
+            for gy in range(0, 480, 40): cv2.line(frame, (0, gy), (640, gy), (35, 45, 60), 1)
 
-            # Phát hiện người dùng (PERSON) từ ảnh webcam qua vùng màu da / chuyển động
-            # 3. Xử lý Thị giác Biên & Spatial AI thực tế (Nhiệm vụ Thành viên 2)
-            raw_dets = []
-            person_found = False
-            p_dist = 3.5
-            calc_obstacle = 3.5
-            p_x, p_y, p_w, p_h = 0, 0, 0, 0
-            user_3d_x, user_3d_y = 0.0, 0.0
+            # Quét laser radar ngang
+            scan_y = int((step * 10) % 480)
+            cv2.line(frame, (0, scan_y), (640, scan_y), (0, 240, 255), 1)
 
-            if got_cam:
-                try:
-                    # Đo độ nét thực tế của ảnh (Laplacian Variance)
-                    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-                    lap_var = cv2.Laplacian(gray, cv2.CV_64F).var()
-                    clarity_pct = min(100.0, max(5.0, lap_var / 2.2))
-                    with state.lock:
-                        state.valid_depth_pct = round(clarity_pct, 1)
-                        state.camera_source = "WEBCAM LAPTOP REAL-TIME"
+            # Cự ly dao động nhẹ để mô phỏng vật thể sống động
+            p_dist = round(1.40 + math.sin(step * 0.1) * 0.05, 2)
+            px_w = 140 + int(math.sin(step * 0.15) * 3)
+            px_h = 320 + int(math.cos(step * 0.15) * 3)
 
-                    # Nhận diện người thật (PERSON) qua phân đoạn màu da & hình thái học
-                    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-                    mask = cv2.inRange(hsv, np.array([0, 35, 60]), np.array([25, 255, 255]))
-                    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-                    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
-                    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                    if contours:
-                        valid_c = [c for c in contours if cv2.contourArea(c) > 3000]
-                        if valid_c:
-                            c = max(valid_c, key=cv2.contourArea)
-                            area = cv2.contourArea(c)
-                            bx, by, bw, bh = cv2.boundingRect(c)
-                            aspect = bh / float(max(1, bw))
-                            if 0.7 <= aspect <= 3.8 and bw > 60 and bh > 70:
-                                person_found = True
-                                p_x, p_y, p_w, p_h = bx, by, bw, bh
-                                # Cự ly Z tính từ kích thước khung hình: người đứng càng gần -> bw càng lớn
-                                p_dist = round(max(0.30, min(3.80, 175.0 / max(bw, 60))), 2)
-                                user_3d_x = round(((bx + bw / 2.0) - 320.0) * p_dist / 400.0, 2)
-                                user_3d_y = round(((by + bh / 2.0) - 240.0) * p_dist / 400.0, 2)
-                                conf = round(min(0.96, max(0.68, 0.65 + (area / 70000.0) * 0.30)), 2)
-                                raw_dets.append({
-                                    "id": 0, "name": "PERSON", "score": conf,
-                                    "x": user_3d_x, "y": user_3d_y, "z": p_dist,
-                                    "bbox": [bx, by, bw, bh]
-                                })
-                except Exception: pass
-            else:
-                with state.lock:
-                    state.valid_depth_pct = 0.0
-                    state.camera_source = "CHỜ CAMERA..."
+            # Vật thể 1: PERSON (Hồng Cyber)
+            cv2.rectangle(frame, (120, 100), (120 + px_w, 100 + px_h), (255, 42, 109), 2)
+            cv2.rectangle(frame, (120, 72), (120 + px_w, 98), (255, 42, 109), -1)
+            cv2.putText(frame, f"PERSON 92% ({p_dist}m)", (125, 92), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2)
+            cv2.putText(frame, "3D: X:-0.45m Y:0.05m Z:1.40m", (125, 410), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (255, 42, 109), 1)
 
-            # 4. Chạy trực tiếp qua logic bộ lọc 5 lớp mục tiêu của Thành viên 2 (spatial_perception_node.py)
-            if HAS_TV2_FILTER and SpatialPerceptionFilter is not None:
-                filtered_dets = SpatialPerceptionFilter.filter_target_objects(raw_dets)
-                mock_depth = np.full((360, 480), int(min(4000, p_dist * 1000)), dtype=np.uint16)
-                if person_found:
-                    d_x1 = max(0, min(479, int(p_x * 480 / 640)))
-                    d_x2 = max(0, min(480, int((p_x + p_w) * 480 / 640)))
-                    d_y1 = max(0, min(359, int(p_y * 360 / 480)))
-                    d_y2 = max(0, min(360, int((p_y + p_h) * 360 / 480)))
-                    mock_depth[d_y1:d_y2, d_x1:d_x2] = max(150, int(p_dist * 1000))
-                calc_obstacle = SpatialPerceptionFilter.calculate_obstacle_distance(mock_depth)
-            else:
-                filtered_dets = [d for d in raw_dets if d.get('id') in [0, 56, 60, 62, 11] and 0.3 <= d.get('z', 0) <= 4.0]
-                calc_obstacle = p_dist if person_found else 3.5
-
-            with state.lock:
-                state.detections = filtered_dets
-                state.obstacle_distance = calc_obstacle
-                if filtered_dets:
-                    scores = [d['score'] for d in filtered_dets]
-                    state.avg_confidence = round(float(sum(scores)) / len(scores), 2)
-                else:
-                    state.avg_confidence = 0.0
-
-            # 5. Vẽ Bounding Box THỰC TẾ & HUD Thành viên 2 lên khung hình
-            if person_found:
-                cv2.rectangle(frame, (p_x, p_y), (p_x + p_w, p_y + p_h), (255, 42, 109), 2)
-                cv2.putText(frame, f"PERSON {int(filtered_dets[0]['score']*100)}% (Z: {p_dist}m, X: {user_3d_x}m)",
-                            (p_x, max(25, p_y - 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (255, 42, 109), 2)
+            # Vật thể 2: CHAIR (Xanh ngọc Cyber)
+            cv2.rectangle(frame, (380, 180), (520, 400), (0, 255, 163), 2)
+            cv2.rectangle(frame, (380, 152), (520, 178), (0, 255, 163), -1)
+            cv2.putText(frame, "CHAIR 86% (1.75m)", (385, 172), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 0), 2)
+            cv2.putText(frame, "3D: X:0.65m Y:-0.10m Z:1.75m", (385, 390), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 255, 163), 1)
 
             # HUD Thông tin Cảm biến TV2 thực tế
-            source_tag = "WEBCAM LAPTOP REAL-TIME" if got_cam else "CHỜ CAMERA..."
-            cv2.putText(frame, f"[{source_tag} // TV2 SPATIAL AI] FPS: {state.calc_fps} | NET: {state.valid_depth_pct}%",
-                        (20, 440), cv2.FONT_HERSHEY_SIMPLEX, 0.46, (0, 240, 255), 1)
-            cv2.putText(frame, f"Cự ly vật cản (/obstacle_distance): {calc_obstacle}m | Mục tiêu TV2: {len(filtered_dets)}",
-                        (20, 465), cv2.FONT_HERSHEY_SIMPLEX, 0.46,
-                        (0, 255, 163) if calc_obstacle >= 0.35 else (255, 42, 109), 1)
+            cv2.putText(frame, f"[OAK-D S2 CAM SIMULATOR] 15.0 FPS | NET: 95.5%", (20, 440),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.46, (0, 240, 255), 1)
+            cv2.putText(frame, f"Cự ly vật cản (/obstacle_distance): {p_dist}m (VÙNG AN TOÀN)", (20, 465),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.46, (0, 255, 163), 1)
+
+            sim_dets = [
+                {"id": 0, "name": "PERSON", "score": 0.92, "x": -0.45, "y": 0.05, "z": p_dist},
+                {"id": 56, "name": "CHAIR", "score": 0.86, "x": 0.65, "y": -0.10, "z": 1.75}
+            ]
 
             _, jpeg = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), 65])
             with state.lock:
                 state.latest_jpeg = jpeg.tobytes()
+                state.detections = sim_dets
+                state.obstacle_distance = p_dist
+                state.valid_depth_pct = 95.5
+                state.avg_confidence = 0.89
+                state.camera_source = "OAK-D S2 SIMULATOR"
                 state.img_counter += 1
                 state.odom_counter += 1
                 state.last_odom_recv = time.time()
