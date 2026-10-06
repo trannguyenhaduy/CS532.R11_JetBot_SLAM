@@ -11,11 +11,11 @@
   </group>
 
   <!-- 2. CỤM THÀNH VIÊN 2: MẮT THẦN CAMERA OAK-D S2 & SPATIAL AI (VISION & VPU) -->
-  <include file="$(find jetbot_slam)/launch/camera_ai.launch"/>
+  <include file="$(find jetbot_slam)/camera_ai.launch"/>
   <node pkg="jetbot_slam" type="spatial_perception_node.py" name="spatial_ai_filter" output="screen" respawn="true" respawn_delay="3"/>
 
   <!-- 3. CỤM THÀNH VIÊN 3: VISUAL SLAM (RTAB-MAP) & CÂY TỌA ĐỘ TF2 -->
-  <include file="$(find jetbot_slam)/launch/rtabmap_slam.launch"/>
+  <include file="$(find jetbot_slam)/rtabmap_slam.launch"/>
 
   <!-- 4. CỤM THÀNH VIÊN 3: BẢN ĐỒ NGỮ NGHĨA 3D (GOM CỤM & CẮM CỜ VẬT THỂ) -->
   <node pkg="jetbot_slam" type="semantic_mapping_node.py" name="semantic_mapping_engine" output="screen" respawn="true" respawn_delay="2"/>
