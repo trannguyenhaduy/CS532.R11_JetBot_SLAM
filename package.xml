@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>jetbot_slam</name>
+  <version>1.0.0</version>
+  <description>CS532.R11 - JetBot 3D Semantic SLAM with OAK-D S2 and RTAB-Map</description>
+
+  <maintainer email="trannguyenhaduy@gmail.com">Tran Nguyen Ha Duy</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>catkin</buildtool_depend>
+
+  <depend>rospy</depend>
+  <depend>std_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>visualization_msgs</depend>
+  <depend>tf2_ros</depend>
+  <depend>rtabmap_ros</depend>
+
+  <export>
+  </export>
+</package>
