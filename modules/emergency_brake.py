@@ -23,10 +23,10 @@ if hasattr(sys.stdout, 'reconfigure'):
 class EmergencyBrake:
     """Bộ giám sát an toàn và Phanh khẩn cấp Virtual Bumper cho JetBot"""
 
-    def __init__(self, brake_dist_m=0.18, warning_dist_m=0.40, min_pts_threshold=35, is_enabled=False):
+    def __init__(self, brake_dist_m=0.25, warning_dist_m=0.45, min_pts_threshold=35, is_enabled=False):
         """
-        :param brake_dist_m: Ngưỡng cự ly phanh cứng khẩn cấp (mặc định 18cm = 180mm)
-        :param warning_dist_m: Ngưỡng cảnh báo giảm tốc (mặc định 40cm)
+        :param brake_dist_m: Ngưỡng cự ly phanh cứng khẩn cấp (mặc định 25cm = 250mm để bù trôi)
+        :param warning_dist_m: Ngưỡng cảnh báo giảm tốc (mặc định 45cm = 450mm)
         :param min_pts_threshold: Số điểm ảnh cản tối thiểu để xác nhận (chống nhiễu hạt)
         :param is_enabled: Bật/Tắt can thiệp phanh (Mặc định False để lái tự do)
         """
@@ -117,8 +117,8 @@ class EmergencyBrake:
         elif clearance_m < self.warning_dist_m:
             self.is_emergency_active = False
             self.last_alert_level = "WARNING"
-            # Giảm tốc độ tiến còn tối đa 0.15 m/s để tiếp cận êm ái
-            capped_v = min(0.15, target_v) if target_v > 0.0 else target_v
+            # Giảm tốc độ tiến còn tối đa 0.12 m/s để tiếp cận êm ái, phanh không bị giật
+            capped_v = min(0.12, target_v) if target_v > 0.0 else target_v
             return capped_v, target_w, "WARNING"
 
         # 3. TRƯỜNG HỢP AN TOÀN TUYỆT ĐỐI

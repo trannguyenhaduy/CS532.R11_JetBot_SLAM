@@ -92,11 +92,11 @@ class WaveshareMotorDriver:
             self._driver._pwm.setPWM(inb, 0, 0)
 
     def set_motors(self, left, right):
-        # Bù ma sát tĩnh tối thiểu (Deadband boost) để bánh xe không bị ì
-        if abs(left) > 0.03 and abs(left) < 0.30:
-            left = 0.30 if left > 0 else -0.30
-        if abs(right) > 0.03 and abs(right) < 0.30:
-            right = 0.30 if right > 0 else -0.30
+        # Bù ma sát tĩnh tối thiểu (Deadband boost nhẹ) để bánh xe lăn êm
+        if abs(left) > 0.03 and abs(left) < 0.16:
+            left = 0.16 if left > 0 else -0.16
+        if abs(right) > 0.03 and abs(right) < 0.16:
+            right = 0.16 if right > 0 else -0.16
 
         self._set_one(self._left, self._pins[0], left)
         self._set_one(self._right, self._pins[1], right)
@@ -117,7 +117,7 @@ last_drive_time = time.time()
 current_left = 0.0
 current_right = 0.0
 forward_clearance_mm = 9999.0
-brake_threshold_mm = 180.0     # 18cm = 180mm
+brake_threshold_mm = 250.0     # 25cm = 250mm (Nâng lên 25cm để bù quán tính trôi khi dừng)
 is_emergency_braked = False
 brake_event_count = 0
 
@@ -318,22 +318,30 @@ HTML_PAGE = """<!DOCTYPE html>
 <div class="ctrl-card">
   <div class="status-row">
     <span>Ngưỡng phanh khẩn cấp:</span>
-    <span class="status-val" id="thresh-val">18 cm (180 mm)</span>
+    <span class="status-val" id="thresh-val">25 cm (250 mm)</span>
   </div>
   <div class="status-row">
     <span>Số lần kích hoạt phanh:</span>
     <span class="status-val" id="brake-count">0 lần</span>
   </div>
+  <div class="status-row">
+    <span>Tốc độ di chuyển:</span>
+    <span style="display:flex; gap:6px;">
+      <button class="tab-btn" id="spd-slow" onclick="setSpeed(0.15, 0.13, 'slow')" style="padding:2px 8px; border-radius:4px; font-size:0.75rem; background:#131d2e; color:#94a3b8; border:1px solid #1e2d44; cursor:pointer;">🐢 Chậm (15%)</button>
+      <button class="tab-btn active" id="spd-norm" onclick="setSpeed(0.20, 0.16, 'norm')" style="padding:2px 8px; border-radius:4px; font-size:0.75rem; background:rgba(0,240,255,0.2); color:var(--cyan); border:1px solid var(--cyan); cursor:pointer; font-weight:bold;">🐇 Chuẩn (20%)</button>
+      <button class="tab-btn" id="spd-fast" onclick="setSpeed(0.25, 0.20, 'fast')" style="padding:2px 8px; border-radius:4px; font-size:0.75rem; background:#131d2e; color:#94a3b8; border:1px solid #1e2d44; cursor:pointer;">⚡ Nhanh (25%)</button>
+    </span>
+  </div>
 
   <div class="dpad">
     <div></div>
-    <button class="btn" id="b-up" onmousedown="drive(0.4, 0.4)" onmouseup="drive(0,0)" ontouchstart="drive(0.4, 0.4)" ontouchend="drive(0,0)">▲</button>
+    <button class="btn" id="b-up" onmousedown="drive(speedLinear, speedLinear)" onmouseup="drive(0,0)" ontouchstart="drive(speedLinear, speedLinear)" ontouchend="drive(0,0)">▲</button>
     <div></div>
-    <button class="btn" id="b-left" onmousedown="drive(-0.4, 0.4)" onmouseup="drive(0,0)" ontouchstart="drive(-0.4, 0.4)" ontouchend="drive(0,0)">◀</button>
+    <button class="btn" id="b-left" onmousedown="drive(-speedTurn, speedTurn)" onmouseup="drive(0,0)" ontouchstart="drive(-speedTurn, speedTurn)" ontouchend="drive(0,0)">◀</button>
     <button class="btn btn-stop" id="b-stop" onclick="drive(0,0)">■</button>
-    <button class="btn" id="b-right" onmousedown="drive(0.4, -0.4)" onmouseup="drive(0,0)" ontouchstart="drive(0.4, -0.4)" ontouchend="drive(0,0)">▶</button>
+    <button class="btn" id="b-right" onmousedown="drive(speedTurn, -speedTurn)" onmouseup="drive(0,0)" ontouchstart="drive(speedTurn, -speedTurn)" ontouchend="drive(0,0)">▶</button>
     <div></div>
-    <button class="btn" id="b-down" onmousedown="drive(-0.4, -0.4)" onmouseup="drive(0,0)" ontouchstart="drive(-0.4, -0.4)" ontouchend="drive(0,0)">▼</button>
+    <button class="btn" id="b-down" onmousedown="drive(-speedLinear, -speedLinear)" onmouseup="drive(0,0)" ontouchstart="drive(-speedLinear, -speedLinear)" ontouchend="drive(0,0)">▼</button>
     <div></div>
   </div>
 
@@ -341,6 +349,30 @@ HTML_PAGE = """<!DOCTYPE html>
 </div>
 
 <script>
+  let speedLinear = 0.20;
+  let speedTurn = 0.16;
+
+  function setSpeed(lin, turn, mode) {
+    speedLinear = lin;
+    speedTurn = turn;
+    ['spd-slow', 'spd-norm', 'spd-fast'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) {
+        el.style.background = '#131d2e';
+        el.style.color = '#94a3b8';
+        el.style.borderColor = '#1e2d44';
+        el.style.fontWeight = 'normal';
+      }
+    });
+    const cur = document.getElementById('spd-' + mode);
+    if (cur) {
+      cur.style.background = 'rgba(0,240,255,0.2)';
+      cur.style.color = 'var(--cyan)';
+      cur.style.borderColor = 'var(--cyan)';
+      cur.style.fontWeight = 'bold';
+    }
+  }
+
   let driveTimer = null;
   function drive(l, r) {
     if (driveTimer) clearInterval(driveTimer);
@@ -376,10 +408,10 @@ HTML_PAGE = """<!DOCTYPE html>
         hud.classList.add('alert');
         badge.classList.add('alert');
         badge.innerText = '🚨 PHANH KHẨN CẤP!';
-      } else if (d.clearance_mm < 400) {
+      } else if (d.clearance_mm < 450) {
         hud.classList.remove('alert');
         badge.classList.remove('alert');
-        badge.innerText = '⚠️ CẢNH BÁO';
+        badge.innerText = '⚠️ CẢNH BÁO GIẢM TỐC';
         badge.style.borderColor = 'var(--amber)';
         badge.style.color = 'var(--amber)';
       } else {
@@ -397,15 +429,25 @@ HTML_PAGE = """<!DOCTYPE html>
   // Bàn phím WASD
   window.addEventListener('keydown', (e) => {
     if (e.repeat) return;
-    if (['w','W','ArrowUp'].includes(e.key)) { drive(0.4, 0.4); highlight('b-up', true); }
-    if (['s','S','ArrowDown'].includes(e.key)) { drive(-0.4, -0.4); highlight('b-down', true); }
-    if (['a','A','ArrowLeft'].includes(e.key)) { drive(-0.4, 0.4); highlight('b-left', true); }
-    if (['d','D','ArrowRight'].includes(e.key)) { drive(0.4, -0.4); highlight('b-right', true); }
-    if (e.key === ' ' || e.key === 'Escape') { drive(0,0); highlight('b-stop', true); }
+    const k = e.key.toLowerCase();
+    const code = e.code;
+    if (k === 'w' || code === 'KeyW' || k === 'arrowup') { drive(speedLinear, speedLinear); highlight('b-up', true); }
+    else if (k === 's' || code === 'KeyS' || k === 'arrowdown') { drive(-speedLinear, -speedLinear); highlight('b-down', true); }
+    else if (k === 'a' || code === 'KeyA' || k === 'arrowleft') { drive(-speedTurn, speedTurn); highlight('b-left', true); }
+    else if (k === 'd' || code === 'KeyD' || k === 'arrowright') { drive(speedTurn, -speedTurn); highlight('b-right', true); }
+    else if (k === ' ' || k === 'escape' || code === 'Space') { drive(0,0); highlight('b-stop', true); }
   });
   window.addEventListener('keyup', (e) => {
-    ['b-up','b-down','b-left','b-right','b-stop'].forEach(id => highlight(id, false));
-    if (['w','W','s','S','a','A','d','D','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)) {
+    const k = e.key.toLowerCase();
+    const code = e.code;
+    if (k === 'w' || code === 'KeyW' || k === 'arrowup') highlight('b-up', false);
+    if (k === 's' || code === 'KeyS' || k === 'arrowdown') highlight('b-down', false);
+    if (k === 'a' || code === 'KeyA' || k === 'arrowleft') highlight('b-left', false);
+    if (k === 'd' || code === 'KeyD' || k === 'arrowright') highlight('b-right', false);
+    if (k === ' ' || k === 'escape' || code === 'Space') highlight('b-stop', false);
+
+    if (['w','s','a','d','arrowup','arrowdown','arrowleft','arrowright'].includes(k) ||
+        ['KeyW','KeyS','KeyA','KeyD','Space'].includes(code)) {
       drive(0,0);
     }
   });

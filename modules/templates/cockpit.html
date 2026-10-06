@@ -179,13 +179,13 @@
         🛡️ VÙNG AN TOÀN (CỰ LY CẢN: -- CM)
       </div>
       <div class="dpad-container">
-        <div class="dpad-row"><button class="btn-drive" id="btn-up" onmousedown="sendDrive(0.35,0)" onmouseup="sendDrive(0,0)" ontouchstart="sendDrive(0.35,0)" ontouchend="sendDrive(0,0)">▲</button></div>
+        <div class="dpad-row"><button class="btn-drive" id="btn-up" onmousedown="sendDrive(0.20,0)" onmouseup="sendDrive(0,0)" ontouchstart="sendDrive(0.20,0)" ontouchend="sendDrive(0,0)">▲</button></div>
         <div class="dpad-row">
-          <button class="btn-drive" id="btn-left" onmousedown="sendDrive(0,0.90)" onmouseup="sendDrive(0,0)" ontouchstart="sendDrive(0,0.90)" ontouchend="sendDrive(0,0)">◀</button>
+          <button class="btn-drive" id="btn-left" onmousedown="sendDrive(0,0.50)" onmouseup="sendDrive(0,0)" ontouchstart="sendDrive(0,0.50)" ontouchend="sendDrive(0,0)">◀</button>
           <button class="btn-drive btn-stop" id="btn-stop" onclick="sendDrive(0,0)">■</button>
-          <button class="btn-drive" id="btn-right" onmousedown="sendDrive(0,-0.90)" onmouseup="sendDrive(0,0)" ontouchstart="sendDrive(0,-0.90)" ontouchend="sendDrive(0,0)">▶</button>
+          <button class="btn-drive" id="btn-right" onmousedown="sendDrive(0,-0.50)" onmouseup="sendDrive(0,0)" ontouchstart="sendDrive(0,-0.50)" ontouchend="sendDrive(0,0)">▶</button>
         </div>
-        <div class="dpad-row"><button class="btn-drive" id="btn-down" onmousedown="sendDrive(-0.35,0)" onmouseup="sendDrive(0,0)" ontouchstart="sendDrive(-0.35,0)" ontouchend="sendDrive(0,0)">▼</button></div>
+        <div class="dpad-row"><button class="btn-drive" id="btn-down" onmousedown="sendDrive(-0.20,0)" onmouseup="sendDrive(0,0)" ontouchstart="sendDrive(-0.20,0)" ontouchend="sendDrive(0,0)">▼</button></div>
       </div>
     </div>
 
@@ -734,20 +734,20 @@
         const btnUp = document.getElementById('btn-up');
 
         if (brakeBanner) {
-          if (obsDist < 0.18) {
+          if (obsDist < 0.25) {
             brakeBanner.style.borderColor = 'var(--rose)';
             brakeBanner.style.color = 'var(--rose)';
             brakeBanner.style.background = 'rgba(255, 42, 109, 0.2)';
-            brakeBanner.innerHTML = `🚨 PHANH KHẨN CẤP! CẢN ${obsCm} cm (< 18cm) · ĐÃ KHÓA TIẾN (CHO PHÉP LÙI & QUAY)!`;
+            brakeBanner.innerHTML = `🚨 PHANH KHẨN CẤP! CẢN ${obsCm} cm (< 25cm) · ĐÃ KHÓA TIẾN (CHO PHÉP LÙI & QUAY)!`;
             if (btnUp) {
               btnUp.style.borderColor = 'var(--rose)';
               btnUp.style.color = 'var(--rose)';
             }
-          } else if (obsDist < 0.40) {
+          } else if (obsDist < 0.45) {
             brakeBanner.style.borderColor = 'var(--amber)';
             brakeBanner.style.color = 'var(--amber)';
             brakeBanner.style.background = 'rgba(255, 184, 0, 0.15)';
-            brakeBanner.innerHTML = `⚠️ CẢNH BÁO GIẢM TỐC: CẢN ${obsCm} cm (< 40cm)`;
+            brakeBanner.innerHTML = `⚠️ CẢNH BÁO GIẢM TỐC: CẢN ${obsCm} cm (< 45cm)`;
             if (btnUp) {
               btnUp.style.borderColor = 'var(--amber)';
               btnUp.style.color = 'var(--cyan)';
@@ -1010,10 +1010,10 @@
       if (e.repeat) return;
       const k = e.key.toLowerCase();
       const code = e.code;
-      if (k === 'w' || code === 'KeyW' || k === 'arrowup') { sendDrive(0.35, 0); setBtnActive('btn-up', true); }
-      else if (k === 's' || code === 'KeyS' || k === 'arrowdown') { sendDrive(-0.35, 0); setBtnActive('btn-down', true); }
-      else if (k === 'a' || code === 'KeyA' || k === 'arrowleft') { sendDrive(0, 0.90); setBtnActive('btn-left', true); }
-      else if (k === 'd' || code === 'KeyD' || k === 'arrowright') { sendDrive(0, -0.90); setBtnActive('btn-right', true); }
+      if (k === 'w' || code === 'KeyW' || k === 'arrowup') { sendDrive(0.20, 0); setBtnActive('btn-up', true); }
+      else if (k === 's' || code === 'KeyS' || k === 'arrowdown') { sendDrive(-0.20, 0); setBtnActive('btn-down', true); }
+      else if (k === 'a' || code === 'KeyA' || k === 'arrowleft') { sendDrive(0, 0.50); setBtnActive('btn-left', true); }
+      else if (k === 'd' || code === 'KeyD' || k === 'arrowright') { sendDrive(0, -0.50); setBtnActive('btn-right', true); }
       else if (k === ' ' || k === 'escape' || code === 'Space') { sendDrive(0, 0); setBtnActive('btn-stop', true); }
     });
 

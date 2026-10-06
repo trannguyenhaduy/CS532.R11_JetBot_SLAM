@@ -272,16 +272,21 @@ class MotorController:
             v_l = actual_v - (actual_w * self.wheel_sep / 2.0)
             v_r = actual_v + (actual_w * self.wheel_sep / 2.0)
 
-            norm = max(abs(v_l), abs(v_r), self.max_v)
-            scale = 1.0 / norm if norm > 0 else 1.0
-            p_l = v_l * scale
-            p_r = v_r * scale
+            # Quy đổi từ vận tốc m/s sang tỉ lệ PWM [-1.0, 1.0] (Tốc độ tối đa JetBot ~0.55 m/s)
+            HW_MAX_V = 0.55
+            p_l = v_l / HW_MAX_V
+            p_r = v_r / HW_MAX_V
 
-            # Bù lực ma sát tối thiểu (Deadband compensation) để bánh xe không bị đứng im
-            if abs(p_l) > 0.03 and abs(p_l) < 0.30:
-                p_l = 0.30 if p_l > 0 else -0.30
-            if abs(p_r) > 0.03 and abs(p_r) < 0.30:
-                p_r = 0.30 if p_r > 0 else -0.30
+            # Giới hạn trần tốc độ tối đa 35% PWM để xe chạy đầm, phanh kịp thời và quay không văng
+            MAX_DUTY = 0.35
+            p_l = max(-MAX_DUTY, min(MAX_DUTY, p_l))
+            p_r = max(-MAX_DUTY, min(MAX_DUTY, p_r))
+
+            # Bù lực ma sát tối thiểu (Deadband boost nhẹ) để bánh xe lăn êm
+            if abs(p_l) > 0.03 and abs(p_l) < 0.18:
+                p_l = 0.18 if p_l > 0 else -0.18
+            if abs(p_r) > 0.03 and abs(p_r) < 0.18:
+                p_r = 0.18 if p_r > 0 else -0.18
 
             # Đảo cực tính động cơ nếu cần
             if self.invert_left: p_l = -p_l

@@ -25,8 +25,8 @@ PCA9685_ADDR = 0x60
 INA219_ADDR  = 0x41
 
 WHEEL_SEPARATION_M = 0.12  # Khoảng cách 2 bánh vi sai (mét)
-MAX_LINEAR_SPEED   = 0.35  # Vận tốc tiến tối đa (m/s)
-MAX_ANGULAR_SPEED  = 1.20  # Vận tốc quay tối đa (rad/s)
+MAX_LINEAR_SPEED   = 0.20  # Vận tốc tiến tối đa (m/s) - Giảm xuống 0.20 m/s để phanh kịp thời
+MAX_ANGULAR_SPEED  = 0.60  # Vận tốc quay tối đa (rad/s) - Giảm xuống 0.60 rad/s để xe quay êm ái
 
 # ─── CẤU HÌNH ĐẢO KÊNH ĐỘNG CƠ (MOTOR ORIENTATION) ────────────────────────────
 SWAP_MOTORS        = True   # True: Đảo kênh Trái <-> Phải (Khắc phục lỗi M1=Phải, M2=Trái gây quay ngược)
@@ -35,7 +35,7 @@ INVERT_LEFT_MOTOR  = False  # True: Đảo cực tính bánh trái nếu bị qu
 INVERT_RIGHT_MOTOR = False  # True: Đảo cực tính bánh phải nếu bị quay lùi khi tiến
 
 # ─── THÔNG SỐ AN TOÀN (HARNESS SAFETY) ────────────────────────────────────────
-SAFETY_BRAKE_DIST_M = 0.18  # Ngưỡng phanh Virtual Bumper (18cm, 180mm)
+SAFETY_BRAKE_DIST_M = 0.25  # Ngưỡng phanh Virtual Bumper nâng lên 25cm (250mm) để có quán tính trôi dừng an toàn
 WATCHDOG_TIMEOUT_S  = 0.50  # Thời gian tự ngắt động cơ khi mất lệnh lái
 
 # ─── THÔNG SỐ TỐI ƯU HÓA TÀI NGUYÊN (CPU THROTTLING) ──────────────────────────
