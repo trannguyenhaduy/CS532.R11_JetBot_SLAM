@@ -1,16 +1,29 @@
 <launch>
   <!-- ═════════════════════════════════════════════════════════════════════════ -->
-  <!-- CAMERA AI LAUNCH — OAK-D S2 CAMERA DRIVER BRINGUP                         -->
-  <!-- Khởi động phần cứng OAK-D S2 qua USB 3.0 (Stereo Depth + RGB Image)       -->
+  <!-- CAMERA AI LAUNCH — OAK-D S2 CAMERA & VPU SPATIAL AI (TINY-YOLOV4)         -->
+  <!-- Ngưỡng tin cậy 0.25 giúp nhận diện nhạy cả Chai nước, Ghế và Người        -->
   <!-- ═════════════════════════════════════════════════════════════════════════ -->
-  <arg name="enableRviz" default="false" />
+  <arg name="enableRviz"    default="false" />
+  <arg name="confidence"    default="0.25" />
+  <arg name="camera_model"  default="OAK-D" />
+  <arg name="use_yolo"      default="true" />
 
   <!-- 1. CÂY TỌA ĐỘ TF2: base_link -> oak-d_frame (camera trước mũi xe) -->
   <node pkg="tf2_ros" type="static_transform_publisher" name="base_to_camera_tf"
         args="0.08 0.0 0.12 0 0 0 base_link oak-d_frame" />
 
-  <!-- 2. KHỞI CHẠY DRIVER CAMERA OAK-D S2 QUA DEPTHAI-ROS -->
-  <include file="$(find depthai_examples)/launch/stereo_inertial_node.launch">
-    <arg name="enableRviz" value="$(arg enableRviz)" />
-  </include>
+  <!-- 2. KHỞI CHẠY DRIVER CAMERA OAK-D S2 (YOLO VPU HOẶC STEREO INERTIAL) -->
+  <group if="$(arg use_yolo)">
+    <include file="$(find depthai_examples)/launch/yolov4_publisher.launch">
+      <arg name="enableRviz"    value="$(arg enableRviz)" />
+      <arg name="camera_model"  value="$(arg camera_model)" />
+      <arg name="confidence"    value="$(arg confidence)" />
+    </include>
+  </group>
+
+  <group unless="$(arg use_yolo)">
+    <include file="$(find depthai_examples)/launch/stereo_inertial_node.launch">
+      <arg name="enableRviz" value="$(arg enableRviz)" />
+    </include>
+  </group>
 </launch>

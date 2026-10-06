@@ -311,27 +311,32 @@ class JetBotMasterSystem:
         except Exception: pass
 
     def _ai_inference_loop(self):
-        """Vòng lặp AI dự phòng: Chỉ chạy khi VPU hoàn toàn không phát topic (>3s)"""
+        """Vòng lặp AI dự phòng: Tự động bổ trợ nhận diện PERSON khi VPU chỉ thấy mặt gần bàn"""
         while self.running:
-            if self.flags.yolo and self.yolo:
+            if self.flags.yolo and self.yolo and (self.latest_raw_bgr is not None):
                 now = time.time()
-                # Nếu VPU đang hoạt động tốt (trong 3s), tuyệt đối không chạy CPU để tránh giật lag
-                if (now - self.last_vpu_det_time > 3.0) and (self.latest_raw_bgr is not None):
+                with self.lock:
+                    has_person = any(d.get('name') == 'PERSON' for d in self.detections)
+                    vpu_idle = (now - self.last_vpu_det_time > 3.0)
+
+                # Nếu chưa phát hiện thấy PERSON (do ngồi sát camera) hoặc VPU chưa bật:
+                if (not has_person) or vpu_idle:
                     try:
                         img_copy = self.latest_raw_bgr.copy()
                         depth_copy = self.latest_depth_np
-                        dets = self.yolo.detect_fallback(img_copy, depth_copy)
-                        tracked = self.yolo.tracker.update(dets)
-                        if tracked:
+                        face_dets = self.yolo.detect_fallback(img_copy, depth_copy)
+                        if face_dets:
                             with self.lock:
-                                self.detections = tracked
+                                non_person = [d for d in self.detections if d.get('name') != 'PERSON']
+                                combined = self.yolo.tracker.update(non_person + face_dets)
+                                self.detections = combined
                             self.last_fallback_found_time = now
-                        elif now - self.last_fallback_found_time > 1.5:
+                        elif vpu_idle and (now - self.last_fallback_found_time > 1.5):
                             with self.lock:
                                 self.detections = []
                     except Exception:
                         pass
-            time.sleep(0.50)
+            time.sleep(0.40)
 
     def _ros_image_cb(self, msg):
         if not self.camera: return
