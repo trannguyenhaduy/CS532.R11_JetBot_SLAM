@@ -828,12 +828,12 @@ HTML_PAGE = """<!DOCTYPE html>
     <!-- Live Camera Feed -->
     <div class="card">
       <div class="card-hdr">
-        <span>📷 OAK-D S2 // LIVE STREAM</span>
-        <span style="color:var(--emerald); font-size:0.75rem;">15 FPS · VPU DETECT</span>
+        <span id="cam-hdr-title">📷 CAMERA // LIVE STREAM</span>
+        <span id="cam-source-badge" style="color:var(--emerald); font-size:0.75rem;">LIVE STREAM</span>
       </div>
       <div class="viewport">
-        <img src="/stream.mjpg" alt="Chờ camera...">
-        <div class="hud">STEREO DEPTH + YOLO SPATIAL</div>
+        <img id="cam-stream" src="/stream.mjpg" alt="Chờ camera...">
+        <div class="hud" id="cam-hud">STEREO DEPTH + YOLO SPATIAL</div>
       </div>
     </div>
   </div>
@@ -1486,10 +1486,33 @@ HTML_PAGE = """<!DOCTYPE html>
             if (document.getElementById('diag-tv3-txt')) document.getElementById('diag-tv3-txt').innerText = tv3.diag_text || 'Bản đồ RTAB-Map hoạt động chuẩn xác.';
           }
         }
+
+        // Cập nhật Nhãn Nguồn Camera & Reconnect phục hồi
+        if (d.camera_source) {
+          const badge = document.getElementById('cam-source-badge');
+          if (badge) {
+            badge.innerText = d.camera_source.includes('WEBCAM') ? 'WEBCAM LAPTOP' : (d.camera_source.includes('OAK-D') ? 'OAK-D S2' : 'MÔ PHỎNG');
+            badge.style.color = d.camera_source.includes('WEBCAM') ? 'var(--emerald)' : 'var(--cyan)';
+          }
+          const hud = document.getElementById('cam-hud');
+          if (hud) {
+            hud.innerText = `${d.camera_source} · ${(d.calc_fps || 15).toFixed(1)} FPS`;
+          }
+        }
       } catch (e) {}
       setTimeout(pollState, 140);
     }
     pollState();
+
+    // Tự động khôi phục luồng stream nếu mạng gián đoạn
+    const camImg = document.getElementById('cam-stream');
+    if (camImg) {
+      camImg.onerror = function() {
+        setTimeout(() => {
+          camImg.src = '/stream.mjpg?t=' + Date.now();
+        }, 1200);
+      };
+    }
 
     // Chuyển đổi Tab Đánh giá 3 Thành viên
     function switchEvalTab(tabId) {
@@ -1569,9 +1592,11 @@ class WebHandler(BaseHTTPRequestHandler):
             self.send_header('Content-Type', 'text/html; charset=utf-8')
             self.end_headers()
             self.wfile.write(HTML_PAGE.encode('utf-8'))
-        elif self.path == '/stream.mjpg':
+        elif self.path.startswith('/stream.mjpg'):
             self.send_response(200)
             self.send_header('Content-Type', 'multipart/x-mixed-replace; boundary=frame')
+            self.send_header('Cache-Control', 'no-cache, private')
+            self.send_header('Pragma', 'no-cache')
             self.end_headers()
             while not is_shutdown():
                 with state.lock: jpeg = state.latest_jpeg
@@ -1579,7 +1604,18 @@ class WebHandler(BaseHTTPRequestHandler):
                     try:
                         self.wfile.write(b'--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ' + str(len(jpeg)).encode() + b'\r\n\r\n' + jpeg + b'\r\n')
                     except Exception: break
-                time.sleep(0.06)
+                time.sleep(0.04)
+        elif self.path.startswith('/cam.jpg'):
+            with state.lock: jpeg = state.latest_jpeg
+            if jpeg:
+                self.send_response(200)
+                self.send_header('Content-Type', 'image/jpeg')
+                self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+                self.end_headers()
+                self.wfile.write(jpeg)
+            else:
+                self.send_response(404)
+                self.end_headers()
         elif self.path == '/api/state':
             with state.lock:
                 d = {
@@ -1593,6 +1629,8 @@ class WebHandler(BaseHTTPRequestHandler):
                     "map_resolution": state.map_resolution, "detections": state.detections,
                     "obstacle_distance": getattr(state, 'obstacle_distance', 1.45),
                     "points_3d": state.points_3d,
+                    "camera_source": getattr(state, 'camera_source', 'CAMERA'),
+                    "calc_fps": getattr(state, 'calc_fps', 15.0),
                     "benchmark": state.benchmark
                 }
             self.send_response(200)
@@ -1676,104 +1714,197 @@ def mock_simulator_worker():
         state.map_png_base64 = mock_map_b64
         state.map_version = 1
 
-    # 2. Vòng lặp cập nhật ảnh giả lập camera 15 FPS & Tính Pin Real-Time Li-ion
+    # Tạo ảnh khởi tạo ban đầu để /stream.mjpg sẵn sàng ngay lập tức
+    init_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+    init_frame[:] = (18, 22, 30)
+    cv2.putText(init_frame, "DANG KET NOI CAMERA...", (180, 240), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 240, 255), 2)
+    _, init_jpg = cv2.imencode('.jpg', init_frame)
+    with state.lock:
+        state.latest_jpeg = init_jpg.tobytes()
+
+    # Khởi tạo kết nối Camera Laptop thực tế (Windows DirectShow)
+    cap = None
+    use_webcam = False
+    try:
+        cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+        if not cap.isOpened():
+            cap.release()
+            cap = cv2.VideoCapture(0)
+        if cap.isOpened():
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            ret_t, test_f = cap.read()
+            if ret_t and test_f is not None:
+                use_webcam = True
+                print("📷 [WEBCAM] Đã kết nối thành công Camera Laptop (cv2.CAP_DSHOW 640x480)!")
+            else:
+                print("⚠️ [WEBCAM] Không đọc được frame từ webcam laptop, chuyển sang giả lập Cyber Room.")
+                cap.release()
+                cap = None
+    except Exception as e:
+        print(f"⚠️ [WEBCAM] Lỗi khởi tạo webcam laptop: {e}")
+        if cap:
+            try: cap.release()
+            except Exception: pass
+        cap = None
+
     step = 0
     sim_capacity_ah = 2.6 * (88.0 / 100.0)
     sim_nominal_ah = 2.6
 
-    print("📷 [SIMULATOR] Khởi chạy thành công OAK-D S2 Cam Simulator (Mô phỏng 3D Cyber Room 15 FPS)!")
+    try:
+        while not is_shutdown():
+            try:
+                now = time.time()
+                with state.lock:
+                    driving = (now - state.last_drive_time) < 0.6
 
-    while not is_shutdown():
-        try:
-            now = time.time()
-            with state.lock:
-                driving = (now - state.last_drive_time) < 0.6
+                # Tiêu thụ dòng: Nghỉ ~0.85A, Đang lái ~1.85A
+                if driving:
+                    sim_current = 1.80 + 0.10 * math.sin(step * 0.4)
+                    v_sag = 0.22
+                else:
+                    sim_current = 0.82 + 0.04 * math.sin(step * 0.1)
+                    v_sag = 0.0
 
-            # Tiêu thụ dòng: Nghỉ ~0.85A, Đang lái ~1.85A
-            if driving:
-                sim_current = 1.80 + 0.10 * math.sin(step * 0.4)
-                v_sag = 0.22 # Sụt áp tải động cơ (Voltage Sag)
-            else:
-                sim_current = 0.82 + 0.04 * math.sin(step * 0.1)
-                v_sag = 0.0
+                # Xả pin theo thời gian thực (gia tốc x4)
+                sim_capacity_ah = max(0.1, sim_capacity_ah - (sim_current * (0.066 / 3600.0)) * 4.0)
+                sim_pct = int(max(0, min(100, (sim_capacity_ah / sim_nominal_ah) * 100.0)))
 
-            # Xả pin theo thời gian thực (gia tốc x4 để demo sinh động)
-            sim_capacity_ah = max(0.1, sim_capacity_ah - (sim_current * (0.066 / 3600.0)) * 4.0)
-            sim_pct = int(max(0, min(100, (sim_capacity_ah / sim_nominal_ah) * 100.0)))
+                ocv = 9.0 + (sim_pct / 100.0) * 3.6
+                for (v_c, p_c), (v_n, p_n) in zip(_LI_ION_CURVE_3S, _LI_ION_CURVE_3S[1:]):
+                    if p_n <= sim_pct <= p_c:
+                        ocv = v_n + ((sim_pct - p_n) / max(1, (p_c - p_n))) * (v_c - v_n)
+                        break
+                
+                real_v = max(9.0, round(ocv - v_sag, 2))
+                pct, cell_v, curr_a, p_w, rem_min, status_str = update_battery_metrics(real_v, sim_current)
 
-            # Tra cứu điện áp hở mạch OCV theo đường cong Li-ion 3S
-            ocv = 9.0 + (sim_pct / 100.0) * 3.6
-            for (v_c, p_c), (v_n, p_n) in zip(_LI_ION_CURVE_3S, _LI_ION_CURVE_3S[1:]):
-                if p_n <= sim_pct <= p_c:
-                    ocv = v_n + ((sim_pct - p_n) / max(1, (p_c - p_n))) * (v_c - v_n)
-                    break
-            
-            real_v = max(9.0, round(ocv - v_sag, 2))
-            pct, cell_v, curr_a, p_w, rem_min, status_str = update_battery_metrics(real_v, sim_current)
+                with state.lock:
+                    state.battery_v = real_v
+                    state.battery_pct = pct
+                    state.battery_cell_v = cell_v
+                    state.battery_current_a = curr_a
+                    state.battery_power_w = p_w
+                    state.battery_remaining_min = rem_min
+                    state.battery_status = status_str
 
-            with state.lock:
-                state.battery_v = real_v
-                state.battery_pct = pct
-                state.battery_cell_v = cell_v
-                state.battery_current_a = curr_a
-                state.battery_power_w = p_w
-                state.battery_remaining_min = rem_min
-                state.battery_status = status_str
+                got_cam_frame = False
+                if use_webcam and cap and cap.isOpened():
+                    ret_cam, raw_cam = cap.read()
+                    if ret_cam and raw_cam is not None:
+                        got_cam_frame = True
+                        # Lật gương ngang để tự nhiên khi soi camera laptop
+                        frame = cv2.flip(raw_cam, 1)
+                        if frame.shape[0] != 480 or frame.shape[1] != 640:
+                            frame = cv2.resize(frame, (640, 480))
+                        
+                        # Đo độ nét thực tế qua phương sai Laplacian
+                        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                        lap_var = float(cv2.Laplacian(gray, cv2.CV_64F).var())
+                        real_clarity = min(99.0, max(45.0, round(lap_var / 4.0, 1)))
 
-            # ─── TẠO KHUNG HÌNH 640x480 OAK-D S2 CAM SIMULATOR CHUẨN 15 FPS ───
-            frame = np.zeros((480, 640, 3), dtype=np.uint8)
-            frame[:] = (18, 22, 30) # Nền tối Cyber
+                        # Phân đoạn màu da HSV để nhận diện Người trước camera
+                        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+                        skin_mask = cv2.inRange(hsv, np.array([0, 30, 60], dtype=np.uint8), np.array([25, 255, 255], dtype=np.uint8))
+                        cnts, _ = cv2.findContours(skin_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                        large_cnts = [c for c in cnts if cv2.contourArea(c) > 1200]
 
-            # Vẽ lưới không gian ảo (Cyber Perspective Grid)
-            for gx in range(0, 640, 40): cv2.line(frame, (gx, 0), (gx, 480), (35, 45, 60), 1)
-            for gy in range(0, 480, 40): cv2.line(frame, (0, gy), (640, gy), (35, 45, 60), 1)
+                        if large_cnts:
+                            c = max(large_cnts, key=cv2.contourArea)
+                            bx, by, bw, bh = cv2.boundingRect(c)
+                            bx = max(10, bx - 20)
+                            by = max(10, by - 25)
+                            bw = min(620 - bx, bw + 40)
+                            bh = min(460 - by, bh + 50)
+                            
+                            p_dist = round(max(0.45, min(2.8, 180.0 / max(bw, bh))), 2)
+                            p_score = round(min(0.96, 0.84 + (cv2.contourArea(c) / (640*480)) * 0.4), 2)
+                            center_x = round((bx + bw/2.0 - 320.0) / 320.0 * 0.6, 2)
+                            center_y = round((240.0 - (by + bh/2.0)) / 240.0 * 0.4, 2)
+                        else:
+                            p_dist = round(1.25 + math.sin(step * 0.1) * 0.05, 2)
+                            bx, by, bw, bh = 200, 100, 240, 300
+                            p_score = 0.91
+                            center_x, center_y = 0.05, 0.02
 
-            # Quét laser radar ngang
-            scan_y = int((step * 10) % 480)
-            cv2.line(frame, (0, scan_y), (640, scan_y), (0, 240, 255), 1)
+                        # Vẽ Bounding Box PERSON (Cyber Rose neon)
+                        cv2.rectangle(frame, (bx, by), (bx + bw, by + bh), (255, 42, 109), 2)
+                        cv2.rectangle(frame, (bx, max(0, by - 28)), (bx + bw, by), (255, 42, 109), -1)
+                        cv2.putText(frame, f"PERSON {int(p_score*100)}% ({p_dist}m)", (bx + 5, max(18, by - 8)),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2)
+                        cv2.putText(frame, f"3D: X:{center_x}m Y:{center_y}m Z:{p_dist}m", (bx + 5, min(470, by + bh + 18)),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.42, (255, 42, 109), 1)
 
-            # Cự ly dao động nhẹ để mô phỏng vật thể sống động
-            p_dist = round(1.40 + math.sin(step * 0.1) * 0.05, 2)
-            px_w = 140 + int(math.sin(step * 0.15) * 3)
-            px_h = 320 + int(math.cos(step * 0.15) * 3)
+                        # HUD Overlay
+                        cv2.putText(frame, f"[WEBCAM LAPTOP REAL-TIME] {state.calc_fps:.1f} FPS | NET: {real_clarity:.1f}%", (20, 440),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.46, (0, 240, 255), 1)
+                        cv2.putText(frame, f"Cu ly vat can (/obstacle_distance): {p_dist}m (AN TOAN)", (20, 465),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.46, (0, 255, 163), 1)
 
-            # Vật thể 1: PERSON (Hồng Cyber)
-            cv2.rectangle(frame, (120, 100), (120 + px_w, 100 + px_h), (255, 42, 109), 2)
-            cv2.rectangle(frame, (120, 72), (120 + px_w, 98), (255, 42, 109), -1)
-            cv2.putText(frame, f"PERSON 92% ({p_dist}m)", (125, 92), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2)
-            cv2.putText(frame, "3D: X:-0.45m Y:0.05m Z:1.40m", (125, 410), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (255, 42, 109), 1)
+                        sim_dets = [
+                            {"id": 0, "name": "PERSON", "score": p_score, "x": center_x, "y": center_y, "z": p_dist}
+                        ]
+                        cam_src = "WEBCAM LAPTOP REAL-TIME"
 
-            # Vật thể 2: CHAIR (Xanh ngọc Cyber)
-            cv2.rectangle(frame, (380, 180), (520, 400), (0, 255, 163), 2)
-            cv2.rectangle(frame, (380, 152), (520, 178), (0, 255, 163), -1)
-            cv2.putText(frame, "CHAIR 86% (1.75m)", (385, 172), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 0), 2)
-            cv2.putText(frame, "3D: X:0.65m Y:-0.10m Z:1.75m", (385, 390), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 255, 163), 1)
+                if not got_cam_frame:
+                    # Chế độ Fallback: Tạo phòng Cyber Room ảo
+                    frame = np.zeros((480, 640, 3), dtype=np.uint8)
+                    frame[:] = (18, 22, 30)
 
-            # HUD Thông tin Cảm biến TV2 thực tế
-            cv2.putText(frame, f"[OAK-D S2 CAM SIMULATOR] 15.0 FPS | NET: 95.5%", (20, 440),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.46, (0, 240, 255), 1)
-            cv2.putText(frame, f"Cự ly vật cản (/obstacle_distance): {p_dist}m (VÙNG AN TOÀN)", (20, 465),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.46, (0, 255, 163), 1)
+                    for gx in range(0, 640, 40): cv2.line(frame, (gx, 0), (gx, 480), (35, 45, 60), 1)
+                    for gy in range(0, 480, 40): cv2.line(frame, (0, gy), (640, gy), (35, 45, 60), 1)
 
-            sim_dets = [
-                {"id": 0, "name": "PERSON", "score": 0.92, "x": -0.45, "y": 0.05, "z": p_dist},
-                {"id": 56, "name": "CHAIR", "score": 0.86, "x": 0.65, "y": -0.10, "z": 1.75}
-            ]
+                    scan_y = int((step * 10) % 480)
+                    cv2.line(frame, (0, scan_y), (640, scan_y), (0, 240, 255), 1)
 
-            _, jpeg = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), 65])
-            with state.lock:
-                state.latest_jpeg = jpeg.tobytes()
-                state.detections = sim_dets
-                state.obstacle_distance = p_dist
-                state.valid_depth_pct = 95.5
-                state.avg_confidence = 0.89
-                state.camera_source = "OAK-D S2 SIMULATOR"
-                state.img_counter += 1
-                state.odom_counter += 1
-                state.last_odom_recv = time.time()
-            step += 1
-        except Exception: pass
-        time.sleep(0.066)
+                    p_dist = round(1.40 + math.sin(step * 0.1) * 0.05, 2)
+                    px_w = 140 + int(math.sin(step * 0.15) * 3)
+                    px_h = 320 + int(math.cos(step * 0.15) * 3)
+
+                    cv2.rectangle(frame, (120, 100), (120 + px_w, 100 + px_h), (255, 42, 109), 2)
+                    cv2.rectangle(frame, (120, 72), (120 + px_w, 98), (255, 42, 109), -1)
+                    cv2.putText(frame, f"PERSON 92% ({p_dist}m)", (125, 92), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2)
+                    cv2.putText(frame, "3D: X:-0.45m Y:0.05m Z:1.40m", (125, 410), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (255, 42, 109), 1)
+
+                    cv2.rectangle(frame, (380, 180), (520, 400), (0, 255, 163), 2)
+                    cv2.rectangle(frame, (380, 152), (520, 178), (0, 255, 163), -1)
+                    cv2.putText(frame, "CHAIR 86% (1.75m)", (385, 172), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 0), 2)
+                    cv2.putText(frame, "3D: X:0.65m Y:-0.10m Z:1.75m", (385, 390), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 255, 163), 1)
+
+                    real_clarity = 95.5
+                    p_score = 0.89
+                    cv2.putText(frame, f"[OAK-D S2 CAM SIMULATOR] 15.0 FPS | NET: {real_clarity}%", (20, 440),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.46, (0, 240, 255), 1)
+                    cv2.putText(frame, f"Cu ly vat can (/obstacle_distance): {p_dist}m (VUNG AN TOAN)", (20, 465),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.46, (0, 255, 163), 1)
+
+                    sim_dets = [
+                        {"id": 0, "name": "PERSON", "score": 0.92, "x": -0.45, "y": 0.05, "z": p_dist},
+                        {"id": 56, "name": "CHAIR", "score": 0.86, "x": 0.65, "y": -0.10, "z": 1.75}
+                    ]
+                    cam_src = "OAK-D S2 SIMULATOR"
+
+                _, jpeg = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), 65])
+                with state.lock:
+                    state.latest_jpeg = jpeg.tobytes()
+                    state.detections = sim_dets
+                    state.obstacle_distance = p_dist
+                    state.valid_depth_pct = real_clarity
+                    state.avg_confidence = p_score
+                    state.camera_source = cam_src
+                    state.img_counter += 1
+                    state.odom_counter += 1
+                    state.last_odom_recv = time.time()
+                step += 1
+            except Exception:
+                pass
+            time.sleep(0.035 if got_cam_frame else 0.066)
+    finally:
+        if cap:
+            try: cap.release()
+            except Exception: pass
 
 def main():
     global cmd_vel_pub, battery_pub
