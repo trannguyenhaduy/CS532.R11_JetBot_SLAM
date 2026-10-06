@@ -42,7 +42,70 @@ except ImportError:
     except ImportError:
         HAS_SMBUS = False
 
-# ─── LỚP ĐIỀU KHIỂN ĐỘNG CƠ WAVESHARE TB6612 (BYPASS LỖI TORCH) ──────────────
+# ─── LỚP ĐIỀU KHIỂN ĐỘNG CƠ WAVESHARE TB6612 (TRỰC TIẾP QUA SMBUS & DỰ PHÒNG) ───
+class DirectPCA9685Driver:
+    """Giao tiếp trực tiếp chip PCA9685 qua SMBus không cần cài đặt thêm thư viện ngoài"""
+    MODE1 = 0x00
+    PRESCALE = 0xFE
+    LED0_ON_L = 0x06
+
+    def __init__(self, bus_num=1, addr=0x60):
+        self.bus_num = bus_num
+        self.addr = addr
+        self._init_chip()
+
+    def _init_chip(self):
+        with SMBus(self.bus_num) as bus:
+            bus.write_byte_data(self.addr, self.MODE1, 0x00)
+            time.sleep(0.005)
+            # Tần số PWM ~ 50 Hz cho TB6612
+            old_mode = bus.read_byte_data(self.addr, self.MODE1)
+            new_mode = (old_mode & 0x7F) | 0x10
+            bus.write_byte_data(self.addr, self.MODE1, new_mode)
+            bus.write_byte_data(self.addr, self.PRESCALE, 121)
+            bus.write_byte_data(self.addr, self.MODE1, old_mode)
+            time.sleep(0.005)
+            bus.write_byte_data(self.addr, self.MODE1, old_mode | 0xA1)
+
+    def set_pwm(self, channel, on, off):
+        reg = self.LED0_ON_L + 4 * channel
+        data = [int(on) & 0xFF, (int(on) >> 8) & 0xFF, int(off) & 0xFF, (int(off) >> 8) & 0xFF]
+        with SMBus(self.bus_num) as bus:
+            bus.write_i2c_block_data(self.addr, reg, data)
+
+    def set_motors(self, left: float, right: float):
+        left = max(-1.0, min(1.0, float(left)))
+        right = max(-1.0, min(1.0, float(right)))
+
+        pwm_l = int(abs(left) * 4095)
+        pwm_r = int(abs(right) * 4095)
+
+        # Kênh Trái: Channel 1 (PWM/INA), Channel 0 (INB)
+        if abs(left) < 0.05:
+            self.set_pwm(0, 0, 0)
+            self.set_pwm(1, 0, 0)
+        elif left > 0:
+            self.set_pwm(1, 0, pwm_l)
+            self.set_pwm(0, 0, 0)
+        else:
+            self.set_pwm(1, 0, 0)
+            self.set_pwm(0, 0, pwm_l)
+
+        # Kênh Phải: Channel 2 (PWM/INA), Channel 3 (INB)
+        if abs(right) < 0.05:
+            self.set_pwm(2, 0, 0)
+            self.set_pwm(3, 0, 0)
+        elif right > 0:
+            self.set_pwm(2, 0, pwm_r)
+            self.set_pwm(3, 0, 0)
+        else:
+            self.set_pwm(2, 0, 0)
+            self.set_pwm(3, 0, pwm_r)
+
+    def stop(self):
+        for ch in range(4):
+            self.set_pwm(ch, 0, 0)
+
 class WaveshareMotorHAT:
     def __init__(self, addr=0x60, i2c_bus=1):
         self.is_connected = False
@@ -52,20 +115,24 @@ class WaveshareMotorHAT:
         self._left = None
         self._right = None
         self._jetbot_robot = None
+        self._direct_driver = None
 
-        # Ưu tiên 1: Thử thư viện chuẩn JetBot của NVIDIA/Waveshare
-        e_jb = None
-        try:
-            from jetbot import Robot
-            self._jetbot_robot = Robot()
-            self._mode = "jetbot"
-            self.is_connected = True
-            print("🤖 [MOTOR] Đã kết nối phần cứng thành công qua thư viện 'jetbot.Robot'!")
-            return
-        except Exception as err:
-            e_jb = err
+        # Ưu tiên 1: Giao tiếp I2C trực tiếp qua SMBus (Zero-dependency, cực kỳ ổn định)
+        e_smbus = None
+        if HAS_SMBUS:
+            for test_addr in [addr, 0x40]:
+                try:
+                    drv = DirectPCA9685Driver(bus_num=i2c_bus, addr=test_addr)
+                    drv.stop()
+                    self._direct_driver = drv
+                    self._mode = "direct_smbus"
+                    self.is_connected = True
+                    print(f"🤖 [MOTOR] Đã kết nối phần cứng trực tiếp chip PCA9685 qua SMBus (addr=0x{test_addr:02X})!")
+                    return
+                except Exception as err:
+                    e_smbus = err
 
-        # Ưu tiên 2: Kết nối trực tiếp qua Adafruit_MotorHAT (I2C addr 0x60, Bus 1)
+        # Ưu tiên 2: Kết nối trực tiếp qua Adafruit_MotorHAT nếu có sẵn
         e_ada = None
         try:
             from Adafruit_MotorHAT import Adafruit_MotorHAT
@@ -81,7 +148,19 @@ class WaveshareMotorHAT:
         except Exception as err:
             e_ada = err
 
-        print(f"⚠️ [MOTOR] Không phát hiện phần cứng động cơ: jetbot={e_jb} | Adafruit={e_ada}. Chạy chế độ GIẢ LẬP.")
+        # Ưu tiên 3: Thử thư viện chuẩn JetBot của NVIDIA/Waveshare
+        e_jb = None
+        try:
+            from jetbot import Robot
+            self._jetbot_robot = Robot()
+            self._mode = "jetbot"
+            self.is_connected = True
+            print("🤖 [MOTOR] Đã kết nối phần cứng thành công qua thư viện 'jetbot.Robot'!")
+            return
+        except Exception as err:
+            e_jb = err
+
+        print(f"⚠️ [MOTOR] Không phát hiện phần cứng động cơ: smbus={e_smbus} | Adafruit={e_ada} | jetbot={e_jb}. Chạy chế độ GIẢ LẬP.")
         self.is_connected = False
 
     def _set_one_adafruit(self, motor, value: float):
@@ -102,22 +181,26 @@ class WaveshareMotorHAT:
     def set_motors(self, left: float, right: float):
         if not self.is_connected:
             return
-        if self._mode == "jetbot" and self._jetbot_robot is not None:
-            self._jetbot_robot.set_motors(float(left), float(right))
+        if self._mode == "direct_smbus" and self._direct_driver is not None:
+            self._direct_driver.set_motors(left, right)
         elif self._mode == "adafruit":
             self._set_one_adafruit(self._left, left)
             self._set_one_adafruit(self._right, right)
+        elif self._mode == "jetbot" and self._jetbot_robot is not None:
+            self._jetbot_robot.set_motors(float(left), float(right))
 
     def stop(self):
         if not self.is_connected:
             return
-        if self._mode == "jetbot" and self._jetbot_robot is not None:
-            self._jetbot_robot.stop()
+        if self._mode == "direct_smbus" and self._direct_driver is not None:
+            self._direct_driver.stop()
         elif self._mode == "adafruit" and self._hat_api is not None:
             if self._left is not None:
                 self._left.run(self._hat_api.RELEASE)
             if self._right is not None:
                 self._right.run(self._hat_api.RELEASE)
+        elif self._mode == "jetbot" and self._jetbot_robot is not None:
+            self._jetbot_robot.stop()
 
 # ─── ĐỌC VÀ TÍNH TOÁN PIN THỜI GIAN THỰC (INA219 3S LI-ION) ───────────────────
 _LI_ION_CURVE_3S = [
