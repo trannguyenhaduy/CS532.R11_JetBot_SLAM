@@ -35,7 +35,7 @@ INVERT_LEFT_MOTOR  = False  # True: Đảo cực tính bánh trái nếu bị qu
 INVERT_RIGHT_MOTOR = False  # True: Đảo cực tính bánh phải nếu bị quay lùi khi tiến
 
 # ─── THÔNG SỐ AN TOÀN (HARNESS SAFETY) ────────────────────────────────────────
-SAFETY_BRAKE_DIST_M = 0.35  # Ngưỡng phanh Virtual Bumper nâng lên 35cm (350mm) vượt qua vùng mù Stereo OAK-D S2
+SAFETY_BRAKE_DIST_M = 0.25  # Ngưỡng phanh Virtual Bumper: 0.25m (25cm) giúp xe phanh gọn gàng, không bị phanh quá xa (tùy chỉnh 0.20m - 0.35m)
 WATCHDOG_TIMEOUT_S  = 0.50  # Thời gian tự ngắt động cơ khi mất lệnh lái
 
 # ─── THÔNG SỐ TỐI ƯU HÓA TÀI NGUYÊN (CPU THROTTLING) ──────────────────────────

@@ -26,8 +26,8 @@ PIN      = ON   # 2. ĐO PIN: BẬT (Giai đoạn 2 - Giám sát pin thời gian
 BATTERY  = PIN  # (Bí danh tương đương PIN)
 CAMERA   = ON   # 3. CAMERA: BẬT (Giai đoạn 3 - Luồng ảnh màu & đám mây điểm 3D)
 YOLO     = ON   # 4. AI NHẬN DIỆN: BẬT (Giai đoạn 3 - Bộ lọc đối tượng 3D Tiny YOLO)
-FOLLOWER = OFF  # 5. BÁM NGƯỜI: Tắt (Bật ở Giai đoạn 4)
-MAPPER   = OFF  # 6. BẢN ĐỒ 3D: Tắt (Bật ở Giai đoạn 5)
+FOLLOWER = OFF  # 5. BÁM NGƯỜI: Tắt (Tạm thời bỏ qua theo yêu cầu để làm sau)
+MAPPER   = ON   # 6. BẢN ĐỒ 3D: BẬT (Giai đoạn 5 - Lập bản đồ ngữ nghĩa Semantic SLAM)
 WEB      = ON   # 7. WEB COCKPIT: BẬT (Mở cổng 8080 để lái xe bằng phím W-A-S-D)
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -246,6 +246,30 @@ class JetBotMasterSystem:
             self.obstacle_distance = round(float(fused), 2)
             if self.motors:
                 self.motors.update_obstacle_distance(self.obstacle_distance)
+            dets = list(self.detections)
+        self._update_semantic_mapper(dets)
+
+    def _update_semantic_mapper(self, detections):
+        """Cập nhật các vật thể nhận diện vào Bản đồ Ngữ nghĩa 3D toàn cục (Semantic Mapper)"""
+        if not self.flags.mapper or not self.mapper:
+            return
+        with self.lock:
+            rx, ry, rz, yaw = self.robot_x, self.robot_y, self.robot_z, self.robot_yaw
+        for d in detections:
+            try:
+                zc = float(d.get('z', 99.0))
+                if 0.15 <= zc <= 3.5:
+                    self.mapper.add_detection(
+                        int(d.get('id', 0)),
+                        str(d.get('name', 'OBJ')),
+                        float(d.get('x', 0.0)),
+                        float(d.get('y', 0.0)),
+                        zc,
+                        float(d.get('score', 0.8)),
+                        rx=rx, ry=ry, rz=rz, yaw=yaw
+                    )
+            except Exception:
+                pass
 
     def _ros_spatial_objects_cb(self, msg):
         if not self.yolo: return
@@ -564,6 +588,8 @@ class JetBotMasterSystem:
             v, pct, curr, pwr, rem = self.battery_metrics
             pts = self.camera.points_3d if self.camera else []
             has_person = any(d.get('name') == 'PERSON' for d in self.detections)
+            confirmed_objs = self.mapper.get_confirmed_objects() if (self.flags.mapper and self.mapper) else []
+            brake_dist = getattr(config, 'SAFETY_BRAKE_DIST_M', 0.25)
             return {
                 "battery_v": v, "battery_pct": pct, "battery_cell_v": round(v / 3.0, 2),
                 "battery_current_a": curr, "battery_power_w": pwr, "battery_remaining_min": rem,
@@ -573,14 +599,17 @@ class JetBotMasterSystem:
                 "map_b64": "", "map_version": 1, "map_origin_x": -3.5, "map_origin_y": -3.5, "map_resolution": 0.05,
                 "points_3d": pts,
                 "detections": self.detections, "obstacle_distance": self.obstacle_distance,
+                "safety_brake_dist": brake_dist,
+                "semantic_objects": confirmed_objs,
                 "follower_enabled": bool(self.follower.is_enabled) if self.follower else False,
+                "mapper_enabled": bool(self.flags.mapper),
                 "camera_source": "OAK-D S2 (ROS LIVE)" if (time.time() - self.last_ros_img_time < 2.0) else "OAK-D S2 (STANDALONE)",
                 "calc_fps": 15.0, "benchmark": {
                     "tv1": {
                         "total_score": 29, "max_score": 30, "grade": "XUẤT SẮC",
                         "score_hw": 14, "max_hw": 15, "score_motion": 15, "max_motion": 15,
                         "cpu_pct": 32, "ram_gb": 1.4, "battery_v": v, "battery_pct": pct,
-                        "bumper_status": "VÙNG AN TOÀN" if self.obstacle_distance >= 0.35 else "CẢNH BÁO",
+                        "bumper_status": "VÙNG AN TOÀN" if self.obstacle_distance >= brake_dist else "CẢNH BÁO",
                         "diag_text": "Hệ thống động cơ & nguồn điện INA219 ổn định."
                     },
                     "tv2": {
@@ -593,9 +622,9 @@ class JetBotMasterSystem:
                     "tv3": {
                         "total_score": 58, "max_score": 60, "grade": "XUẤT SẮC",
                         "score_s": 34, "max_s": 35, "odom_hz": 15.0, "num_pts": len(pts),
-                        "score_sem": 24, "max_sem": 25, "num_obj": len(self.detections),
+                        "score_sem": 24, "max_sem": 25, "num_obj": len(confirmed_objs) if confirmed_objs else len(self.detections),
                         "status_badge": "BẢN ĐỒ SẠCH",
-                        "diag_text": "Bản đồ RTAB-Map hoạt động chuẩn xác."
+                        "diag_text": f"Bản đồ RTAB-Map: Đã ghi nhận {len(confirmed_objs)} mốc ngữ nghĩa không gian." if confirmed_objs else "Bản đồ RTAB-Map hoạt động chuẩn xác."
                     }
                 }
             }
@@ -610,6 +639,12 @@ class JetBotMasterSystem:
             self.follower.set_enabled(new_state)
             print(f"🔄 [TOGGLE] Bám người HRI: {'BẬT' if new_state else 'TẮT'}")
             return new_state
+        elif "map" in flag_name:
+            if self.mapper is None:
+                self.mapper = SemanticMapper()
+            self.flags.mapper = not self.flags.mapper
+            print(f"🔄 [TOGGLE] Bản đồ ngữ nghĩa 3D: {'BẬT' if self.flags.mapper else 'TẮT'}")
+            return self.flags.mapper
         elif "brake" in flag_name:
             if self.safety_brake:
                 self.safety_brake.is_enabled = not self.safety_brake.is_enabled

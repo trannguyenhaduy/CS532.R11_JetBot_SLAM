@@ -539,8 +539,36 @@
         mapCtx.stroke();
       }
 
-      // 4. Vẽ các vật thể nhận diện (Semantic Objects: Ghế, Người)
-      if (d.detections && d.detections.length > 0) {
+      // 4. Vẽ các vật thể nhận diện (Semantic Objects: Ghế, Người, Balo...)
+      const confirmedObjs = (d.semantic_objects && d.semantic_objects.length > 0) ? d.semantic_objects : [];
+      if (confirmedObjs.length > 0) {
+        confirmedObjs.forEach(obj => {
+          const cp = worldToCanvas(obj.x, obj.y);
+          const isPerson = (obj.id === 0 || obj.name === 'PERSON');
+          const color = isPerson ? '#ff2a6d' : '#00f0ff';
+
+          // Mốc kim cương Semantic SLAM toàn cục
+          mapCtx.save();
+          mapCtx.fillStyle = color;
+          mapCtx.shadowColor = color;
+          mapCtx.shadowBlur = 8;
+          mapCtx.beginPath();
+          mapCtx.moveTo(cp.x, cp.y - 9);
+          mapCtx.lineTo(cp.x + 8, cp.y);
+          mapCtx.lineTo(cp.x, cp.y + 9);
+          mapCtx.lineTo(cp.x - 8, cp.y);
+          mapCtx.closePath();
+          mapCtx.fill();
+          mapCtx.strokeStyle = '#fff';
+          mapCtx.lineWidth = 1.5;
+          mapCtx.stroke();
+          mapCtx.restore();
+
+          mapCtx.font = 'bold 10px Orbitron, monospace';
+          mapCtx.fillStyle = color;
+          mapCtx.fillText(`📌 ${obj.name} (${obj.seen}x)`, cp.x + 11, cp.y + 4);
+        });
+      } else if (d.detections && d.detections.length > 0) {
         d.detections.forEach(det => {
           const wx = d.robot_x + (det.z * Math.cos(d.robot_yaw) - (-det.x) * Math.sin(d.robot_yaw));
           const wy = d.robot_y + (det.z * Math.sin(d.robot_yaw) + (-det.x) * Math.cos(d.robot_yaw));
@@ -586,13 +614,14 @@
       mapCtx.stroke();
       mapCtx.restore();
 
-      // Vòng tròn an toàn Virtual Bumper (bán kính 0.35m)
+      // Vòng tròn an toàn Virtual Bumper (bán kính động theo safety_brake_dist)
+      const brakeRadius = (d.safety_brake_dist !== undefined) ? d.safety_brake_dist : 0.25;
       mapCtx.save();
       mapCtx.setLineDash([4, 4]);
       mapCtx.strokeStyle = 'rgba(255, 184, 0, 0.7)';
       mapCtx.lineWidth = 1.5;
       mapCtx.beginPath();
-      mapCtx.arc(rp.x, rp.y, 0.35 * scale, 0, Math.PI * 2);
+      mapCtx.arc(rp.x, rp.y, brakeRadius * scale, 0, Math.PI * 2);
       mapCtx.stroke();
       mapCtx.restore();
 
@@ -714,7 +743,17 @@
               while(semanticGroup.children.length > 0) {
                 semanticGroup.remove(semanticGroup.children[0]);
               }
-              if (d.detections && d.detections.length > 0) {
+              const objs = (d.semantic_objects && d.semantic_objects.length > 0) ? d.semantic_objects : [];
+              if (objs.length > 0) {
+                objs.forEach(obj => {
+                  const boxGeo = new THREE.BoxGeometry(0.35, 0.35, 0.5);
+                  const edgeGeo = new THREE.EdgesGeometry(boxGeo);
+                  const boxMat = new THREE.LineBasicMaterial({ color: obj.name === 'PERSON' ? 0xff2a6d : 0x00f0ff, linewidth: 2 });
+                  const wireBox = new THREE.LineSegments(edgeGeo, boxMat);
+                  wireBox.position.set(obj.x, obj.y, (obj.z !== undefined && Math.abs(obj.z) < 2) ? obj.z : 0.25);
+                  semanticGroup.add(wireBox);
+                });
+              } else if (d.detections && d.detections.length > 0) {
                 d.detections.forEach(det => {
                   const wx = d.robot_x + (det.z * Math.cos(d.robot_yaw) - (-det.x) * Math.sin(d.robot_yaw));
                   const wy = d.robot_y + (det.z * Math.sin(d.robot_yaw) + (-det.x) * Math.cos(d.robot_yaw));
@@ -735,27 +774,31 @@
         // Cập nhật Banner Phanh khẩn cấp & Khóa phím Tiến
         const obsDist = d.obstacle_distance !== undefined ? d.obstacle_distance : 99.0;
         const obsCm = (obsDist * 100).toFixed(1);
+        const brakeThreshold = (d.safety_brake_dist !== undefined) ? d.safety_brake_dist : 0.25;
+        const brakeCm = (brakeThreshold * 100).toFixed(0);
+        const warnThreshold = brakeThreshold + 0.20;
+        const warnCm = (warnThreshold * 100).toFixed(0);
         const brakeBanner = document.getElementById('brake-status-banner');
         const btnUp = document.getElementById('btn-up');
 
         if (brakeBanner) {
-          if (obsDist < 0.35) {
+          if (obsDist < brakeThreshold) {
             if (driveTimer && lastDriveV > 0) {
               emergencyStop();
             }
             brakeBanner.style.borderColor = 'var(--rose)';
             brakeBanner.style.color = 'var(--rose)';
             brakeBanner.style.background = 'rgba(255, 42, 109, 0.2)';
-            brakeBanner.innerHTML = `🚨 PHANH KHẨN CẤP! CẢN ${obsCm} cm (< 35cm) · ĐÃ KHÓA TIẾN (CHO PHÉP LÙI & QUAY)!`;
+            brakeBanner.innerHTML = `🚨 PHANH KHẨN CẤP! CẢN ${obsCm} cm (< ${brakeCm}cm) · ĐÃ KHÓA TIẾN (CHO PHÉP LÙI & QUAY)!`;
             if (btnUp) {
               btnUp.style.borderColor = 'var(--rose)';
               btnUp.style.color = 'var(--rose)';
             }
-          } else if (obsDist < 0.55) {
+          } else if (obsDist < warnThreshold) {
             brakeBanner.style.borderColor = 'var(--amber)';
             brakeBanner.style.color = 'var(--amber)';
             brakeBanner.style.background = 'rgba(255, 184, 0, 0.15)';
-            brakeBanner.innerHTML = `⚠️ CẢNH BÁO GIẢM TỐC: CẢN ${obsCm} cm (< 55cm)`;
+            brakeBanner.innerHTML = `⚠️ CẢNH BÁO GIẢM TỐC: CẢN ${obsCm} cm (< ${warnCm}cm)`;
             if (btnUp) {
               btnUp.style.borderColor = 'var(--amber)';
               btnUp.style.color = 'var(--cyan)';
@@ -856,7 +899,7 @@
 
           if (document.getElementById('val-cam-dist') && tv2.obstacle_distance !== undefined) document.getElementById('val-cam-dist').innerText = `${tv2.obstacle_distance.toFixed(2)} MÉT`;
           if (document.getElementById('bar-cam-dist') && tv2.dist_pct !== undefined) document.getElementById('bar-cam-dist').style.width = `${tv2.dist_pct}%`;
-          if (document.getElementById('sub-cam-dist') && tv2.obstacle_distance !== undefined) document.getElementById('sub-cam-dist').innerText = tv2.obstacle_distance >= 0.35 ? `Cự ly an toàn: ${tv2.obstacle_distance.toFixed(2)}m (VÙNG AN TOÀN)` : `CẢNH BÁO: ${tv2.obstacle_distance.toFixed(2)}m (< 0.35m PHANH KHẨN CẤP)`;
+          if (document.getElementById('sub-cam-dist') && tv2.obstacle_distance !== undefined) document.getElementById('sub-cam-dist').innerText = tv2.obstacle_distance >= brakeThreshold ? `Cự ly an toàn: ${tv2.obstacle_distance.toFixed(2)}m (VÙNG AN TOÀN)` : `CẢNH BÁO: ${tv2.obstacle_distance.toFixed(2)}m (< ${brakeCm}cm PHANH KHẨN CẤP)`;
 
           if (document.getElementById('cam-diag-txt') && tv2.diag_text) document.getElementById('cam-diag-txt').innerText = tv2.diag_text;
           if (document.getElementById('cam-hdr-fps') && tv2.fps !== undefined) document.getElementById('cam-hdr-fps').innerText = `${tv2.fps.toFixed(1)} FPS · REAL-TIME`;
