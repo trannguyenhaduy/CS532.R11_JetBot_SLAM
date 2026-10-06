@@ -55,6 +55,7 @@ from modules.battery_monitor import BatteryMonitor
 from modules.camera_streamer import CameraStreamer
 from modules.spatial_detector import SpatialPerceptionEngine
 from modules.person_tracker import PersonTracker
+from modules.emergency_brake import EmergencyBrake
 from modules.semantic_mapper import SemanticMapper
 from modules.web_server import WebCockpitServer
 
@@ -151,10 +152,16 @@ class JetBotMasterSystem:
         if self.flags.follower:
             print("🎯 [HRI] Đã kích hoạt tính năng Tự hành Bám người!")
 
-        # 6. Khởi tạo Module Bản đồ Ngữ nghĩa 3D
+        # 6. Khởi tạo Module Phanh khẩn cấp & Cản ảo 3D (Độc lập, dễ kiểm thử)
+        self.safety_brake = EmergencyBrake(
+            brake_dist_m=config.SAFETY_BRAKE_DIST_M,
+            warning_dist_m=0.40
+        )
+
+        # 7. Khởi tạo Module Bản đồ Ngữ nghĩa 3D
         self.mapper = SemanticMapper() if self.flags.mapper else None
 
-        # 7. Khởi tạo Trạm điều khiển Web Cockpit
+        # 8. Khởi tạo Trạm điều khiển Web Cockpit
         self.web = None
         if self.flags.web:
             self.web = WebCockpitServer(host=config.WEB_HOST, port=config.WEB_PORT)
@@ -362,7 +369,11 @@ class JetBotMasterSystem:
                 rx, ry, rz, yaw = self.robot_x, self.robot_y, self.robot_z, self.robot_yaw
             self.camera.process_depth_frame(depth_np, rx, ry, rz, yaw)
 
-            if self.yolo:
+            if self.safety_brake:
+                dist = self.safety_brake.calculate_clearance(depth_np)
+                with self.lock: self.obstacle_distance = dist
+                if self.motors: self.motors.update_obstacle_distance(dist)
+            elif self.yolo:
                 dist = self.yolo.calculate_obstacle_distance(depth_np)
                 with self.lock: self.obstacle_distance = dist
                 if self.motors: self.motors.update_obstacle_distance(dist)
@@ -387,6 +398,9 @@ class JetBotMasterSystem:
     def on_drive_command(self, v, w):
         """Xử lý lệnh lái tay từ Web W-A-S-D (Ưu tiên cao nhất, tạm ngắt bám người)"""
         self.last_manual_drive_time = time.time()
+        if self.safety_brake:
+            v, w, alert = self.safety_brake.evaluate_velocity(v, w, self.obstacle_distance)
+
         if self.motors:
             self.motors.set_cmd_vel(v, w)
         if HAS_ROS and self.ros_cmd_pub:
