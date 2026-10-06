@@ -1469,13 +1469,22 @@ def main():
         print(f"  ├─ {c_green}Mô phỏng căn phòng 3D ảo & Mây điểm 3D (Walls & Floor){c_reset}")
         print(f"  ├─ {c_green}Mô phỏng Camera OAK-D S2 + Nhận diện Người & Ghế 3D{c_reset}")
         print(f"  ├─ {c_green}Điều khiển xe ảo bằng phím W, A, S, D trên Web{c_reset}")
-        print(f"  └─ {c_green}Engine Chấm Điểm Benchmark tự động kích hoạt{c_reset}")
-        print(f"{c_yellow}👉 MỜI THÀNH VIÊN 3 MỞ TRÌNH DUYỆT TRUY CẬP: {c_cyan}http://localhost:{PORT}{c_reset}")
+        import socket
+        try:
+            _s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            _s.connect(("8.8.8.8", 80))
+            lan_ip = _s.getsockname()[0]
+            _s.close()
+        except Exception:
+            lan_ip = "127.0.0.1"
+
+        print(f"{c_yellow}👉 TRÊN MÁY NÀY:       {c_cyan}http://localhost:{PORT}{c_reset}")
+        print(f"{c_yellow}👉 TỪ MÁY KHÁC / ĐIỆN THOẠI CÙNG WIFI: {c_green}http://{lan_ip}:{PORT}{c_reset}")
         print(f"{c_cyan}══════════════════════════════════════════════════════════════════════════════{c_reset}\n")
 
         threading.Thread(target=mock_simulator_worker, daemon=True).start()
         threading.Thread(target=benchmark_worker, daemon=True).start()
-        server = ThreadedServer(('127.0.0.1', PORT), WebHandler)
+        server = ThreadedServer(('0.0.0.0', PORT), WebHandler)
         server.serve_forever()
 
 if __name__ == '__main__':
