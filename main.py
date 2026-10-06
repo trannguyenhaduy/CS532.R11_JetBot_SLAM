@@ -14,6 +14,28 @@ Cách chạy:
 ══════════════════════════════════════════════════════════════════════════════
 """
 
+# ══════════════════════════════════════════════════════════════════════════════
+# 🎛️ BẬT / TẮT TÍNH NĂNG TRỰC TIẾP TẠI ĐÂY (DỄ DÀNG ĐỂ TEST TỪNG BƯỚC)
+# Bạn chỉ cần đổi thành ON hoặc OFF (hoặc True / False):
+# ══════════════════════════════════════════════════════════════════════════════
+ON  = True
+OFF = False
+
+MOTOR    = ON   # 1. Động cơ di chuyển (Bánh xe, phím lái WASD, phanh an toàn)
+PIN      = ON   # 2. Đo pin thời gian thực INA219 (Điện áp V, %, Dòng A, Công suất W)
+BATTERY  = PIN  # (Bí danh tương đương PIN)
+CAMERA   = ON   # 3. Camera OAK-D S2 (Luồng ảnh màu RGB & bản đồ độ sâu 3D)
+YOLO     = ON   # 4. AI nhận diện người & vật thể (Spatial Tiny-YOLOv4 trên chip VPU)
+FOLLOWER = OFF  # 5. Tự động bám theo người (Nên để OFF khi test lái tay bằng phím)
+MAPPER   = OFF  # 6. Dựng bản đồ ngữ nghĩa 3D (Bật khi test SLAM)
+WEB      = ON   # 7. Trạm điều khiển Web 3D Cockpit (Mở trình duyệt xem camera & lái xe)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def to_bool(val):
+    if isinstance(val, str):
+        return val.strip().upper() in ('ON', 'TRUE', '1', 'YES', 'BAT')
+    return bool(val)
+
 import sys
 import os
 import time
@@ -287,14 +309,31 @@ class JetBotMasterSystem:
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description="JetBot Modular Master Orchestrator")
-    parser.add_argument('--no-motors', action='store_false', dest='motors', default=config.ENABLE_MOTORS)
-    parser.add_argument('--no-battery', action='store_false', dest='battery', default=config.ENABLE_BATTERY)
-    parser.add_argument('--no-camera', action='store_false', dest='camera', default=config.ENABLE_CAMERA)
-    parser.add_argument('--no-yolo', action='store_false', dest='yolo', default=config.ENABLE_YOLO)
-    parser.add_argument('--enable-follower', action='store_true', dest='follower', default=config.ENABLE_FOLLOWER)
-    parser.add_argument('--no-mapper', action='store_false', dest='mapper', default=config.ENABLE_MAPPER)
-    parser.add_argument('--no-web', action='store_false', dest='web', default=config.ENABLE_WEB)
-    return parser.parse_args()
+    parser.add_argument('--motors', action='store_true', dest='motors', default=None)
+    parser.add_argument('--no-motors', action='store_false', dest='motors')
+    parser.add_argument('--pin', '--battery', action='store_true', dest='battery', default=None)
+    parser.add_argument('--no-pin', '--no-battery', action='store_false', dest='battery')
+    parser.add_argument('--camera', action='store_true', dest='camera', default=None)
+    parser.add_argument('--no-camera', action='store_false', dest='camera')
+    parser.add_argument('--yolo', action='store_true', dest='yolo', default=None)
+    parser.add_argument('--no-yolo', action='store_false', dest='yolo')
+    parser.add_argument('--follower', '--enable-follower', action='store_true', dest='follower', default=None)
+    parser.add_argument('--no-follower', action='store_false', dest='follower')
+    parser.add_argument('--mapper', action='store_true', dest='mapper', default=None)
+    parser.add_argument('--no-mapper', action='store_false', dest='mapper')
+    parser.add_argument('--web', action='store_true', dest='web', default=None)
+    parser.add_argument('--no-web', action='store_false', dest='web')
+    args = parser.parse_args()
+
+    # Mặc định lấy theo biến khai báo ON/OFF ở đầu file main.py:
+    if args.motors is None: args.motors = to_bool(MOTOR)
+    if args.battery is None: args.battery = to_bool(PIN)
+    if args.camera is None: args.camera = to_bool(CAMERA)
+    if args.yolo is None: args.yolo = to_bool(YOLO)
+    if args.follower is None: args.follower = to_bool(FOLLOWER)
+    if args.mapper is None: args.mapper = to_bool(MAPPER)
+    if args.web is None: args.web = to_bool(WEB)
+    return args
 
 
 def main():
