@@ -108,7 +108,9 @@ class JetBotMasterSystem:
         self.robot_yaw = 0.0
         self.path_history = []
         self.detections = []
-        self.obstacle_distance = 1.45
+        self.last_depth_clearance = 99.0
+        self.last_yolo_clearance = 99.0
+        self.obstacle_distance = 99.0
         self.battery_metrics = (11.1, 50, 0.85, 9.4, 120)
         self.last_manual_drive_time = 0.0
 
@@ -120,11 +122,11 @@ class JetBotMasterSystem:
                 wheel_sep=config.WHEEL_SEPARATION_M,
                 max_v=config.MAX_LINEAR_SPEED, max_w=config.MAX_ANGULAR_SPEED,
                 brake_dist=config.SAFETY_BRAKE_DIST_M,
-                swap_motors=getattr(self.flags, 'swap_motors', getattr(config, 'SWAP_MOTORS', True)),
-                invert_linear=getattr(self.flags, 'invert_linear', getattr(config, 'INVERT_LINEAR', True)),
+                swap_motors=getattr(self.flags, 'swap_motors', getattr(config, 'SWAP_MOTORS', False)),
+                invert_linear=getattr(self.flags, 'invert_linear', getattr(config, 'INVERT_LINEAR', False)),
                 invert_left=getattr(config, 'INVERT_LEFT_MOTOR', False),
                 invert_right=getattr(config, 'INVERT_RIGHT_MOTOR', False),
-                enable_brake=getattr(config, 'ENABLE_SAFETY_BRAKE', False)
+                enable_brake=getattr(config, 'ENABLE_SAFETY_BRAKE', True)
             )
 
         # 2. Khởi tạo Module Pin
@@ -156,8 +158,8 @@ class JetBotMasterSystem:
         # 6. Khởi tạo Module Phanh khẩn cấp & Cản ảo 3D (Độc lập, dễ kiểm thử)
         self.safety_brake = EmergencyBrake(
             brake_dist_m=config.SAFETY_BRAKE_DIST_M,
-            warning_dist_m=0.40,
-            is_enabled=getattr(config, 'ENABLE_SAFETY_BRAKE', False)
+            warning_dist_m=0.55,
+            is_enabled=getattr(config, 'ENABLE_SAFETY_BRAKE', True)
         )
 
         # 7. Khởi tạo Module Bản đồ Ngữ nghĩa 3D
@@ -212,6 +214,10 @@ class JetBotMasterSystem:
                     rospy.Subscriber('/stereo_inertial_publisher/stereo/depth', Image, self._ros_depth_cb, queue_size=1)
                     rospy.Subscriber('/yolov4_publisher/stereo/depth', Image, self._ros_depth_cb, queue_size=1)
                     rospy.Subscriber('/mobilenet_publisher/stereo/depth', Image, self._ros_depth_cb, queue_size=1)
+                    rospy.Subscriber('/stereo/depth', Image, self._ros_depth_cb, queue_size=1)
+                    rospy.Subscriber('/yolov4_publisher/depth', Image, self._ros_depth_cb, queue_size=1)
+                    rospy.Subscriber('/yolov4_publisher/depth/image_raw', Image, self._ros_depth_cb, queue_size=1)
+                    rospy.Subscriber('/camera/depth/image_raw', Image, self._ros_depth_cb, queue_size=1)
 
                     rospy.Subscriber('/rtabmap/odom', Odometry, self._ros_odom_cb, queue_size=1)
                     rospy.Subscriber('/cmd_vel', Twist, self._ros_cmd_cb, queue_size=1)
@@ -233,6 +239,14 @@ class JetBotMasterSystem:
                     pass
             time.sleep(2.0)
 
+    def _update_fused_obstacle_clearance(self):
+        """Hợp nhất cự ly cản gần nhất giữa ma trận Depth quang học và đối tượng 3D AI"""
+        with self.lock:
+            fused = min(self.last_depth_clearance, self.last_yolo_clearance)
+            self.obstacle_distance = round(float(fused), 2)
+            if self.motors:
+                self.motors.update_obstacle_distance(self.obstacle_distance)
+
     def _ros_spatial_objects_cb(self, msg):
         if not self.yolo: return
         try:
@@ -242,6 +256,12 @@ class JetBotMasterSystem:
                 with self.lock:
                     self.detections = filtered
                     self.last_vpu_det_time = time.time()
+                    if filtered:
+                        forward_objs = [d['z'] for d in filtered if abs(d.get('x', 0.0)) <= 0.35 and d.get('z', 99.0) > 0.08]
+                        self.last_yolo_clearance = min(forward_objs) if forward_objs else 99.0
+                    else:
+                        self.last_yolo_clearance = 99.0
+                self._update_fused_obstacle_clearance()
         except Exception: pass
 
     def _ros_depthai_detections_cb(self, msg):
@@ -317,6 +337,13 @@ class JetBotMasterSystem:
             with self.lock:
                 self.detections = tracked
                 self.last_vpu_det_time = time.time()
+                # Cập nhật cự ly vật cản trước mặt trực tiếp từ các đối tượng 3D
+                if tracked:
+                    forward_objs = [d['z'] for d in tracked if abs(d.get('x', 0.0)) <= 0.35 and d.get('z', 99.0) > 0.08]
+                    self.last_yolo_clearance = min(forward_objs) if forward_objs else 99.0
+                else:
+                    self.last_yolo_clearance = 99.0
+            self._update_fused_obstacle_clearance()
         except Exception: pass
 
     def _ai_inference_loop(self):
@@ -339,7 +366,10 @@ class JetBotMasterSystem:
                                 non_person = [d for d in self.detections if d.get('name') != 'PERSON']
                                 combined = self.yolo.tracker.update(non_person + face_dets)
                                 self.detections = combined
+                                forward_objs = [d['z'] for d in combined if abs(d.get('x', 0.0)) <= 0.35 and d.get('z', 99.0) > 0.08]
+                                self.last_yolo_clearance = min(forward_objs) if forward_objs else 99.0
                             self.last_fallback_found_time = now
+                            self._update_fused_obstacle_clearance()
                         elif vpu_idle and (now - self.last_fallback_found_time > 1.5):
                             with self.lock:
                                 self.detections = []
@@ -367,7 +397,10 @@ class JetBotMasterSystem:
             w, h = msg.width, msg.height
             if getattr(msg, 'encoding', '') in ['32FC1'] or len(msg.data) == w * h * 4:
                 raw_f = np.frombuffer(msg.data, dtype=np.float32).reshape((h, w))
-                depth_np = (raw_f * 1000.0).astype(np.uint16) if raw_f.max() < 50.0 else raw_f.astype(np.uint16)
+                raw_f = np.nan_to_num(raw_f, nan=0.0, posinf=0.0, neginf=0.0)
+                valid_mask = raw_f > 0.05
+                is_meters = (np.count_nonzero(valid_mask) > 0 and np.nanmax(raw_f[valid_mask]) < 50.0)
+                depth_np = (raw_f * 1000.0).astype(np.uint16) if is_meters else raw_f.astype(np.uint16)
             else:
                 depth_np = np.frombuffer(msg.data, dtype=np.uint16).reshape((h, w))
             self.latest_depth_np = depth_np
@@ -377,12 +410,12 @@ class JetBotMasterSystem:
 
             if self.safety_brake:
                 dist = self.safety_brake.calculate_clearance(depth_np)
-                with self.lock: self.obstacle_distance = dist
-                if self.motors: self.motors.update_obstacle_distance(dist)
+                self.last_depth_clearance = dist
+                self._update_fused_obstacle_clearance()
             elif self.yolo:
                 dist = self.yolo.calculate_obstacle_distance(depth_np)
-                with self.lock: self.obstacle_distance = dist
-                if self.motors: self.motors.update_obstacle_distance(dist)
+                self.last_depth_clearance = dist
+                self._update_fused_obstacle_clearance()
         except Exception: pass
 
     def _ros_odom_cb(self, msg):
@@ -614,7 +647,7 @@ def parse_arguments():
 
     # Mặc định lấy theo biến khai báo ON/OFF ở đầu file main.py & config:
     if args.motors is None: args.motors = to_bool(MOTOR)
-    if args.swap_motors is None: args.swap_motors = getattr(config, 'SWAP_MOTORS', True)
+    if args.swap_motors is None: args.swap_motors = getattr(config, 'SWAP_MOTORS', False)
     if args.invert_linear is None: args.invert_linear = getattr(config, 'INVERT_LINEAR', False)
     if args.battery is None: args.battery = to_bool(PIN)
     if args.camera is None: args.camera = to_bool(CAMERA)

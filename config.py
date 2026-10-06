@@ -29,13 +29,13 @@ MAX_LINEAR_SPEED   = 0.20  # Vận tốc tiến tối đa (m/s) - Giảm xuống
 MAX_ANGULAR_SPEED  = 0.60  # Vận tốc quay tối đa (rad/s) - Giảm xuống 0.60 rad/s để xe quay êm ái
 
 # ─── CẤU HÌNH ĐẢO KÊNH ĐỘNG CƠ (MOTOR ORIENTATION) ────────────────────────────
-SWAP_MOTORS        = True   # True: Đảo kênh Trái <-> Phải (Khắc phục lỗi M1=Phải, M2=Trái gây quay ngược)
+SWAP_MOTORS        = False  # False: Khắc phục lỗi xoay trái/phải bị ngược (chuẩn theo lệnh phím A/D)
 INVERT_LINEAR      = False  # False: Chiều tiến/lùi đã đồng bộ theo chuẩn Adafruit_MotorHAT Waveshare
 INVERT_LEFT_MOTOR  = False  # True: Đảo cực tính bánh trái nếu bị quay lùi khi tiến
 INVERT_RIGHT_MOTOR = False  # True: Đảo cực tính bánh phải nếu bị quay lùi khi tiến
 
 # ─── THÔNG SỐ AN TOÀN (HARNESS SAFETY) ────────────────────────────────────────
-SAFETY_BRAKE_DIST_M = 0.25  # Ngưỡng phanh Virtual Bumper nâng lên 25cm (250mm) để có quán tính trôi dừng an toàn
+SAFETY_BRAKE_DIST_M = 0.35  # Ngưỡng phanh Virtual Bumper nâng lên 35cm (350mm) vượt qua vùng mù Stereo OAK-D S2
 WATCHDOG_TIMEOUT_S  = 0.50  # Thời gian tự ngắt động cơ khi mất lệnh lái
 
 # ─── THÔNG SỐ TỐI ƯU HÓA TÀI NGUYÊN (CPU THROTTLING) ──────────────────────────

@@ -289,7 +289,10 @@ class SpatialPerceptionEngine:
         w_start, w_end = int(w * 0.30), int(w * 0.70)
         roi = depth_frame[h_start:h_end, w_start:w_end]
 
-        if roi.dtype == np.uint16 or roi.max() > 100.0:
+        if np.issubdtype(roi.dtype, np.floating):
+            roi = np.nan_to_num(roi, nan=0.0, posinf=0.0, neginf=0.0)
+
+        if roi.dtype == np.uint16 or (roi.size > 0 and np.max(roi) > 50.0):
             roi_m = roi.astype(np.float32) / 1000.0
         else:
             roi_m = roi.astype(np.float32)

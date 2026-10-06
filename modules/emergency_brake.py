@@ -23,10 +23,10 @@ if hasattr(sys.stdout, 'reconfigure'):
 class EmergencyBrake:
     """Bộ giám sát an toàn và Phanh khẩn cấp Virtual Bumper cho JetBot"""
 
-    def __init__(self, brake_dist_m=0.25, warning_dist_m=0.45, min_pts_threshold=35, is_enabled=False):
+    def __init__(self, brake_dist_m=0.35, warning_dist_m=0.55, min_pts_threshold=20, is_enabled=False):
         """
-        :param brake_dist_m: Ngưỡng cự ly phanh cứng khẩn cấp (mặc định 25cm = 250mm để bù trôi)
-        :param warning_dist_m: Ngưỡng cảnh báo giảm tốc (mặc định 45cm = 450mm)
+        :param brake_dist_m: Ngưỡng cự ly phanh cứng khẩn cấp (mặc định 35cm = 350mm để bao quát điểm mù OAK-D S2)
+        :param warning_dist_m: Ngưỡng cảnh báo giảm tốc (mặc định 55cm = 550mm)
         :param min_pts_threshold: Số điểm ảnh cản tối thiểu để xác nhận (chống nhiễu hạt)
         :param is_enabled: Bật/Tắt can thiệp phanh (Mặc định False để lái tự do)
         """
@@ -42,7 +42,7 @@ class EmergencyBrake:
     def calculate_clearance(self, depth_frame):
         """
         Trích xuất cự ly vật cản gần nhất ở vùng trung tâm phía trước mũi xe.
-        LƯU Ý QUAN TRỌNG: Loại trừ 45% phía dưới khung hình (sàn gạch/bóng phản chiếu).
+        LƯU Ý QUAN TRỌNG: Loại trừ 40% phía dưới khung hình (sàn gạch/bóng phản chiếu).
         Chỉ đo hành lang cản từ độ cao 10cm đến 40cm phía trước xe.
         :param depth_frame: Ma trận ảnh độ sâu numpy (uint16 mm hoặc float mét)
         :return: cự ly vật cản tính bằng mét (float)
@@ -56,14 +56,18 @@ class EmergencyBrake:
             self.last_clearance_m = 99.0
             return 99.0
 
-        # Vùng kiểm soát hành lang cản: 20% đến 55% chiều cao (trên mặt sàn)
-        # Bỏ qua hoàn toàn h > 0.55h để không chạm sàn gạch phản chiếu
-        h_start, h_end = int(h * 0.20), int(h * 0.55)
-        w_start, w_end = int(w * 0.28), int(w * 0.72)
+        # Vùng kiểm soát hành lang cản: 15% đến 60% chiều cao (trên mặt sàn)
+        # Bỏ qua hoàn toàn h > 0.60h để không chạm sàn gạch phản chiếu
+        h_start, h_end = int(h * 0.15), int(h * 0.60)
+        w_start, w_end = int(w * 0.25), int(w * 0.75)
         roi = depth_frame[h_start:h_end, w_start:w_end]
 
-        # Chuẩn hóa đơn vị về mét
-        if roi.dtype == np.uint16 or roi.max() > 100.0:
+        # Khử NaN/Inf nếu là ma trận float32
+        if np.issubdtype(roi.dtype, np.floating):
+            roi = np.nan_to_num(roi, nan=0.0, posinf=0.0, neginf=0.0)
+
+        # Chuẩn hóa đơn vị về mét (nếu là uint16 hoặc giá trị lớn hơn 50.0 thì là mm)
+        if roi.dtype == np.uint16 or (roi.size > 0 and np.max(roi) > 50.0):
             roi_m = roi.astype(np.float32) / 1000.0
         else:
             roi_m = roi.astype(np.float32)
@@ -76,6 +80,11 @@ class EmergencyBrake:
             # Lấy phân vị 5% (bắt mép trước của vật cản nhạy hơn min tuyệt đối)
             clearance = float(np.percentile(valid, 5))
             self.last_clearance_m = round(clearance, 2)
+        elif self.last_clearance_m < (self.warning_dist_m + 0.05) and len(valid) < self.min_pts_threshold:
+            # HIỆN TƯỢNG ĐIỂM MÙ STEREO (< 35cm):
+            # Nếu trước đó đang thấy vật cản tiến sát (< 55cm), và đột ngột ảnh depth rơi vào vùng mù (điểm đo = 0),
+            # vật cản KHÔNG THỂ bốc hơi mà đang áp sát mũi xe -> Duy trì cự ly khẩn cấp 0.20m để khóa phanh an toàn!
+            self.last_clearance_m = 0.20
         else:
             # Đường thoáng (hoặc sàn nhà phẳng không có vật cản)
             self.last_clearance_m = 99.0
@@ -156,12 +165,19 @@ if __name__ == '__main__':
     print(f"  ├─ Test 3 (Thoát hiểm: Bấm LÙI v=-0.2 khi sát cản): Lệnh v={v3}m/s [{alert3}]")
     assert v3 == -0.20, "Lỗi: Bị chặn lệnh lùi thoát hiểm!"
 
-    # KỊCH BẢN 4: Sàn gạch phẳng không có texture (nhiều điểm rỗng)
+    # KỊCH BẢN 4: Khởi động trên sàn gạch phẳng không có texture (nhiều điểm rỗng)
+    brake_floor = EmergencyBrake(brake_dist_m=0.18, warning_dist_m=0.40, is_enabled=True)
     fake_floor_zeros = np.zeros((360, 480), dtype=np.uint16)
-    c4 = brake.calculate_clearance(fake_floor_zeros)
-    v4, w4, alert4 = brake.evaluate_velocity(0.20, 0.0, c4)
-    print(f"  ├─ Test 4 (Sàn nhẵn ít vân - Điểm 0): Cự ly={c4}m -> Lệnh v={v4}m/s [{alert4}]")
+    c4 = brake_floor.calculate_clearance(fake_floor_zeros)
+    v4, w4, alert4 = brake_floor.evaluate_velocity(0.20, 0.0, c4)
+    print(f"  ├─ Test 4 (Sàn nhẵn ít vân - Điểm 0 lúc ban đầu): Cự ly={c4}m -> Lệnh v={v4}m/s [{alert4}]")
     assert alert4 == "SAFE" and v4 == 0.20, "Lỗi: Bị báo động giả trên sàn gạch!"
+
+    # KỊCH BẢN 5: Bắt điểm mù Stereo khi tiến sát vật cản
+    c5 = brake.calculate_clearance(fake_floor_zeros) # brake đang có last_clearance_m = 0.14m từ test 2
+    v5, w5, alert5 = brake.evaluate_velocity(0.20, 0.0, c5)
+    print(f"  ├─ Test 5 (Khóa điểm mù khi lọt vào vùng <35cm): Cự ly={c5}m -> Lệnh v={v5}m/s [{alert5}]")
+    assert alert5 in ("WARNING", "EMERGENCY_STOP"), "Lỗi: Không khóa điểm mù khi mất dấu cản sát mũi!"
 
     print("═" * 70)
     print("✅ [SELF-TEST] TẤT CẢ 4 KỊCH BẢN PHANH KHẨN CẤP ĐỀU ĐẠT CHUẨN 100%!")

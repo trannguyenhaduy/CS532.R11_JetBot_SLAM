@@ -586,13 +586,13 @@
       mapCtx.stroke();
       mapCtx.restore();
 
-      // Vòng tròn an toàn Virtual Bumper (bán kính 0.25m)
+      // Vòng tròn an toàn Virtual Bumper (bán kính 0.35m)
       mapCtx.save();
       mapCtx.setLineDash([4, 4]);
       mapCtx.strokeStyle = 'rgba(255, 184, 0, 0.7)';
       mapCtx.lineWidth = 1.5;
       mapCtx.beginPath();
-      mapCtx.arc(rp.x, rp.y, 0.25 * scale, 0, Math.PI * 2);
+      mapCtx.arc(rp.x, rp.y, 0.35 * scale, 0, Math.PI * 2);
       mapCtx.stroke();
       mapCtx.restore();
 
@@ -739,20 +739,20 @@
         const btnUp = document.getElementById('btn-up');
 
         if (brakeBanner) {
-          if (obsDist < 0.25) {
+          if (obsDist < 0.35) {
             brakeBanner.style.borderColor = 'var(--rose)';
             brakeBanner.style.color = 'var(--rose)';
             brakeBanner.style.background = 'rgba(255, 42, 109, 0.2)';
-            brakeBanner.innerHTML = `🚨 PHANH KHẨN CẤP! CẢN ${obsCm} cm (< 25cm) · ĐÃ KHÓA TIẾN (CHO PHÉP LÙI & QUAY)!`;
+            brakeBanner.innerHTML = `🚨 PHANH KHẨN CẤP! CẢN ${obsCm} cm (< 35cm) · ĐÃ KHÓA TIẾN (CHO PHÉP LÙI & QUAY)!`;
             if (btnUp) {
               btnUp.style.borderColor = 'var(--rose)';
               btnUp.style.color = 'var(--rose)';
             }
-          } else if (obsDist < 0.45) {
+          } else if (obsDist < 0.55) {
             brakeBanner.style.borderColor = 'var(--amber)';
             brakeBanner.style.color = 'var(--amber)';
             brakeBanner.style.background = 'rgba(255, 184, 0, 0.15)';
-            brakeBanner.innerHTML = `⚠️ CẢNH BÁO GIẢM TỐC: CẢN ${obsCm} cm (< 45cm)`;
+            brakeBanner.innerHTML = `⚠️ CẢNH BÁO GIẢM TỐC: CẢN ${obsCm} cm (< 55cm)`;
             if (btnUp) {
               btnUp.style.borderColor = 'var(--amber)';
               btnUp.style.color = 'var(--cyan)';
