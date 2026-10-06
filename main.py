@@ -21,14 +21,14 @@ Cách chạy:
 ON  = True
 OFF = False
 
-MOTOR    = ON   # 1. Động cơ di chuyển (Bánh xe, phím lái WASD, phanh an toàn)
-PIN      = ON   # 2. Đo pin thời gian thực INA219 (Điện áp V, %, Dòng A, Công suất W)
+MOTOR    = ON   # 1. ĐỘNG CƠ: BẬT (Giai đoạn 1 - Lái xe bằng phím WASD, chip PCA9685 0x60)
+PIN      = OFF  # 2. ĐO PIN: Tắt để cô lập kiểm tra động cơ (Bật ở Giai đoạn 2)
 BATTERY  = PIN  # (Bí danh tương đương PIN)
-CAMERA   = ON   # 3. Camera OAK-D S2 (Luồng ảnh màu RGB & bản đồ độ sâu 3D)
-YOLO     = ON   # 4. AI nhận diện người & vật thể (Spatial Tiny-YOLOv4 trên chip VPU)
-FOLLOWER = OFF  # 5. Tự động bám theo người (Nên để OFF khi test lái tay bằng phím)
-MAPPER   = OFF  # 6. Dựng bản đồ ngữ nghĩa 3D (Bật khi test SLAM)
-WEB      = ON   # 7. Trạm điều khiển Web 3D Cockpit (Mở trình duyệt xem camera & lái xe)
+CAMERA   = OFF  # 3. CAMERA: Tắt để cô lập lỗi (Bật ở Giai đoạn 3)
+YOLO     = OFF  # 4. AI NHẬN DIỆN: Tắt (Bật ở Giai đoạn 3)
+FOLLOWER = OFF  # 5. BÁM NGƯỜI: Tắt (Bật ở Giai đoạn 4)
+MAPPER   = OFF  # 6. BẢN ĐỒ 3D: Tắt (Bật ở Giai đoạn 5)
+WEB      = ON   # 7. WEB COCKPIT: BẬT (Mở cổng 8080 để lái xe bằng phím W-A-S-D)
 # ══════════════════════════════════════════════════════════════════════════════
 
 def to_bool(val):
