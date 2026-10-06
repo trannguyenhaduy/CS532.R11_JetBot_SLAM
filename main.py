@@ -24,8 +24,8 @@ OFF = False
 MOTOR    = ON   # 1. ĐỘNG CƠ: BẬT (Giai đoạn 1 - Lái xe bằng phím WASD, chip PCA9685 0x60)
 PIN      = ON   # 2. ĐO PIN: BẬT (Giai đoạn 2 - Giám sát pin thời gian thực INA219 0x41)
 BATTERY  = PIN  # (Bí danh tương đương PIN)
-CAMERA   = OFF  # 3. CAMERA: Tắt để cô lập lỗi (Bật ở Giai đoạn 3)
-YOLO     = OFF  # 4. AI NHẬN DIỆN: Tắt (Bật ở Giai đoạn 3)
+CAMERA   = ON   # 3. CAMERA: BẬT (Giai đoạn 3 - Luồng ảnh màu & đám mây điểm 3D)
+YOLO     = ON   # 4. AI NHẬN DIỆN: BẬT (Giai đoạn 3 - Bộ lọc đối tượng 3D Tiny YOLO)
 FOLLOWER = OFF  # 5. BÁM NGƯỜI: Tắt (Bật ở Giai đoạn 4)
 MAPPER   = OFF  # 6. BẢN ĐỒ 3D: Tắt (Bật ở Giai đoạn 5)
 WEB      = ON   # 7. WEB COCKPIT: BẬT (Mở cổng 8080 để lái xe bằng phím W-A-S-D)
@@ -38,11 +38,13 @@ def to_bool(val):
 
 import sys
 import os
+import json
 import time
 import math
 import argparse
 import threading
 import numpy as np
+import cv2
 
 # Nạp cấu hình trung tâm
 import config
@@ -74,6 +76,13 @@ except ImportError:
     Float32 = object
     Float32MultiArray = object
     String = object
+
+try:
+    from depthai_ros_msgs.msg import SpatialDetectionArray
+    HAS_DEPTHAI_MSGS = True
+except ImportError:
+    HAS_DEPTHAI_MSGS = False
+    SpatialDetectionArray = object
 
 
 class JetBotMasterSystem:
@@ -168,9 +177,48 @@ class JetBotMasterSystem:
             rospy.Subscriber('/stereo_inertial_publisher/stereo/depth', Image, self._ros_depth_cb, queue_size=1)
             rospy.Subscriber('/rtabmap/odom', Odometry, self._ros_odom_cb, queue_size=1)
             rospy.Subscriber('/cmd_vel', Twist, self._ros_cmd_cb, queue_size=1)
+
+            # Subscribers nhận danh sách nhận diện 3D từ OAK-D S2
+            rospy.Subscriber('/spatial_objects', String, self._ros_spatial_objects_cb, queue_size=2)
+            rospy.Subscriber('/stereo_inertial_publisher/color/raw_detections', String, self._ros_spatial_objects_cb, queue_size=2)
+            if HAS_DEPTHAI_MSGS:
+                rospy.Subscriber('/stereo_inertial_publisher/color/yolov4_Spatial_detections',
+                                 SpatialDetectionArray, self._ros_depthai_detections_cb, queue_size=2)
             print("🔗 [ROS] Đã kết nối thành công với ROS Core và các Topics chuẩn.")
         except Exception as e:
             print(f"⚠️ [ROS] Không thể khởi tạo ROS node: {e}. Tiếp tục ở chế độ Standalone.")
+
+    def _ros_spatial_objects_cb(self, msg):
+        if not self.yolo: return
+        try:
+            data = json.loads(msg.data)
+            if isinstance(data, list):
+                filtered = self.yolo.filter_detections(data)
+                with self.lock:
+                    self.detections = filtered
+        except Exception: pass
+
+    def _ros_depthai_detections_cb(self, msg):
+        if not self.yolo: return
+        raw_list = []
+        try:
+            for det in getattr(msg, 'detections', []):
+                for res in getattr(det, 'results', []):
+                    pos = getattr(det, 'position', None)
+                    if pos:
+                        cid = getattr(res, 'id', 0)
+                        raw_list.append({
+                            "id": cid,
+                            "name": getattr(res, 'label', 'OBJ'),
+                            "score": float(getattr(res, 'score', 0.8)),
+                            "x": float(pos.x),
+                            "y": float(pos.y),
+                            "z": float(pos.z)
+                        })
+            filtered = self.yolo.filter_detections(raw_list)
+            with self.lock:
+                self.detections = filtered
+        except Exception: pass
 
     def _ros_image_cb(self, msg):
         if not self.camera: return
@@ -278,6 +326,17 @@ class JetBotMasterSystem:
                         {"id": 0, "name": "PERSON", "score": 0.89, "x": -0.3, "y": 0.0, "z": 1.4},
                         {"id": 24, "name": "BACKPACK", "score": 0.92, "x": 0.2, "y": 0.0, "z": 0.4}
                     ]
+            if self.camera and self.camera.latest_jpeg is None:
+                demo_img = np.zeros((360, 640, 3), dtype=np.uint8)
+                demo_img[:] = (15, 12, 10)
+                cv2.circle(demo_img, (320, 180), 120, (50, 60, 30), 1)
+                cv2.circle(demo_img, (320, 180), 60, (50, 60, 30), 1)
+                cv2.line(demo_img, (200, 180), (440, 180), (50, 60, 30), 1)
+                cv2.line(demo_img, (320, 60), (320, 300), (50, 60, 30), 1)
+                cv2.putText(demo_img, "OAK-D S2 // STANDALONE READY", (160, 45), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 255, 163), 2)
+                cv2.putText(demo_img, "SAN SANG NHAN LUONG ROS /color/image", (140, 335), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (0, 240, 255), 1)
+                annotator = (lambda im: self.yolo.draw_detections(im, self.detections)) if self.yolo else None
+                self.camera.process_color_frame(demo_img, annotator)
             time.sleep(1.0)
 
     def get_latest_jpeg(self):
