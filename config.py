@@ -1,0 +1,37 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Cấu hình tập trung cho toàn bộ hệ thống JetBot (Centralized Configuration)
+Chứa tất cả các cờ tính năng (Feature Flags) và thông số kỹ thuật.
+"""
+
+# ─── CỜ BẬT / TẮT TÍNH NĂNG (FEATURE FLAGS) ───────────────────────────────────
+ENABLE_MOTORS    = True   # Bật/Tắt module động cơ (PCA9685 I2C 0x60)
+ENABLE_BATTERY   = True   # Bật/Tắt module đọc pin INA219 (I2C 0x41)
+ENABLE_CAMERA    = True   # Bật/Tắt module Camera OAK-D S2
+ENABLE_YOLO      = True   # Bật/Tắt module lọc nhận diện 3D Spatial AI
+ENABLE_FOLLOWER  = False  # Bật/Tắt module tự hành bám người (MẶC ĐỊNH TẮT ĐỂ ƯU TIÊN LÁI TAY)
+ENABLE_MAPPER    = True   # Bật/Tắt module bản đồ ngữ nghĩa 3D
+ENABLE_WEB       = True   # Bật/Tắt trạm điều khiển Web Cockpit (Port 8080)
+
+# ─── THÔNG SỐ TRẠM ĐIỀU KHIỂN WEB ─────────────────────────────────────────────
+WEB_PORT = 8080
+WEB_HOST = '0.0.0.0'
+
+# ─── THÔNG SỐ PHẦN CỨNG XE (JETBOT BASELINE) ──────────────────────────────────
+I2C_BUS = 1
+PCA9685_ADDR = 0x60
+INA219_ADDR  = 0x41
+
+WHEEL_SEPARATION_M = 0.12  # Khoảng cách 2 bánh vi sai (mét)
+MAX_LINEAR_SPEED   = 0.35  # Vận tốc tiến tối đa (m/s)
+MAX_ANGULAR_SPEED  = 1.20  # Vận tốc quay tối đa (rad/s)
+
+# ─── THÔNG SỐ AN TOÀN (HARNESS SAFETY) ────────────────────────────────────────
+SAFETY_BRAKE_DIST_M = 0.15  # Ngưỡng phanh Virtual Bumper (15cm)
+WATCHDOG_TIMEOUT_S  = 0.50  # Thời gian tự ngắt động cơ khi mất lệnh lái
+
+# ─── THÔNG SỐ TỐI ƯU HÓA TÀI NGUYÊN (CPU THROTTLING) ──────────────────────────
+DEPTH_SKIP_FRAMES = 5       # Chỉ tính mây điểm 3D 1 trong 5 frame (~3 Hz)
+DEPTH_DOWNSAMPLE_STEP = 25  # Bước nhảy lấy mẫu ma trận điểm ảnh (pixel)
+IMAGE_SKIP_FRAMES = 2       # Bỏ qua 1/2 frame video để nhẹ CPU encode JPEG
