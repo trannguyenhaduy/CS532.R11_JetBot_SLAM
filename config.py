@@ -13,7 +13,7 @@ ENABLE_YOLO         = True   # Bật/Tắt module lọc nhận diện 3D Spatial
 ENABLE_FOLLOWER     = False  # Bật/Tắt module tự hành bám người (MẶC ĐỊNH TẮT ĐỂ ƯU TIÊN LÁI TAY)
 ENABLE_MAPPER       = True   # Bật/Tắt module bản đồ ngữ nghĩa 3D
 ENABLE_WEB          = True   # Bật/Tắt trạm điều khiển Web Cockpit (Port 8080)
-ENABLE_SAFETY_BRAKE = False  # Bật/Tắt phanh ảo Virtual Bumper (Tắt để lái WASD tự do không bị sàn gạch khóa bánh)
+ENABLE_SAFETY_BRAKE = True   # Bật tính năng phanh khẩn cấp Virtual Bumper (< 18cm)
 
 # ─── THÔNG SỐ TRẠM ĐIỀU KHIỂN WEB ─────────────────────────────────────────────
 WEB_PORT = 8080
@@ -30,7 +30,7 @@ MAX_ANGULAR_SPEED  = 1.20  # Vận tốc quay tối đa (rad/s)
 
 # ─── CẤU HÌNH ĐẢO KÊNH ĐỘNG CƠ (MOTOR ORIENTATION) ────────────────────────────
 SWAP_MOTORS        = True   # True: Đảo kênh Trái <-> Phải (Khắc phục lỗi M1=Phải, M2=Trái gây quay ngược)
-INVERT_LINEAR      = True   # True: Đảo chiều tiến/lùi (Khắc phục lỗi W bị lùi và S bị tiến)
+INVERT_LINEAR      = False  # False: Chiều tiến/lùi đã đồng bộ theo chuẩn Adafruit_MotorHAT Waveshare
 INVERT_LEFT_MOTOR  = False  # True: Đảo cực tính bánh trái nếu bị quay lùi khi tiến
 INVERT_RIGHT_MOTOR = False  # True: Đảo cực tính bánh phải nếu bị quay lùi khi tiến
 

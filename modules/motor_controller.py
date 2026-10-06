@@ -52,30 +52,31 @@ class AdafruitWaveshareDriver:
 
     def _drive_one(self, motor, val: float, ina: int, inb: int):
         val = max(-1.0, min(1.0, float(val)))
-        speed = int(abs(val) * 255)
+        mapped = int(255.0 * val)
+        speed = min(max(abs(mapped), 0), 255)
+        motor.setSpeed(speed)
         if speed < 15:
             motor.run(self._hat.RELEASE)
             self._hat._pwm.setPWM(ina, 0, 0)
             self._hat._pwm.setPWM(inb, 0, 0)
-        elif val > 0:
-            motor.setSpeed(speed)
+        elif mapped < 0:
             motor.run(self._hat.FORWARD)
-            # Waveshare JetBot yêu cầu kích trực tiếp thanh ghi hướng
-            self._hat._pwm.setPWM(ina, 0, speed * 16)
-            self._hat._pwm.setPWM(inb, 0, 0)
-        else:
-            motor.setSpeed(speed)
-            motor.run(self._hat.BACKWARD)
             self._hat._pwm.setPWM(ina, 0, 0)
             self._hat._pwm.setPWM(inb, 0, speed * 16)
+        else:
+            motor.run(self._hat.BACKWARD)
+            self._hat._pwm.setPWM(ina, 0, speed * 16)
+            self._hat._pwm.setPWM(inb, 0, 0)
 
     def set_motors(self, left: float, right: float):
         self._drive_one(self._m_left, left, ina=1, inb=0)
         self._drive_one(self._m_right, right, ina=2, inb=3)
 
     def stop(self):
-        self._drive_one(self._m_left, 0.0, ina=1, inb=0)
-        self._drive_one(self._m_right, 0.0, ina=2, inb=3)
+        for motor, ina, inb in ((self._m_left, 1, 0), (self._m_right, 2, 3)):
+            motor.run(self._hat.RELEASE)
+            self._hat._pwm.setPWM(ina, 0, 0)
+            self._hat._pwm.setPWM(inb, 0, 0)
 
 
 class DirectPCA9685Driver:

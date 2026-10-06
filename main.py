@@ -608,7 +608,7 @@ def parse_arguments():
     # Mặc định lấy theo biến khai báo ON/OFF ở đầu file main.py & config:
     if args.motors is None: args.motors = to_bool(MOTOR)
     if args.swap_motors is None: args.swap_motors = getattr(config, 'SWAP_MOTORS', True)
-    if args.invert_linear is None: args.invert_linear = getattr(config, 'INVERT_LINEAR', True)
+    if args.invert_linear is None: args.invert_linear = getattr(config, 'INVERT_LINEAR', False)
     if args.battery is None: args.battery = to_bool(PIN)
     if args.camera is None: args.camera = to_bool(CAMERA)
     if args.yolo is None: args.yolo = to_bool(YOLO)
