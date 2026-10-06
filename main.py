@@ -99,7 +99,10 @@ class JetBotMasterSystem:
                 bus_num=config.I2C_BUS, addr=config.PCA9685_ADDR,
                 wheel_sep=config.WHEEL_SEPARATION_M,
                 max_v=config.MAX_LINEAR_SPEED, max_w=config.MAX_ANGULAR_SPEED,
-                brake_dist=config.SAFETY_BRAKE_DIST_M
+                brake_dist=config.SAFETY_BRAKE_DIST_M,
+                swap_motors=getattr(self.flags, 'swap_motors', getattr(config, 'SWAP_MOTORS', True)),
+                invert_left=getattr(config, 'INVERT_LEFT_MOTOR', False),
+                invert_right=getattr(config, 'INVERT_RIGHT_MOTOR', False)
             )
 
         # 2. Khởi tạo Module Pin
@@ -297,6 +300,10 @@ class JetBotMasterSystem:
             self.follower.set_enabled(new_state)
             print(f"🔄 [TOGGLE] Bám người HRI: {'BẬT' if new_state else 'TẮT'}")
             return new_state
+        elif "swap" in flag_name and self.motors:
+            self.motors.swap_motors = not self.motors.swap_motors
+            print(f"🔄 [TOGGLE] Đảo kênh Motor: {'BẬT' if self.motors.swap_motors else 'TẮT'}")
+            return self.motors.swap_motors
         return False
 
     def shutdown(self):
@@ -311,6 +318,9 @@ def parse_arguments():
     parser = argparse.ArgumentParser(description="JetBot Modular Master Orchestrator")
     parser.add_argument('--motors', action='store_true', dest='motors', default=None)
     parser.add_argument('--no-motors', action='store_false', dest='motors')
+    parser.add_argument('--swap-motors', action='store_true', dest='swap_motors', default=None,
+                        help="Đảo kênh motor Trái <-> Phải (sửa lỗi rẽ trái thành quay phải)")
+    parser.add_argument('--no-swap-motors', action='store_false', dest='swap_motors')
     parser.add_argument('--pin', '--battery', action='store_true', dest='battery', default=None)
     parser.add_argument('--no-pin', '--no-battery', action='store_false', dest='battery')
     parser.add_argument('--camera', action='store_true', dest='camera', default=None)
@@ -325,8 +335,9 @@ def parse_arguments():
     parser.add_argument('--no-web', action='store_false', dest='web')
     args = parser.parse_args()
 
-    # Mặc định lấy theo biến khai báo ON/OFF ở đầu file main.py:
+    # Mặc định lấy theo biến khai báo ON/OFF ở đầu file main.py & config:
     if args.motors is None: args.motors = to_bool(MOTOR)
+    if args.swap_motors is None: args.swap_motors = getattr(config, 'SWAP_MOTORS', True)
     if args.battery is None: args.battery = to_bool(PIN)
     if args.camera is None: args.camera = to_bool(CAMERA)
     if args.yolo is None: args.yolo = to_bool(YOLO)

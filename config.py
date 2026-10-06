@@ -27,6 +27,11 @@ WHEEL_SEPARATION_M = 0.12  # Khoảng cách 2 bánh vi sai (mét)
 MAX_LINEAR_SPEED   = 0.35  # Vận tốc tiến tối đa (m/s)
 MAX_ANGULAR_SPEED  = 1.20  # Vận tốc quay tối đa (rad/s)
 
+# ─── CẤU HÌNH ĐẢO KÊNH ĐỘNG CƠ (MOTOR ORIENTATION) ────────────────────────────
+SWAP_MOTORS        = True   # True: Đảo kênh Trái <-> Phải (Khắc phục lỗi M1=Phải, M2=Trái gây quay ngược)
+INVERT_LEFT_MOTOR  = False  # True: Đảo cực tính bánh trái nếu bị quay lùi khi tiến
+INVERT_RIGHT_MOTOR = False  # True: Đảo cực tính bánh phải nếu bị quay lùi khi tiến
+
 # ─── THÔNG SỐ AN TOÀN (HARNESS SAFETY) ────────────────────────────────────────
 SAFETY_BRAKE_DIST_M = 0.15  # Ngưỡng phanh Virtual Bumper (15cm)
 WATCHDOG_TIMEOUT_S  = 0.50  # Thời gian tự ngắt động cơ khi mất lệnh lái
