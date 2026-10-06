@@ -177,7 +177,7 @@ class JetBotLibDriver:
 
 class MotorController:
     """Bộ điều khiển động cơ vi sai với Phanh an toàn, Watchdog & Đảo kênh chuẩn Waveshare"""
-    def __init__(self, bus_num=1, addr=0x60, wheel_sep=0.12, max_v=0.35, max_w=1.20, brake_dist=0.15,
+    def __init__(self, bus_num=1, addr=0x60, wheel_sep=0.12, max_v=0.35, max_w=1.20, brake_dist=0.18,
                  swap_motors=True, invert_linear=True, invert_left=False, invert_right=False):
         self.wheel_sep = wheel_sep
         self.max_v = max_v
@@ -303,6 +303,14 @@ class MotorController:
     def _watchdog_loop(self):
         while self.running:
             with self.lock:
+                # 1. Tự động ngắt khẩn cấp nếu có vật cản trước mặt khi xe đang chạy tiến
+                if self.target_v > 0.0 and self.obstacle_distance_m < self.brake_dist:
+                    self.target_v = 0.0
+                    self.target_w = 0.0
+                    if self.is_connected and self.driver:
+                        self.driver.stop()
+
+                # 2. Watchdog ngắt động cơ nếu mất kết nối lái tay quá 0.5s
                 elapsed = time.time() - self.last_cmd_time
                 if elapsed > 0.5 and (abs(self.target_v) > 0.01 or abs(self.target_w) > 0.01):
                     self.target_v = 0.0

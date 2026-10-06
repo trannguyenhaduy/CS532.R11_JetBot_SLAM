@@ -34,7 +34,7 @@ INVERT_LEFT_MOTOR  = False  # True: Đảo cực tính bánh trái nếu bị qu
 INVERT_RIGHT_MOTOR = False  # True: Đảo cực tính bánh phải nếu bị quay lùi khi tiến
 
 # ─── THÔNG SỐ AN TOÀN (HARNESS SAFETY) ────────────────────────────────────────
-SAFETY_BRAKE_DIST_M = 0.15  # Ngưỡng phanh Virtual Bumper (15cm)
+SAFETY_BRAKE_DIST_M = 0.18  # Ngưỡng phanh Virtual Bumper (18cm, 180mm)
 WATCHDOG_TIMEOUT_S  = 0.50  # Thời gian tự ngắt động cơ khi mất lệnh lái
 
 # ─── THÔNG SỐ TỐI ƯU HÓA TÀI NGUYÊN (CPU THROTTLING) ──────────────────────────

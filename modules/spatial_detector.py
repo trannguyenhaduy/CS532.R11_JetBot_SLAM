@@ -246,12 +246,13 @@ class SpatialPerceptionEngine:
 
     @staticmethod
     def calculate_obstacle_distance(depth_frame):
-        """Tính cự ly vật cản trung tâm phân vị 10% (10th percentile depth)"""
+        """Tính cự ly vật cản trung tâm phân vị 5% kết hợp bẫy điểm mù (Blind Spot Trap)"""
         if depth_frame is None or not isinstance(depth_frame, np.ndarray):
             return 99.0
         h, w = depth_frame.shape[:2]
         if h < 10 or w < 10: return 99.0
 
+        # Mở rộng vùng quét trung tâm 80x120 pixel hoặc 1/3 vùng giữa
         h_start, h_end = int(h / 3.0), int(2.0 * h / 3.0)
         w_start, w_end = int(w / 3.0), int(2.0 * w / 3.0)
         roi = depth_frame[h_start:h_end, w_start:w_end]
@@ -261,9 +262,21 @@ class SpatialPerceptionEngine:
         else:
             roi_m = roi.astype(np.float32)
 
-        valid = roi_m[(roi_m >= 0.15) & (roi_m <= 5.0)]
-        if len(valid) >= 15:
-            return round(float(np.percentile(valid, 10)), 2)
+        total_pixels = roi_m.size
+        # Chỉ lấy các điểm có giá trị từ 10cm (0.10m) đến 5m
+        valid = roi_m[(roi_m >= 0.10) & (roi_m <= 5.0)]
+        valid_count = len(valid)
+
+        # ─── BẪY ĐIỂM MÙ (BLIND SPOT TRAP - GIẢI PHÁP TỪ TEST SƠ BỘ) ───
+        # Khi có vật thể áp sát cực gần (<10cm) che ống kính, cảm biến Stereo Depth
+        # không thể ghép stereo correspondence và trả về 0 pixel.
+        # Nếu số điểm hợp lệ tụt dưới 20% tổng diện tích ROI:
+        if valid_count < (total_pixels * 0.20):
+            return 0.0  # Ép cự ly về 0 để phanh khẩn cấp ngay lập tức!
+        elif valid_count >= 50:
+            # Lọc nhiễu hạt bằng phân vị 5% thay vì min tuyệt đối
+            return round(float(np.percentile(valid, 5)), 2)
+
         return 99.0
 
     @staticmethod
