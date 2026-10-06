@@ -206,6 +206,38 @@ class SpatialPerceptionEngine:
             for (ux, uy, uw, uh) in uppers:
                 found_boxes.append((int(ux / scale), int(uy / scale), int(uw / scale), int(uh / scale), "PERSON", 0.82))
 
+        # 3. Dò tìm chân/thân người bằng Depth Map khi robot đặt dưới sàn (Floor Leg Detection)
+        if not found_boxes and depth_frame is not None and isinstance(depth_frame, np.ndarray):
+            try:
+                dh, dw = depth_frame.shape[:2]
+                lower_d = depth_frame[int(dh * 0.30):, :]
+                if lower_d.dtype == np.uint16 or lower_d.max() > 100.0:
+                    d_m = lower_d.astype(np.float32) / 1000.0
+                else:
+                    d_m = lower_d.astype(np.float32)
+
+                # Tìm các điểm ở cự ly người đứng (0.45m đến 2.50m)
+                mask = (d_m >= 0.45) & (d_m <= 2.50)
+                if np.sum(mask) > (dw * 12):
+                    col_hist = np.sum(mask, axis=0)
+                    if np.max(col_hist) > 18:
+                        # Tìm tâm cột có mật độ điểm cao nhất
+                        center_col = int(np.argmax(cv2.GaussianBlur(col_hist.astype(np.float32), (25, 1), 0)))
+                        # Đo độ sâu trung bình tại vùng chân này
+                        c_roi = d_m[:, max(0, center_col - 25):min(dw, center_col + 25)]
+                        valid_z = c_roi[(c_roi >= 0.45) & (c_roi <= 2.50)]
+                        if len(valid_z) > 15:
+                            z_target = float(np.median(valid_z))
+                            bw_px = int(0.35 * fx / z_target * w / dw)
+                            bh_px = int(0.70 * fy / z_target * h / dh)
+                            bx = int(center_col * w / dw - bw_px / 2)
+                            by = int(h - bh_px - 10)
+                            bx = max(0, min(w - bw_px - 1, bx))
+                            by = max(0, min(h - bh_px - 1, by))
+                            found_boxes.append((bx, by, bw_px, bh_px, "PERSON", 0.85))
+            except Exception:
+                pass
+
         detections = []
         for (bx, by, bw, bh, name, score) in found_boxes:
             u_center = bx + bw // 2
@@ -246,13 +278,13 @@ class SpatialPerceptionEngine:
 
     @staticmethod
     def calculate_obstacle_distance(depth_frame):
-        """Tính cự ly vật cản trung tâm phân vị 5% kết hợp bẫy điểm mù (Blind Spot Trap)"""
+        """Tính cự ly vật cản trung tâm phân vị 5% (an toàn, không báo động giả)"""
         if depth_frame is None or not isinstance(depth_frame, np.ndarray):
             return 99.0
         h, w = depth_frame.shape[:2]
         if h < 10 or w < 10: return 99.0
 
-        # Mở rộng vùng quét trung tâm 80x120 pixel hoặc 1/3 vùng giữa
+        # Mở rộng vùng quét trung tâm
         h_start, h_end = int(h / 3.0), int(2.0 * h / 3.0)
         w_start, w_end = int(w / 3.0), int(2.0 * w / 3.0)
         roi = depth_frame[h_start:h_end, w_start:w_end]
@@ -262,20 +294,11 @@ class SpatialPerceptionEngine:
         else:
             roi_m = roi.astype(np.float32)
 
-        total_pixels = roi_m.size
-        # Chỉ lấy các điểm có giá trị từ 10cm (0.10m) đến 5m
-        valid = roi_m[(roi_m >= 0.10) & (roi_m <= 5.0)]
-        valid_count = len(valid)
-
-        # ─── BẪY ĐIỂM MÙ (BLIND SPOT TRAP - GIẢI PHÁP TỪ TEST SƠ BỘ) ───
-        # Khi có vật thể áp sát cực gần (<10cm) che ống kính, cảm biến Stereo Depth
-        # không thể ghép stereo correspondence và trả về 0 pixel.
-        # Nếu số điểm hợp lệ tụt dưới 20% tổng diện tích ROI:
-        if valid_count < (total_pixels * 0.20):
-            return 0.0  # Ép cự ly về 0 để phanh khẩn cấp ngay lập tức!
-        elif valid_count >= 50:
-            # Lọc nhiễu hạt bằng phân vị 5% thay vì min tuyệt đối
-            return round(float(np.percentile(valid, 5)), 2)
+        # Lấy các điểm cự ly đo được hợp lệ trong khoảng 10cm đến 4.0m
+        valid = roi_m[(roi_m >= 0.10) & (roi_m <= 4.0)]
+        if len(valid) >= 40:
+            dist = float(np.percentile(valid, 5))
+            return round(dist, 2)
 
         return 99.0
 

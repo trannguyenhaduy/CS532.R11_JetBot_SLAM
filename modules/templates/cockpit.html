@@ -653,7 +653,8 @@
 
         const deg = (d.robot_yaw * 180 / Math.PI).toFixed(0);
         document.getElementById('pose-val').innerText = `${d.robot_x.toFixed(2)}, ${d.robot_y.toFixed(2)}, ${deg}°`;
-        document.getElementById('pts-count').innerText = `${d.points_3d.length} PTS`;
+        const numPts = (d.points_3d && Array.isArray(d.points_3d)) ? d.points_3d.length : 0;
+        document.getElementById('pts-count').innerText = `${numPts} PTS`;
 
         // 1. Cập nhật vị trí Robot 3D
         robotGroup.position.set(d.robot_x, d.robot_y, d.robot_z);
@@ -904,11 +905,17 @@
 
     // Chuyển đổi trạng thái Tự hành Bám người HRI
     function toggleFollower() {
+      const btn = document.getElementById('btn-toggle-follower');
+      const isCurrentlyOn = btn && btn.innerText.includes('ĐANG BẬT');
+      // Đổi ngay lập tức giao diện (Optimistic UI)
+      updateFollowerBtn(!isCurrentlyOn);
       fetch('/api/toggle?flag=follow')
         .then(r => r.json())
         .then(data => {
           updateFollowerBtn(data.state);
-        }).catch(e => {});
+        }).catch(e => {
+          updateFollowerBtn(isCurrentlyOn);
+        });
     }
 
     function updateFollowerBtn(enabled) {

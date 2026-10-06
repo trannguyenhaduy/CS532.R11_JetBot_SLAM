@@ -495,6 +495,7 @@ class JetBotMasterSystem:
                 "robot_x": round(self.robot_x, 3), "robot_y": round(self.robot_y, 3), "robot_z": round(self.robot_z, 3),
                 "robot_yaw": round(self.robot_yaw, 3), "path": self.path_history,
                 "map_b64": "", "map_version": 1, "map_origin_x": -3.5, "map_origin_y": -3.5, "map_resolution": 0.05,
+                "points_3d": pts,
                 "detections": self.detections, "obstacle_distance": self.obstacle_distance,
                 "follower_enabled": bool(self.follower.is_enabled) if self.follower else False,
                 "camera_source": "OAK-D S2 (ROS LIVE)" if (time.time() - self.last_ros_img_time < 2.0) else "OAK-D S2 (STANDALONE)",
