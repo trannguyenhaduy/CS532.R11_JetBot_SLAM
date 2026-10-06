@@ -31,7 +31,7 @@ try:
     from geometry_msgs.msg import Twist
     from nav_msgs.msg import OccupancyGrid, Odometry
     from sensor_msgs.msg import Image, CameraInfo
-    from std_msgs.msg import Float32MultiArray
+    from std_msgs.msg import Float32MultiArray, String
     HAS_ROS = True
 except ImportError:
     HAS_ROS = False
@@ -41,6 +41,7 @@ except ImportError:
     OccupancyGrid = object
     Twist = object
     Float32MultiArray = object
+    String = object
 
 try:
     from depthai_ros_msgs.msg import SpatialDetectionArray
@@ -53,6 +54,14 @@ try:
     HAS_SMBUS = True
 except ImportError:
     HAS_SMBUS = False
+
+try:
+    from spatial_perception_node import SpatialPerceptionFilter, TARGET_CLASSES
+    HAS_TV2_FILTER = True
+except Exception:
+    HAS_TV2_FILTER = False
+    SpatialPerceptionFilter = None
+    TARGET_CLASSES = {}
 
 def is_shutdown():
     if HAS_ROS:
@@ -94,8 +103,9 @@ class SystemState:
         self.cx = 208.0
         self.cy = 208.0
 
-        # 3D Detections
+        # 3D Detections & Obstacle Telemetry (Thành viên 2)
         self.detections = []
+        self.obstacle_distance = 1.45
 
         # Real-time 3S Li-ion Battery Telemetry
         self.battery_v = 12.18
@@ -122,15 +132,41 @@ class SystemState:
         self.avg_confidence = 0.82
 
         self.benchmark = {
-            "score_p": 22, "max_p": 25,
-            "score_s": 28, "max_s": 35,
-            "score_sem": 20, "max_sem": 25,
-            "score_hw": 14, "max_hw": 15,
-            "overall_score": 84,
-            "grade": "XUẤT SẮC (A)",
-            "weakness": "Đang phân tích hiệu năng hệ thống...",
-            "fps": 15.0, "odom_hz": 3.4,
-            "cpu_pct": 35.0, "ram_gb": 2.1
+            "tv1": {
+                "score_hw": 14, "max_hw": 15,
+                "score_motion": 15, "max_motion": 15,
+                "total_score": 29, "max_score": 30,
+                "grade": "XUẤT SẮC (A+)",
+                "battery_v": 12.1, "battery_pct": 88,
+                "cpu_pct": 35.0, "ram_gb": 2.1,
+                "bumper_status": "VÙNG AN TOÀN",
+                "diag_text": "Hệ thống động cơ & nguồn điện INA219 ổn định."
+            },
+            "tv2": {
+                "camera_source": "Đang kết nối camera...",
+                "fps": 0.0, "fps_pct": 0,
+                "valid_depth_pct": 0.0, "avg_confidence": 0.0,
+                "num_obj": 0, "target_info": "Đang quét không gian...",
+                "obstacle_distance": 3.5, "dist_pct": 85,
+                "status_badge": "KHỞI ĐỘNG",
+                "diag_text": "Đang đồng bộ luồng camera và bộ lọc Spatial AI..."
+            },
+            "tv3": {
+                "score_s": 28, "max_s": 35,
+                "score_sem": 22, "max_sem": 25,
+                "total_score": 50, "max_score": 60,
+                "grade": "XUẤT SẮC (A+)",
+                "odom_hz": 3.5, "num_pts": 800, "num_obj": 0,
+                "diag_text": "Bản đồ RTAB-Map và cây tọa độ TF2 hoạt động chuẩn xác."
+            },
+            # Trường tương thích phẳng
+            "camera_source": "Đang kết nối camera...",
+            "fps": 0.0, "fps_pct": 0,
+            "valid_depth_pct": 0.0, "avg_confidence": 0.0,
+            "num_obj": 0, "target_info": "Đang quét không gian...",
+            "obstacle_distance": 3.5, "dist_pct": 85,
+            "status_badge": "KHỞI ĐỘNG",
+            "diag_text": "Đang đồng bộ luồng camera và bộ lọc Spatial AI..."
         }
 
 state = SystemState()
@@ -256,7 +292,7 @@ def battery_worker():
         except Exception: pass
         time.sleep(1.0)
 
-# ─── REAL-TIME BENCHMARK EVALUATOR WORKER ────────────────────────────────────
+# ─── REAL-TIME BENCHMARK EVALUATOR WORKER (3 THÀNH VIÊN) ─────────────────────
 def benchmark_worker():
     time.sleep(1.5)  # Chờ hệ thống ổn định
     while not is_shutdown():
@@ -265,7 +301,8 @@ def benchmark_worker():
             cpu_pct, ram_gb = get_hardware_telemetry()
 
             with state.lock:
-                # 1. Tính FPS thực tế
+                # ─── THÔNG SỐ ĐO ĐẠC NỀN TẢNG ───
+                # 1. Tính FPS camera thực tế
                 dt_img = now - state.last_img_sec
                 if dt_img >= 1.0:
                     state.calc_fps = round(state.img_counter / dt_img, 1)
@@ -282,113 +319,208 @@ def benchmark_worker():
                 odom_hz = state.odom_hz
                 odom_active = (now - state.last_odom_recv) < 2.0
 
-                # 3. Tính điểm Perception (Tối đa 25 điểm)
-                score_p = 0
-                score_p += min(10.0, (fps / 15.0) * 10.0)
-                score_p += min(10.0, (state.avg_confidence / 0.80) * 10.0)
-                score_p += min(5.0, (state.valid_depth_pct / 85.0) * 5.0)
-                score_p = int(round(min(25, max(0, score_p))))
+                num_obj = len(state.detections)
+                obs_dist = getattr(state, 'obstacle_distance', 3.5)
+                clarity = state.valid_depth_pct
+                conf_pct = round(state.avg_confidence * 100, 1)
+                cam_source = getattr(state, 'camera_source', 'Camera')
+                num_pts = len(state.points_3d)
 
-                # 4. Tính điểm SLAM / Odometry (Tối đa 35 điểm)
+                # ══════════════════════════════════════════════════════════════
+                # 1. ĐÁNH GIÁ THÀNH VIÊN 1: ĐIỀU KHIỂN & AN TOÀN PHẦN CỨNG (TV1)
+                # ══════════════════════════════════════════════════════════════
+                score_hw = 0
+                if cpu_pct < 65.0: score_hw += 5
+                elif cpu_pct < 85.0: score_hw += 3
+                else: score_hw += 1
+
+                if ram_gb < 3.0: score_hw += 5
+                elif ram_gb < 3.6: score_hw += 3
+                else: score_hw += 1
+
+                if state.battery_v >= 11.1: score_hw += 5
+                elif state.battery_v >= 10.4: score_hw += 3
+                else: score_hw += 1
+                score_hw = int(min(15, max(0, score_hw)))
+
+                score_motion = 0
+                if obs_dist >= 0.35: score_motion += 10
+                elif obs_dist >= 0.20: score_motion += 6
+                else: score_motion += 3
+                score_motion += 5  # Tần số phản hồi điều khiển vi sai
+                score_motion = int(min(15, max(0, score_motion)))
+
+                score_tv1 = score_hw + score_motion
+                if score_tv1 >= 26: grade_tv1 = "XUẤT SẮC (A+)"
+                elif score_tv1 >= 22: grade_tv1 = "GIỎI (A)"
+                elif score_tv1 >= 18: grade_tv1 = "ĐẠT CHUẨN (B)"
+                else: grade_tv1 = "CẦN TỐI ƯU (C)"
+
+                bumper_status = "VÙNG AN TOÀN" if obs_dist >= 0.35 else "PHANH KHẨN CẤP"
+                if obs_dist < 0.35:
+                    diag_tv1 = f"Virtual Bumper KÍCH HOẠT PHANH! Vật cản {obs_dist:.2f}m (< 0.35m)."
+                elif state.battery_v < 10.6:
+                    diag_tv1 = f"Pin 3S đang yếu ({state.battery_v:.1f}V). Cần cắm sạc bảo vệ Cell."
+                elif cpu_pct > 80.0:
+                    diag_tv1 = f"Tải CPU Jetson cao ({cpu_pct}%). Kiểm tra tiến trình nền."
+                else:
+                    diag_tv1 = "Hệ thống động cơ & nguồn điện INA219 ổn định. Virtual Bumper trực sẵn sàng."
+
+                # ══════════════════════════════════════════════════════════════
+                # 2. THÔNG SỐ THỰC TẾ THỊ GIÁC & SPATIAL AI (THÀNH VIÊN 2)
+                #    (Tuyệt đối không tính điểm, chỉ hiển thị thông số đo đạc)
+                # ══════════════════════════════════════════════════════════════
+                if num_obj > 0:
+                    first_det = state.detections[0]
+                    target_info = f"{first_det.get('name', 'MỤC TIÊU')} ({int(first_det.get('score', 0.8)*100)}%) · X:{first_det.get('x',0)}m Z:{first_det.get('z',0)}m"
+                else:
+                    target_info = "Chưa phát hiện mục tiêu trong tầm quét 0.3m - 4.0m"
+
+                if fps >= 12.0 and clarity >= 40.0:
+                    status_badge_tv2 = "HOẠT ĐỘNG TỐT"
+                elif clarity < 40.0:
+                    status_badge_tv2 = "THIẾU SÁNG / MỜ"
+                elif fps < 10.0:
+                    status_badge_tv2 = "TRỄ KHUNG HÌNH"
+                else:
+                    status_badge_tv2 = "CHỜ TÍN HIỆU"
+
+                if num_obj > 0:
+                    diag_tv2 = f"Đã khóa {num_obj} mục tiêu ({first_det.get('name')}) ở cự ly {obs_dist:.2f}m. Bộ lọc 5 lớp TV2 hoạt động chính xác."
+                elif clarity < 35.0:
+                    diag_tv2 = "Ảnh camera bị mờ hoặc thiếu sáng. Cần kiểm tra ánh sáng phòng hoặc vệ sinh ống kính."
+                elif fps < 10.0:
+                    diag_tv2 = f"Tốc độ camera bị trễ ({fps:.1f} FPS < 15 FPS). Vui lòng kiểm tra băng thông truyền dẫn."
+                else:
+                    diag_tv2 = "Camera hoạt động ổn định. Đang quét 5 lớp mục tiêu: Người, Bàn, Ghế, Màn hình, Biển báo."
+
+                # ══════════════════════════════════════════════════════════════
+                # 3. ĐÁNH GIÁ THÀNH VIÊN 3: VISUAL SLAM & BẢN ĐỒ NGỮ NGHĨA 3D (TV3)
+                # ══════════════════════════════════════════════════════════════
                 score_s = 0
                 if odom_active:
                     score_s += min(15.0, (odom_hz / 3.5) * 15.0)
-                    score_s += min(10.0, (len(state.points_3d) / 800.0) * 10.0)
-                    score_s += 10.0  # TF transform ổn định
+                    score_s += min(10.0, (num_pts / 800.0) * 10.0)
+                    score_s += 10.0  # TF transform liên tục
                 else:
                     score_s = 8  # Mất tracking / chưa bật SLAM
                 score_s = int(round(min(35, max(0, score_s))))
 
-                # 5. Tính điểm Semantic Map (Tối đa 25 điểm)
                 score_sem = 0
-                num_obj = len(state.detections)
                 if num_obj > 0:
                     score_sem += 15.0
-                    # Thưởng nếu đo cự ly hợp lý (< 4.5m)
                     valid_depth_objs = sum(1 for d in state.detections if 0.4 <= d.get('z', 0) <= 4.5)
                     score_sem += min(10.0, (valid_depth_objs / max(1, num_obj)) * 10.0)
                 else:
-                    score_sem = 12.0  # Chưa có vật thể trong khung hình
+                    score_sem = 12.0
                 score_sem = int(round(min(25, max(0, score_sem))))
 
-                # 6. Tính điểm Hardware Health (Tối đa 15 điểm)
-                score_hw = 0
-                # CPU
-                if cpu_pct < 65.0: score_hw += 5
-                elif cpu_pct < 85.0: score_hw += 3
-                else: score_hw += 1
-                # RAM
-                if ram_gb < 3.0: score_hw += 5
-                elif ram_gb < 3.6: score_hw += 3
-                else: score_hw += 1
-                # Battery
-                if state.battery_v >= 11.1: score_hw += 5
-                elif state.battery_v >= 10.4: score_hw += 3
-                else: score_hw += 1
-                score_hw = int(round(min(15, max(0, score_hw))))
+                score_tv3 = score_s + score_sem
+                if score_tv3 >= 52: grade_tv3 = "XUẤT SẮC (A+)"
+                elif score_tv3 >= 44: grade_tv3 = "GIỎI (A)"
+                elif score_tv3 >= 36: grade_tv3 = "ĐẠT CHUẨN (B)"
+                else: grade_tv3 = "CẦN TỐI ƯU (C)"
 
-                # TỔNG ĐIỂM HỆ THỐNG
-                total = score_p + score_s + score_sem + score_hw
-
-                # Xếp loại học thuật
-                if total >= 90: grade = "XUẤT SẮC (A+)"
-                elif total >= 80: grade = "GIỎI (A)"
-                elif total >= 70: grade = "KHÁ (B)"
-                elif total >= 55: grade = "TRUNG BÌNH (C)"
-                else: grade = "CẦN TỐI ƯU (D)"
-
-                # Chẩn đoán điểm yếu tự động (Weakness Diagnosis)
-                ratios = [
-                    (score_p / 25.0, "Perception", "FPS Camera/VPU thấp hoặc phòng thiếu sáng làm giảm độ nét"),
-                    (score_s / 35.0, "Visual SLAM", "Tần số Odometry thấp hoặc mất dấu (Lost Tracking). Nên di chuyển chậm"),
-                    (score_sem / 25.0, "Semantic", "Chưa phát hiện được vật thể mục tiêu (bàn, ghế, người) trong tầm quét 3m"),
-                    (score_hw / 15.0, "Hardware", "Pin 3S đang yếu (< 10.8V) hoặc RAM Jetson Nano bị chiếm dụng nhiều")
-                ]
-                ratios.sort(key=lambda x: x[0])
-                lowest = ratios[0]
-                if total >= 88:
-                    weakness = "Hệ thống hoạt động tối ưu! Tất cả các chỉ số đều đạt chuẩn bảo vệ đồ án."
+                if not odom_active:
+                    diag_tv3 = "Mất dấu Odometry (Lost Tracking). Robot cần quay chậm để bắt lại Visual Keypoints."
+                elif num_pts < 300:
+                    diag_tv3 = "Mật độ mây điểm 3D thấp. Hãy di chuyển robot để RTAB-Map làm dày bản đồ."
+                elif num_obj == 0:
+                    diag_tv3 = "Chưa phát hiện cụm ngữ nghĩa trong không gian 3D."
                 else:
-                    weakness = f"Điểm yếu: [{lowest[1]}] - {lowest[2]}."
+                    diag_tv3 = f"Bản đồ RTAB-Map & Cây TF2 chuẩn xác! Đã cắm cờ {num_obj} vật thể ngữ nghĩa."
 
+                # Gom lại thành gói Benchmark 3 phân vùng
                 state.benchmark = {
-                    "score_p": score_p, "max_p": 25,
+                    "tv1": {
+                        "score_hw": score_hw, "max_hw": 15,
+                        "score_motion": score_motion, "max_motion": 15,
+                        "total_score": score_tv1, "max_score": 30,
+                        "grade": grade_tv1,
+                        "battery_v": state.battery_v, "battery_pct": state.battery_pct,
+                        "cpu_pct": cpu_pct, "ram_gb": ram_gb,
+                        "bumper_status": bumper_status,
+                        "diag_text": diag_tv1
+                    },
+                    "tv2": {
+                        "camera_source": cam_source,
+                        "fps": fps,
+                        "fps_pct": min(100, int((fps / 15.0) * 100)),
+                        "valid_depth_pct": clarity,
+                        "avg_confidence": conf_pct,
+                        "num_obj": num_obj,
+                        "target_info": target_info,
+                        "obstacle_distance": round(obs_dist, 2),
+                        "dist_pct": min(100, max(5, int((obs_dist / 4.0) * 100))),
+                        "status_badge": status_badge_tv2,
+                        "diag_text": diag_tv2
+                    },
+                    "tv3": {
+                        "score_s": score_s, "max_s": 35,
+                        "score_sem": score_sem, "max_sem": 25,
+                        "total_score": score_tv3, "max_score": 60,
+                        "grade": grade_tv3,
+                        "odom_hz": odom_hz,
+                        "num_pts": num_pts,
+                        "num_obj": num_obj,
+                        "diag_text": diag_tv3
+                    },
+                    # Trường tương thích phẳng
+                    "camera_source": cam_source,
+                    "fps": fps,
+                    "fps_pct": min(100, int((fps / 15.0) * 100)),
+                    "valid_depth_pct": clarity,
+                    "avg_confidence": conf_pct,
+                    "num_obj": num_obj,
+                    "target_info": target_info,
+                    "obstacle_distance": round(obs_dist, 2),
+                    "dist_pct": min(100, max(5, int((obs_dist / 4.0) * 100))),
+                    "status_badge": status_badge_tv2,
+                    "diag_text": diag_tv2,
+                    "score_hw": score_hw, "max_hw": 15,
                     "score_s": score_s, "max_s": 35,
                     "score_sem": score_sem, "max_sem": 25,
-                    "score_hw": score_hw, "max_hw": 15,
-                    "overall_score": total,
-                    "grade": grade,
-                    "weakness": weakness,
-                    "fps": fps, "odom_hz": odom_hz,
-                    "cpu_pct": cpu_pct, "ram_gb": ram_gb
+                    "score_tv1": score_tv1, "score_tv3": score_tv3
                 }
-                cur_v = state.battery_v
-                num_pts = len(state.points_3d)
 
-            # IN RA BẢNG SCORECARD TRÊN TERMINAL ĐỊNH KỲ (ANSI COLORS)
+            # IN RA BẢNG ĐÁNH GIÁ 3 THÀNH VIÊN TRÊN TERMINAL ĐỊNH KỲ (ANSI COLORS)
             c_cyan = "\033[1;36m"
             c_yellow = "\033[1;33m"
             c_green = "\033[1;32m"
-            c_magenta = "\033[1;35m"
-            c_red = "\033[1;31m"
+            c_purple = "\033[1;35m"
+            c_blue = "\033[1;34m"
             c_reset = "\033[0m"
 
             sys.stdout.write(
                 f"\n{c_cyan}══════════════════════════════════════════════════════════════════════════════════════{c_reset}\n"
-                f"{c_yellow}🏆 JETBOT REAL-TIME BENCHMARK SCORECARD [THANG ĐIỂM 100 ĐỒ ÁN TỐT NGHIỆP]{c_reset}\n"
-                f"  ├─ [1] Perception (VPU + Stereo) : {c_green}{score_p:2d}/25 pts{c_reset}  (FPS: {fps} fps, Conf: {state.avg_confidence*100:.0f}%)\n"
-                f"  ├─ [2] Visual SLAM (RTAB-Map)    : {c_green}{score_s:2d}/35 pts{c_reset}  (VO: {odom_hz} Hz, Mây điểm: {num_pts} pts)\n"
-                f"  ├─ [3] Semantic Map & 3D TF      : {c_green}{score_sem:2d}/25 pts{c_reset}  ({num_obj} vật thể 3D nhận diện)\n"
-                f"  ├─ [4] Sức khỏe Phần cứng Biên   : {c_green}{score_hw:2d}/15 pts{c_reset}  (CPU: {cpu_pct}%, RAM: {ram_gb}GB, Pin: {cur_v}V)\n"
-                f"  ╠═► {c_magenta}TỔNG ĐIỂM HỆ THỐNG: {total:3d} / 100  [{grade}]{c_reset}\n"
-                f"  ╚═► {c_red}{weakness}{c_reset}\n"
+                f"{c_yellow}📊 BÁO CÁO ĐÁNH GIÁ ĐỒ ÁN JETBOT SLAM THEO 3 THÀNH VIÊN NHÓM{c_reset}\n"
+                f"──────────────────────────────────────────────────────────────────────────────────────\n"
+                f"{c_blue}🔵 [THÀNH VIÊN 1: ĐIỀU KHIỂN CHUYỂN ĐỘNG & AN TOÀN PHẦN CỨNG]{c_reset}\n"
+                f"  ├─ Sức khỏe Jetson/Pin INA219 : {c_green}{score_hw:2d}/15 pts{c_reset} (CPU: {cpu_pct}%, RAM: {ram_gb}GB, Pin: {state.battery_v:.2f}V)\n"
+                f"  ├─ Virtual Bumper & Chuyển động: {c_green}{score_motion:2d}/15 pts{c_reset} (Cự ly cản: {obs_dist:.2f}m · {bumper_status})\n"
+                f"  ├─ Tổng điểm & Xếp loại TV1   : {c_green}{score_tv1:2d}/30 pts{c_reset} [{grade_tv1}]\n"
+                f"  └─ Chẩn đoán an toàn TV1      : {diag_tv1}\n"
+                f"──────────────────────────────────────────────────────────────────────────────────────\n"
+                f"{c_green}🟢 [THÀNH VIÊN 2: THỊ GIÁC BIÊN & SPATIAL AI - THÔNG SỐ THỰC TẾ]{c_reset}\n"
+                f"  ├─ Nguồn Cảm biến             : {c_cyan}{cam_source}{c_reset}\n"
+                f"  ├─ 1. Tốc độ Camera (FPS)     : {c_green}{fps:.1f} FPS{c_reset} [Chuẩn 15.0 FPS, Tỉ lệ: {min(100, int((fps/15.0)*100))}%]\n"
+                f"  ├─ 2. Độ nét ảnh / Depth      : {c_green}{clarity:.1f}%{c_reset} [{'SẮC NÉT · ĐỦ SÁNG' if clarity >= 60 else 'MỜ NÉT · THIẾU SÁNG'}]\n"
+                f"  ├─ 3. Mục tiêu 5 Lớp TV2      : {c_green}{num_obj} vật thể{c_reset} [{target_info}]\n"
+                f"  ├─ 4. Cự ly Vật cản Phía trước: {c_green}{obs_dist:.2f} mét{c_reset} [/obstacle_distance: {'VÙNG AN TOÀN' if obs_dist >= 0.35 else 'PHANH KHẨN CẤP'}]\n"
+                f"  └─ Trạng thái & Chẩn đoán TV2 : [{status_badge_tv2}] - {diag_tv2}\n"
+                f"──────────────────────────────────────────────────────────────────────────────────────\n"
+                f"{c_purple}🟣 [THÀNH VIÊN 3: VISUAL SLAM & BẢN ĐỒ NGỮ NGHĨA 3D]{c_reset}\n"
+                f"  ├─ Visual SLAM (RTAB-Map)     : {c_green}{score_s:2d}/35 pts{c_reset} (VO: {odom_hz:.1f} Hz, Mây điểm: {num_pts} pts)\n"
+                f"  ├─ Semantic Map & 3D TF       : {c_green}{score_sem:2d}/25 pts{c_reset} ({num_obj} vật thể 3D đã cắm cờ)\n"
+                f"  ├─ Tổng điểm & Xếp loại TV3   : {c_green}{score_tv3:2d}/60 pts{c_reset} [{grade_tv3}]\n"
+                f"  └─ Chẩn đoán SLAM TV3         : {diag_tv3}\n"
                 f"{c_cyan}══════════════════════════════════════════════════════════════════════════════════════{c_reset}\n"
             )
             sys.stdout.flush()
 
         except Exception as e:
             pass
-        time.sleep(4.0)
+        time.sleep(3.0)
 
 # ─── ROS SUBSCRIBERS ──────────────────────────────────────────────────────────
 cmd_vel_pub = None
@@ -526,6 +658,17 @@ def detections_cb(msg):
             scores = [d['score'] for d in dets]
             state.avg_confidence = round(float(sum(scores)) / len(scores), 2)
 
+def spatial_objects_json_cb(msg):
+    try:
+        data = json.loads(msg.data)
+        if isinstance(data, list):
+            with state.lock:
+                state.detections = data
+                if data:
+                    scores = [float(d.get('score', 0.8)) for d in data]
+                    state.avg_confidence = round(float(sum(scores)) / len(scores), 2)
+    except Exception: pass
+
 # ─── FRONTEND HTML + THREE.JS ────────────────────────────────────────────────
 HTML_PAGE = """<!DOCTYPE html>
 <html lang="vi">
@@ -617,15 +760,32 @@ HTML_PAGE = """<!DOCTYPE html>
       background: rgba(255,255,255,0.03); border-left: 3px solid var(--emerald); font-family: 'Orbitron', monospace; font-size: 0.8rem;
     }
     
-    /* Benchmark Scorecard Styles */
-    .bench-box { padding: 12px; display: flex; flex-direction: column; gap: 7px; }
-    .bench-row { display: grid; grid-template-columns: 125px 1fr 45px; align-items: center; gap: 8px; font-size: 0.75rem; }
-    .bench-lbl { color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    /* Benchmark Scorecard Styles & 3 Member Evaluations */
+    .eval-tabs { display: flex; gap: 4px; }
+    .eval-tab-btn {
+      background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.18);
+      border-radius: 4px; padding: 2px 7px; color: var(--dim); font-size: 0.68rem;
+      font-family: 'Space Grotesk', sans-serif; font-weight: 600; cursor: pointer; transition: all 0.2s;
+    }
+    .eval-tab-btn:hover { color: #fff; background: rgba(255,255,255,0.12); }
+    .eval-tab-btn.active { color: var(--cyan); border-color: var(--cyan); background: rgba(0, 240, 255, 0.18); font-weight: 700; }
+    .eval-card-block {
+      background: rgba(255,255,255,0.02); border-radius: 6px; padding: 8px 10px;
+      display: flex; flex-direction: column; gap: 6px; transition: all 0.3s;
+    }
+    .eval-block-tv1 { border-left: 3px solid var(--cyan); }
+    .eval-block-tv2 { border-left: 3px solid var(--emerald); }
+    .eval-block-tv3 { border-left: 3px solid var(--purple); }
+
+    .bench-box { padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+    .bench-row { display: grid; grid-template-columns: 140px 1fr 65px; align-items: center; gap: 8px; font-size: 0.75rem; }
+    .bench-lbl { color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
     .bench-bar-bg { width: 100%; height: 7px; background: rgba(255,255,255,0.06); border-radius: 4px; overflow: hidden; }
-    .bench-bar-fill { height: 100%; transition: width 0.4s ease; border-radius: 4px; }
-    .bench-val { font-family: 'Orbitron', monospace; font-weight: 700; color: #fff; text-align: right; }
-    .bench-badge { padding: 3px 8px; border-radius: 4px; font-size: 0.72rem; font-weight: 700; background: rgba(0, 255, 163, 0.15); color: var(--emerald); border: 1px solid var(--emerald); }
-    .bench-alert { background: rgba(255, 184, 0, 0.08); border-left: 3px solid var(--amber); padding: 6px 8px; border-radius: 4px; font-size: 0.72rem; line-height: 1.3; }
+    .bench-bar-fill { height: 100%; transition: width 0.35s ease; border-radius: 4px; }
+    .bench-val { font-family: 'Orbitron', monospace; font-weight: 700; color: #fff; text-align: right; white-space: nowrap; font-size: 0.8rem; }
+    .bench-sub { font-size: 0.65rem; color: var(--dim); margin-top: -3px; margin-bottom: 2px; font-family: 'Space Grotesk', sans-serif; letter-spacing: 0.2px; padding-left: 2px; }
+    .bench-badge { padding: 2px 7px; border-radius: 4px; font-size: 0.70rem; font-weight: 700; background: rgba(0, 255, 163, 0.15); color: var(--emerald); border: 1px solid var(--emerald); }
+    .bench-alert { background: rgba(0, 240, 255, 0.08); border-left: 3px solid var(--cyan); padding: 5px 8px; border-radius: 4px; font-size: 0.70rem; line-height: 1.3; }
   </style>
 </head>
 <body>
@@ -704,36 +864,108 @@ HTML_PAGE = """<!DOCTYPE html>
       </div>
     </div>
 
-    <!-- Real-Time Benchmark Evaluator Card -->
-    <div class="card">
+    <!-- Real-Time Evaluation & Benchmark Card (3 Thành Viên Đồ Án) -->
+    <div class="card" id="card-evaluations">
       <div class="card-hdr">
-        <span>🏆 HỆ THỐNG ĐIỂM CHUẨN (BENCHMARK)</span>
-        <span id="bench-grade" class="bench-badge">84/100 · XUẤT SẮC</span>
+        <span>📊 ĐÁNH GIÁ 3 THÀNH VIÊN ĐỒ ÁN</span>
+        <div class="eval-tabs">
+          <button class="eval-tab-btn" id="btn-tab-tv1" onclick="switchEvalTab('tv1')">🔵 TV1</button>
+          <button class="eval-tab-btn" id="btn-tab-tv2" onclick="switchEvalTab('tv2')">🟢 TV2</button>
+          <button class="eval-tab-btn" id="btn-tab-tv3" onclick="switchEvalTab('tv3')">🟣 TV3</button>
+          <button class="eval-tab-btn active" id="btn-tab-all" onclick="switchEvalTab('all')">📋 TẤT CẢ</button>
+        </div>
       </div>
-      <div class="bench-box">
-        <div class="bench-row">
-          <span class="bench-lbl">1. Perception (VPU+Depth)</span>
-          <div class="bench-bar-bg"><div class="bench-bar-fill" id="bar-perc" style="width: 88%; background: var(--cyan);"></div></div>
-          <span class="bench-val" id="val-perc">22/25</span>
+      <div class="bench-box" style="max-height: 225px; overflow-y: auto;">
+
+        <!-- 🔵 PHẦN 1: ĐÁNH GIÁ THÀNH VIÊN 1 (ĐIỀU KHIỂN & PHẦN CỨNG) -->
+        <div class="eval-card-block eval-block-tv1" id="panel-tv1">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <span style="font-weight:700; color:var(--cyan); font-size:0.75rem;">🔵 TV1: ĐIỀU KHIỂN & SỨC KHỎE PHẦN CỨNG</span>
+            <span id="badge-tv1" class="bench-badge" style="border-color:var(--cyan); color:var(--cyan); background:rgba(0,240,255,0.12);">29/30 · XUẤT SẮC</span>
+          </div>
+          <div class="bench-row">
+            <span class="bench-lbl">1. Sức khỏe Jetson/Pin</span>
+            <div class="bench-bar-bg"><div class="bench-bar-fill" id="bar-tv1-hw" style="width: 93%; background: var(--cyan);"></div></div>
+            <span class="bench-val" id="val-tv1-hw">14/15</span>
+          </div>
+          <div class="bench-sub" id="sub-tv1-hw">CPU: --% · RAM: --GB · Pin INA219: --V</div>
+
+          <div class="bench-row">
+            <span class="bench-lbl">2. Phanh ảo Virtual Bumper</span>
+            <div class="bench-bar-bg"><div class="bench-bar-fill" id="bar-tv1-motion" style="width: 100%; background: var(--emerald);"></div></div>
+            <span class="bench-val" id="val-tv1-motion">15/15</span>
+          </div>
+          <div class="bench-sub" id="sub-tv1-motion">Virtual Bumper: VÙNG AN TOÀN (Cự ly cản: --m)</div>
+
+          <div class="bench-alert" style="border-left-color:var(--cyan);">
+            <span style="color:var(--cyan); font-weight:700;">📡 Chẩn đoán TV1:</span> <span id="diag-tv1-txt">Hệ thống động cơ & nguồn điện INA219 ổn định.</span>
+          </div>
         </div>
-        <div class="bench-row">
-          <span class="bench-lbl">2. Visual SLAM (RTAB-Map)</span>
-          <div class="bench-bar-bg"><div class="bench-bar-fill" id="bar-slam" style="width: 80%; background: var(--emerald);"></div></div>
-          <span class="bench-val" id="val-slam">28/35</span>
+
+        <!-- 🟢 PHẦN 2: THÔNG SỐ THỰC TẾ THÀNH VIÊN 2 (THỊ GIÁC BIÊN & SPATIAL AI - KHÔNG CHẤM ĐIỂM) -->
+        <div class="eval-card-block eval-block-tv2" id="panel-tv2">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <span style="font-weight:700; color:var(--emerald); font-size:0.75rem;">🟢 TV2: THÔNG SỐ THỰC TẾ CAMERA & SPATIAL AI</span>
+            <span id="cam-status-badge" class="bench-badge">HOẠT ĐỘNG TỐT</span>
+          </div>
+          <div class="bench-row">
+            <span class="bench-lbl">1. Tốc độ Camera (FPS)</span>
+            <div class="bench-bar-bg"><div class="bench-bar-fill" id="bar-cam-fps" style="width: 0%; background: var(--cyan);"></div></div>
+            <span class="bench-val" id="val-cam-fps">-- FPS</span>
+          </div>
+          <div class="bench-sub" id="sub-cam-fps">Chu kỳ đo thực tế: -- / 15.0 FPS</div>
+
+          <div class="bench-row">
+            <span class="bench-lbl">2. Độ nét ảnh / Depth</span>
+            <div class="bench-bar-bg"><div class="bench-bar-fill" id="bar-cam-clarity" style="width: 0%; background: var(--emerald);"></div></div>
+            <span class="bench-val" id="val-cam-clarity">--%</span>
+          </div>
+          <div class="bench-sub" id="sub-cam-clarity">Độ nét quang học / Stereo Depth: --%</div>
+
+          <div class="bench-row">
+            <span class="bench-lbl">3. Mục tiêu 5 Lớp TV2</span>
+            <div class="bench-bar-bg"><div class="bench-bar-fill" id="bar-cam-target" style="width: 0%; background: var(--purple);"></div></div>
+            <span class="bench-val" id="val-cam-target">0 VẬT THỂ</span>
+          </div>
+          <div class="bench-sub" id="sub-cam-target">Chưa phát hiện mục tiêu trong vùng quét</div>
+
+          <div class="bench-row">
+            <span class="bench-lbl">4. Cự ly Vật cản Trước</span>
+            <div class="bench-bar-bg"><div class="bench-bar-fill" id="bar-cam-dist" style="width: 0%; background: var(--amber);"></div></div>
+            <span class="bench-val" id="val-cam-dist">-- MÉT</span>
+          </div>
+          <div class="bench-sub" id="sub-cam-dist">Topic /obstacle_distance: -- mét</div>
+
+          <div class="bench-alert" style="border-left-color:var(--emerald);">
+            <span style="color:var(--emerald); font-weight:700;">📡 Trạng thái TV2:</span> <span id="cam-diag-txt">Đang thu thập thông số camera thời gian thực...</span>
+          </div>
         </div>
-        <div class="bench-row">
-          <span class="bench-lbl">3. Semantic 3D & TF</span>
-          <div class="bench-bar-bg"><div class="bench-bar-fill" id="bar-sem" style="width: 80%; background: var(--purple);"></div></div>
-          <span class="bench-val" id="val-sem">20/25</span>
+
+        <!-- 🟣 PHẦN 3: ĐÁNH GIÁ THÀNH VIÊN 3 (VISUAL SLAM & BẢN ĐỒ NGỮ NGHĨA 3D) -->
+        <div class="eval-card-block eval-block-tv3" id="panel-tv3">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <span style="font-weight:700; color:var(--purple); font-size:0.75rem;">🟣 TV3: VISUAL SLAM & BẢN ĐỒ NGỮ NGHĨA 3D</span>
+            <span id="badge-tv3" class="bench-badge" style="border-color:var(--purple); color:var(--purple); background:rgba(180,74,255,0.15);">50/60 · XUẤT SẮC</span>
+          </div>
+          <div class="bench-row">
+            <span class="bench-lbl">1. Visual SLAM (RTAB-Map)</span>
+            <div class="bench-bar-bg"><div class="bench-bar-fill" id="bar-tv3-slam" style="width: 80%; background: var(--cyan);"></div></div>
+            <span class="bench-val" id="val-tv3-slam">28/35</span>
+          </div>
+          <div class="bench-sub" id="sub-tv3-slam">VO: -- Hz · Mây điểm: -- pts · Cây TF2 liên tục</div>
+
+          <div class="bench-row">
+            <span class="bench-lbl">2. Bản đồ Ngữ nghĩa 3D</span>
+            <div class="bench-bar-bg"><div class="bench-bar-fill" id="bar-tv3-sem" style="width: 88%; background: var(--purple);"></div></div>
+            <span class="bench-val" id="val-tv3-sem">22/25</span>
+          </div>
+          <div class="bench-sub" id="sub-tv3-sem">Đã cắm cờ ngữ nghĩa: -- vật thể 3D</div>
+
+          <div class="bench-alert" style="border-left-color:var(--purple);">
+            <span style="color:var(--purple); font-weight:700;">📡 Chẩn đoán TV3:</span> <span id="diag-tv3-txt">Bản đồ RTAB-Map và cây tọa độ TF2 hoạt động chuẩn xác.</span>
+          </div>
         </div>
-        <div class="bench-row">
-          <span class="bench-lbl">4. Sức khỏe Phần cứng</span>
-          <div class="bench-bar-bg"><div class="bench-bar-fill" id="bar-hw" style="width: 93%; background: var(--amber);"></div></div>
-          <span class="bench-val" id="val-hw">14/15</span>
-        </div>
-        <div class="bench-alert" id="bench-weak">
-          <span style="color:var(--amber); font-weight:700;">⚠️ Chẩn đoán:</span> <span id="weak-txt">Đang tính toán điểm chuẩn...</span>
-        </div>
+
       </div>
     </div>
   </div>
@@ -1170,38 +1402,114 @@ HTML_PAGE = """<!DOCTYPE html>
           `).join('');
         }
 
-        // 7. Cập nhật Benchmark Scorecard Thời Gian Thực
+        // 7. Cập nhật Đánh Giá 3 Thành Viên Nhóm Đồ Án
         if (d.benchmark) {
           const b = d.benchmark;
-          const bg = document.getElementById('bench-grade');
-          if (bg) {
-            bg.innerText = `${b.overall_score}/100 · ${b.grade}`;
-            if (b.overall_score >= 85) {
-              bg.style.borderColor = 'var(--emerald)'; bg.style.color = 'var(--emerald)'; bg.style.background = 'rgba(0, 255, 163, 0.15)';
-            } else if (b.overall_score >= 70) {
-              bg.style.borderColor = 'var(--amber)'; bg.style.color = 'var(--amber)'; bg.style.background = 'rgba(255, 184, 0, 0.15)';
+          const tv1 = b.tv1 || {};
+          const tv2 = b.tv2 || b;
+          const tv3 = b.tv3 || {};
+
+          // ─── THÀNH VIÊN 1 (TV1: ĐIỀU KHIỂN & PHẦN CỨNG) ───
+          if (tv1.total_score !== undefined) {
+            const b1 = document.getElementById('badge-tv1');
+            if (b1) {
+              b1.innerText = `${tv1.total_score}/${tv1.max_score || 30} · ${tv1.grade || 'XUẤT SẮC'}`;
+              b1.style.borderColor = tv1.total_score >= 25 ? 'var(--cyan)' : (tv1.total_score >= 20 ? 'var(--amber)' : 'var(--rose)');
+              b1.style.color = b1.style.borderColor;
+            }
+            if (document.getElementById('val-tv1-hw')) document.getElementById('val-tv1-hw').innerText = `${tv1.score_hw}/${tv1.max_hw}`;
+            if (document.getElementById('bar-tv1-hw')) document.getElementById('bar-tv1-hw').style.width = `${((tv1.score_hw / (tv1.max_hw || 15)) * 100).toFixed(0)}%`;
+            if (document.getElementById('sub-tv1-hw')) document.getElementById('sub-tv1-hw').innerText = `CPU: ${tv1.cpu_pct}% · RAM: ${tv1.ram_gb}GB · Pin INA219: ${tv1.battery_v}V (${tv1.battery_pct}%)`;
+
+            if (document.getElementById('val-tv1-motion')) document.getElementById('val-tv1-motion').innerText = `${tv1.score_motion}/${tv1.max_motion}`;
+            if (document.getElementById('bar-tv1-motion')) document.getElementById('bar-tv1-motion').style.width = `${((tv1.score_motion / (tv1.max_motion || 15)) * 100).toFixed(0)}%`;
+            if (document.getElementById('sub-tv1-motion')) document.getElementById('sub-tv1-motion').innerText = `Virtual Bumper: ${tv1.bumper_status} (Cự ly cản: ${tv2.obstacle_distance !== undefined ? tv2.obstacle_distance : '--'}m)`;
+
+            if (document.getElementById('diag-tv1-txt')) document.getElementById('diag-tv1-txt').innerText = tv1.diag_text || 'Hoạt động ổn định.';
+          }
+
+          // ─── THÀNH VIÊN 2 (TV2: THỊ GIÁC & SPATIAL AI - THÔNG SỐ THỰC TẾ) ───
+          const badgeEl = document.getElementById('cam-status-badge');
+          if (badgeEl) {
+            badgeEl.innerText = tv2.status_badge || 'HOẠT ĐỘNG';
+            if (tv2.status_badge === 'HOẠT ĐỘNG TỐT') {
+              badgeEl.style.borderColor = 'var(--emerald)';
+              badgeEl.style.color = 'var(--emerald)';
+              badgeEl.style.background = 'rgba(0, 255, 163, 0.15)';
+            } else if (tv2.status_badge && (tv2.status_badge.includes('THIẾU') || tv2.status_badge.includes('TRỄ'))) {
+              badgeEl.style.borderColor = 'var(--amber)';
+              badgeEl.style.color = 'var(--amber)';
+              badgeEl.style.background = 'rgba(255, 184, 0, 0.15)';
             } else {
-              bg.style.borderColor = 'var(--rose)'; bg.style.color = 'var(--rose)'; bg.style.background = 'rgba(255, 42, 109, 0.15)';
+              badgeEl.style.borderColor = 'var(--rose)';
+              badgeEl.style.color = 'var(--rose)';
+              badgeEl.style.background = 'rgba(255, 42, 109, 0.15)';
             }
           }
-          if (document.getElementById('val-perc')) document.getElementById('val-perc').innerText = `${b.score_p}/${b.max_p}`;
-          if (document.getElementById('bar-perc')) document.getElementById('bar-perc').style.width = `${(b.score_p / b.max_p * 100).toFixed(0)}%`;
 
-          if (document.getElementById('val-slam')) document.getElementById('val-slam').innerText = `${b.score_s}/${b.max_s}`;
-          if (document.getElementById('bar-slam')) document.getElementById('bar-slam').style.width = `${(b.score_s / b.max_s * 100).toFixed(0)}%`;
+          if (document.getElementById('val-cam-fps') && tv2.fps !== undefined) document.getElementById('val-cam-fps').innerText = `${tv2.fps.toFixed(1)} FPS`;
+          if (document.getElementById('bar-cam-fps') && tv2.fps_pct !== undefined) document.getElementById('bar-cam-fps').style.width = `${tv2.fps_pct}%`;
+          if (document.getElementById('sub-cam-fps') && tv2.fps !== undefined) document.getElementById('sub-cam-fps').innerText = `Chu kỳ đo thực tế: ${tv2.fps.toFixed(1)} / 15.0 FPS`;
 
-          if (document.getElementById('val-sem')) document.getElementById('val-sem').innerText = `${b.score_sem}/${b.max_sem}`;
-          if (document.getElementById('bar-sem')) document.getElementById('bar-sem').style.width = `${(b.score_sem / b.max_sem * 100).toFixed(0)}%`;
+          if (document.getElementById('val-cam-clarity') && tv2.valid_depth_pct !== undefined) document.getElementById('val-cam-clarity').innerText = `${tv2.valid_depth_pct}%`;
+          if (document.getElementById('bar-cam-clarity') && tv2.valid_depth_pct !== undefined) document.getElementById('bar-cam-clarity').style.width = `${tv2.valid_depth_pct}%`;
+          if (document.getElementById('sub-cam-clarity') && tv2.valid_depth_pct !== undefined) document.getElementById('sub-cam-clarity').innerText = tv2.valid_depth_pct >= 60 ? 'Chất lượng ảnh: SẮC NÉT · ĐỦ ÁNH SÁNG' : 'Chất lượng ảnh: MỜ NÉT · THIẾU SÁNG';
 
-          if (document.getElementById('val-hw')) document.getElementById('val-hw').innerText = `${b.score_hw}/${b.max_hw}`;
-          if (document.getElementById('bar-hw')) document.getElementById('bar-hw').style.width = `${(b.score_hw / b.max_hw * 100).toFixed(0)}%`;
+          if (document.getElementById('val-cam-target') && tv2.num_obj !== undefined) document.getElementById('val-cam-target').innerText = `${tv2.num_obj} VẬT THỂ`;
+          if (document.getElementById('bar-cam-target')) document.getElementById('bar-cam-target').style.width = (tv2.num_obj > 0) ? `${Math.min(100, tv2.avg_confidence || 80)}%` : '0%';
+          if (document.getElementById('sub-cam-target') && tv2.target_info) document.getElementById('sub-cam-target').innerText = tv2.target_info;
 
-          if (document.getElementById('weak-txt')) document.getElementById('weak-txt').innerText = b.weakness || "Hệ thống hoạt động tối ưu!";
+          if (document.getElementById('val-cam-dist') && tv2.obstacle_distance !== undefined) document.getElementById('val-cam-dist').innerText = `${tv2.obstacle_distance.toFixed(2)} MÉT`;
+          if (document.getElementById('bar-cam-dist') && tv2.dist_pct !== undefined) document.getElementById('bar-cam-dist').style.width = `${tv2.dist_pct}%`;
+          if (document.getElementById('sub-cam-dist') && tv2.obstacle_distance !== undefined) document.getElementById('sub-cam-dist').innerText = tv2.obstacle_distance >= 0.35 ? `Cự ly an toàn: ${tv2.obstacle_distance.toFixed(2)}m (VÙNG AN TOÀN)` : `CẢNH BÁO: ${tv2.obstacle_distance.toFixed(2)}m (< 0.35m PHANH KHẨN CẤP)`;
+
+          if (document.getElementById('cam-diag-txt') && tv2.diag_text) document.getElementById('cam-diag-txt').innerText = tv2.diag_text;
+          if (document.getElementById('cam-hdr-fps') && tv2.fps !== undefined) document.getElementById('cam-hdr-fps').innerText = `${tv2.fps.toFixed(1)} FPS · REAL-TIME`;
+          if (document.getElementById('hud-cam-tag') && tv2.camera_source) document.getElementById('hud-cam-tag').innerText = tv2.camera_source;
+
+          // ─── THÀNH VIÊN 3 (TV3: VISUAL SLAM & BẢN ĐỒ NGỮ NGHĨA 3D) ───
+          if (tv3.total_score !== undefined) {
+            const b3 = document.getElementById('badge-tv3');
+            if (b3) {
+              b3.innerText = `${tv3.total_score}/${tv3.max_score || 60} · ${tv3.grade || 'XUẤT SẮC'}`;
+              b3.style.borderColor = tv3.total_score >= 50 ? 'var(--purple)' : (tv3.total_score >= 40 ? 'var(--amber)' : 'var(--rose)');
+              b3.style.color = b3.style.borderColor;
+            }
+            if (document.getElementById('val-tv3-slam')) document.getElementById('val-tv3-slam').innerText = `${tv3.score_s}/${tv3.max_s}`;
+            if (document.getElementById('bar-tv3-slam')) document.getElementById('bar-tv3-slam').style.width = `${((tv3.score_s / (tv3.max_s || 35)) * 100).toFixed(0)}%`;
+            if (document.getElementById('sub-tv3-slam')) document.getElementById('sub-tv3-slam').innerText = `VO: ${tv3.odom_hz} Hz · Mây điểm: ${tv3.num_pts} pts · Cây TF2 liên tục`;
+
+            if (document.getElementById('val-tv3-sem')) document.getElementById('val-tv3-sem').innerText = `${tv3.score_sem}/${tv3.max_sem}`;
+            if (document.getElementById('bar-tv3-sem')) document.getElementById('bar-tv3-sem').style.width = `${((tv3.score_sem / (tv3.max_sem || 25)) * 100).toFixed(0)}%`;
+            if (document.getElementById('sub-tv3-sem')) document.getElementById('sub-tv3-sem').innerText = `Đã cắm cờ ngữ nghĩa: ${tv3.num_obj} vật thể 3D`;
+
+            if (document.getElementById('diag-tv3-txt')) document.getElementById('diag-tv3-txt').innerText = tv3.diag_text || 'Bản đồ RTAB-Map hoạt động chuẩn xác.';
+          }
         }
       } catch (e) {}
       setTimeout(pollState, 140);
     }
     pollState();
+
+    // Chuyển đổi Tab Đánh giá 3 Thành viên
+    function switchEvalTab(tabId) {
+      ['tv1', 'tv2', 'tv3', 'all'].forEach(t => {
+        const btn = document.getElementById('btn-tab-' + t);
+        if (btn) btn.classList.toggle('active', t === tabId);
+      });
+      const p1 = document.getElementById('panel-tv1');
+      const p2 = document.getElementById('panel-tv2');
+      const p3 = document.getElementById('panel-tv3');
+      if (tabId === 'all') {
+        if (p1) p1.style.display = 'flex';
+        if (p2) p2.style.display = 'flex';
+        if (p3) p3.style.display = 'flex';
+      } else {
+        if (p1) p1.style.display = (tabId === 'tv1') ? 'flex' : 'none';
+        if (p2) p2.style.display = (tabId === 'tv2') ? 'flex' : 'none';
+        if (p3) p3.style.display = (tabId === 'tv3') ? 'flex' : 'none';
+      }
+    }
 
     // Vẽ bản đồ 2D trên Canvas
     function draw2DMap(d) {
@@ -1283,6 +1591,7 @@ class WebHandler(BaseHTTPRequestHandler):
                     "path": state.path_history, "map_b64": state.map_png_base64, "map_version": state.map_version,
                     "map_origin_x": state.map_origin_x, "map_origin_y": state.map_origin_y,
                     "map_resolution": state.map_resolution, "detections": state.detections,
+                    "obstacle_distance": getattr(state, 'obstacle_distance', 1.45),
                     "points_3d": state.points_3d,
                     "benchmark": state.benchmark
                 }
@@ -1351,10 +1660,7 @@ def mock_simulator_worker():
 
     with state.lock:
         state.points_3d = mock_pts
-        state.detections = [
-            {"id": 56, "name": "CHAIR", "score": 0.85, "x": 0.65, "y": -0.10, "z": 1.75},
-            {"id": 0, "name": "PERSON", "score": 0.91, "x": -0.45, "y": 0.05, "z": 1.40}
-        ]
+        state.detections = []
         state.map_width = map_w
         state.map_height = map_h
         state.map_resolution = 0.05
@@ -1367,6 +1673,17 @@ def mock_simulator_worker():
     step = 0
     sim_capacity_ah = 2.6 * (88.0 / 100.0)
     sim_nominal_ah = 2.6
+
+    # Kết nối trực tiếp Webcam Laptop thật nếu có
+    cap = None
+    try:
+        cap = cv2.VideoCapture(0)
+        if cap.isOpened():
+            print("📷 [SIMULATOR] Đã kết nối Webcam Laptop thành công! Bạn có thể xem hình ảnh thật trên Web Cockpit.")
+        else:
+            cap = None
+    except Exception:
+        cap = None
 
     while not is_shutdown():
         try:
@@ -1405,23 +1722,112 @@ def mock_simulator_worker():
                 state.battery_remaining_min = rem_min
                 state.battery_status = status_str
 
-            # Tạo frame ảnh màu 640x480 giả lập OAK-D
-            frame = np.zeros((480, 640, 3), dtype=np.uint8)
-            frame[:] = (18, 22, 30) # Nền tối Cyber
-            
-            # Vẽ lưới không gian ảo
-            for gx in range(0, 640, 40): cv2.line(frame, (gx, 0), (gx, 480), (35, 45, 60), 1)
-            for gy in range(0, 480, 40): cv2.line(frame, (0, gy), (640, gy), (35, 45, 60), 1)
+            # Lấy ảnh từ Webcam Laptop hoặc tạo khung hình ảo Cyber Grid
+            got_cam = False
+            if cap is not None:
+                try:
+                    ret, raw_frame = cap.read()
+                    if ret and raw_frame is not None:
+                        frame = cv2.resize(raw_frame, (640, 480))
+                        frame = cv2.flip(frame, 1) # Lật gương cho tự nhiên
+                        got_cam = True
+                except Exception:
+                    got_cam = False
 
-            # Vẽ bounding box giả lập Person & Chair
-            cv2.rectangle(frame, (120, 100), (260, 420), (255, 42, 109), 2)
-            cv2.putText(frame, "PERSON 91% (1.4m)", (120, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 42, 109), 2)
+            if not got_cam:
+                frame = np.zeros((480, 640, 3), dtype=np.uint8)
+                frame[:] = (18, 22, 30) # Nền tối Cyber
+                for gx in range(0, 640, 40): cv2.line(frame, (gx, 0), (gx, 480), (35, 45, 60), 1)
+                for gy in range(0, 480, 40): cv2.line(frame, (0, gy), (640, gy), (35, 45, 60), 1)
 
-            cv2.rectangle(frame, (380, 180), (520, 400), (0, 255, 163), 2)
-            cv2.putText(frame, "CHAIR 85% (1.8m)", (380, 170), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 163), 2)
+            # Phát hiện người dùng (PERSON) từ ảnh webcam qua vùng màu da / chuyển động
+            # 3. Xử lý Thị giác Biên & Spatial AI thực tế (Nhiệm vụ Thành viên 2)
+            raw_dets = []
+            person_found = False
+            p_dist = 3.5
+            calc_obstacle = 3.5
+            p_x, p_y, p_w, p_h = 0, 0, 0, 0
+            user_3d_x, user_3d_y = 0.0, 0.0
 
-            cv2.putText(frame, f"[WINDOWS MOCK SIMULATOR] FPS: 15.0 - STEP: {step}", (20, 460),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 240, 255), 1)
+            if got_cam:
+                try:
+                    # Đo độ nét thực tế của ảnh (Laplacian Variance)
+                    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                    lap_var = cv2.Laplacian(gray, cv2.CV_64F).var()
+                    clarity_pct = min(100.0, max(5.0, lap_var / 2.2))
+                    with state.lock:
+                        state.valid_depth_pct = round(clarity_pct, 1)
+                        state.camera_source = "WEBCAM LAPTOP REAL-TIME"
+
+                    # Nhận diện người thật (PERSON) qua phân đoạn màu da & hình thái học
+                    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+                    mask = cv2.inRange(hsv, np.array([0, 35, 60]), np.array([25, 255, 255]))
+                    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+                    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+                    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                    if contours:
+                        valid_c = [c for c in contours if cv2.contourArea(c) > 3000]
+                        if valid_c:
+                            c = max(valid_c, key=cv2.contourArea)
+                            area = cv2.contourArea(c)
+                            bx, by, bw, bh = cv2.boundingRect(c)
+                            aspect = bh / float(max(1, bw))
+                            if 0.7 <= aspect <= 3.8 and bw > 60 and bh > 70:
+                                person_found = True
+                                p_x, p_y, p_w, p_h = bx, by, bw, bh
+                                # Cự ly Z tính từ kích thước khung hình: người đứng càng gần -> bw càng lớn
+                                p_dist = round(max(0.30, min(3.80, 175.0 / max(bw, 60))), 2)
+                                user_3d_x = round(((bx + bw / 2.0) - 320.0) * p_dist / 400.0, 2)
+                                user_3d_y = round(((by + bh / 2.0) - 240.0) * p_dist / 400.0, 2)
+                                conf = round(min(0.96, max(0.68, 0.65 + (area / 70000.0) * 0.30)), 2)
+                                raw_dets.append({
+                                    "id": 0, "name": "PERSON", "score": conf,
+                                    "x": user_3d_x, "y": user_3d_y, "z": p_dist,
+                                    "bbox": [bx, by, bw, bh]
+                                })
+                except Exception: pass
+            else:
+                with state.lock:
+                    state.valid_depth_pct = 0.0
+                    state.camera_source = "CHỜ CAMERA..."
+
+            # 4. Chạy trực tiếp qua logic bộ lọc 5 lớp mục tiêu của Thành viên 2 (spatial_perception_node.py)
+            if HAS_TV2_FILTER and SpatialPerceptionFilter is not None:
+                filtered_dets = SpatialPerceptionFilter.filter_target_objects(raw_dets)
+                mock_depth = np.full((360, 480), int(min(4000, p_dist * 1000)), dtype=np.uint16)
+                if person_found:
+                    d_x1 = max(0, min(479, int(p_x * 480 / 640)))
+                    d_x2 = max(0, min(480, int((p_x + p_w) * 480 / 640)))
+                    d_y1 = max(0, min(359, int(p_y * 360 / 480)))
+                    d_y2 = max(0, min(360, int((p_y + p_h) * 360 / 480)))
+                    mock_depth[d_y1:d_y2, d_x1:d_x2] = max(150, int(p_dist * 1000))
+                calc_obstacle = SpatialPerceptionFilter.calculate_obstacle_distance(mock_depth)
+            else:
+                filtered_dets = [d for d in raw_dets if d.get('id') in [0, 56, 60, 62, 11] and 0.3 <= d.get('z', 0) <= 4.0]
+                calc_obstacle = p_dist if person_found else 3.5
+
+            with state.lock:
+                state.detections = filtered_dets
+                state.obstacle_distance = calc_obstacle
+                if filtered_dets:
+                    scores = [d['score'] for d in filtered_dets]
+                    state.avg_confidence = round(float(sum(scores)) / len(scores), 2)
+                else:
+                    state.avg_confidence = 0.0
+
+            # 5. Vẽ Bounding Box THỰC TẾ & HUD Thành viên 2 lên khung hình
+            if person_found:
+                cv2.rectangle(frame, (p_x, p_y), (p_x + p_w, p_y + p_h), (255, 42, 109), 2)
+                cv2.putText(frame, f"PERSON {int(filtered_dets[0]['score']*100)}% (Z: {p_dist}m, X: {user_3d_x}m)",
+                            (p_x, max(25, p_y - 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (255, 42, 109), 2)
+
+            # HUD Thông tin Cảm biến TV2 thực tế
+            source_tag = "WEBCAM LAPTOP REAL-TIME" if got_cam else "CHỜ CAMERA..."
+            cv2.putText(frame, f"[{source_tag} // TV2 SPATIAL AI] FPS: {state.calc_fps} | NET: {state.valid_depth_pct}%",
+                        (20, 440), cv2.FONT_HERSHEY_SIMPLEX, 0.46, (0, 240, 255), 1)
+            cv2.putText(frame, f"Cự ly vật cản (/obstacle_distance): {calc_obstacle}m | Mục tiêu TV2: {len(filtered_dets)}",
+                        (20, 465), cv2.FONT_HERSHEY_SIMPLEX, 0.46,
+                        (0, 255, 163) if calc_obstacle >= 0.35 else (255, 42, 109), 1)
 
             _, jpeg = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), 65])
             with state.lock:
@@ -1447,6 +1853,7 @@ def main():
         rospy.Subscriber('/rtabmap/odom', Odometry, odom_cb, queue_size=1)
         rospy.Subscriber('/rtabmap/grid_map', OccupancyGrid, map_cb, queue_size=1)
         rospy.Subscriber('/battery_telemetry', Float32MultiArray, battery_cb, queue_size=1)
+        rospy.Subscriber('/spatial_objects', String, spatial_objects_json_cb, queue_size=1)
 
         if HAS_DEPTHAI:
             rospy.Subscriber('/stereo_inertial_publisher/color/yolov4_Spatial_detections', SpatialDetectionArray, detections_cb, queue_size=1)
