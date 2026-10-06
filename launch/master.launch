@@ -1,0 +1,14 @@
+<launch>
+  <!-- ═════════════════════════════════════════════════════════════════════════ -->
+  <!-- JETBOT MASTER BRINGUP — KHỞI CHẠY TẤT CẢ VỚI 1 LỆNH DUY NHẤT            -->
+  <!-- ═════════════════════════════════════════════════════════════════════════ -->
+  <arg name="enableRviz" default="false" />
+
+  <!-- 1. KHỞI CHẠY CAMERA OAK-D S2 -->
+  <include file="$(find jetbot_slam)/launch/camera_ai.launch">
+    <arg name="enableRviz" value="$(arg enableRviz)" />
+  </include>
+
+  <!-- 2. KHỞI CHẠY TRẠM ĐIỀU PHỐI TRUNG TÂM MAIN.PY & WEB COCKPIT -->
+  <node pkg="jetbot_slam" type="main.py" name="jetbot_master_orchestrator" output="screen" respawn="true" respawn_delay="2" />
+</launch>
