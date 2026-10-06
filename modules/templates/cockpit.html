@@ -178,14 +178,19 @@
       <div id="brake-status-banner" style="margin:8px 12px 0; padding:6px 12px; border-radius:6px; font-size:0.75rem; text-align:center; font-weight:700; border:1px solid var(--emerald); color:var(--emerald); background:rgba(0, 255, 163, 0.1);">
         🛡️ VÙNG AN TOÀN (CỰ LY CẢN: -- CM)
       </div>
+      <div style="display:flex; justify-content:center; gap:6px; margin:8px 12px 0;">
+        <button class="tab-btn" id="spd-slow" onclick="setSpeed(0.15, 0.40, 'slow')" style="padding:3px 8px; font-size:0.72rem; cursor:pointer;">🐢 Chậm (15%)</button>
+        <button class="tab-btn active" id="spd-norm" onclick="setSpeed(0.20, 0.50, 'norm')" style="padding:3px 8px; font-size:0.72rem; cursor:pointer; font-weight:bold;">🐇 Chuẩn (20%)</button>
+        <button class="tab-btn" id="spd-fast" onclick="setSpeed(0.25, 0.60, 'fast')" style="padding:3px 8px; font-size:0.72rem; cursor:pointer;">⚡ Nhanh (25%)</button>
+      </div>
       <div class="dpad-container">
-        <div class="dpad-row"><button class="btn-drive" id="btn-up" onmousedown="sendDrive(0.20,0)" onmouseup="sendDrive(0,0)" ontouchstart="sendDrive(0.20,0)" ontouchend="sendDrive(0,0)">▲</button></div>
+        <div class="dpad-row"><button class="btn-drive" id="btn-up" onmousedown="sendDrive(speedLinear,0)" onmouseup="sendDrive(0,0)" ontouchstart="sendDrive(speedLinear,0)" ontouchend="sendDrive(0,0)">▲</button></div>
         <div class="dpad-row">
-          <button class="btn-drive" id="btn-left" onmousedown="sendDrive(0,0.50)" onmouseup="sendDrive(0,0)" ontouchstart="sendDrive(0,0.50)" ontouchend="sendDrive(0,0)">◀</button>
+          <button class="btn-drive" id="btn-left" onmousedown="sendDrive(0,speedAngular)" onmouseup="sendDrive(0,0)" ontouchstart="sendDrive(0,speedAngular)" ontouchend="sendDrive(0,0)">◀</button>
           <button class="btn-drive btn-stop" id="btn-stop" onclick="sendDrive(0,0)">■</button>
-          <button class="btn-drive" id="btn-right" onmousedown="sendDrive(0,-0.50)" onmouseup="sendDrive(0,0)" ontouchstart="sendDrive(0,-0.50)" ontouchend="sendDrive(0,0)">▶</button>
+          <button class="btn-drive" id="btn-right" onmousedown="sendDrive(0,-speedAngular)" onmouseup="sendDrive(0,0)" ontouchstart="sendDrive(0,-speedAngular)" ontouchend="sendDrive(0,0)">▶</button>
         </div>
-        <div class="dpad-row"><button class="btn-drive" id="btn-down" onmousedown="sendDrive(-0.20,0)" onmouseup="sendDrive(0,0)" ontouchstart="sendDrive(-0.20,0)" ontouchend="sendDrive(0,0)">▼</button></div>
+        <div class="dpad-row"><button class="btn-drive" id="btn-down" onmousedown="sendDrive(-speedLinear,0)" onmouseup="sendDrive(0,0)" ontouchstart="sendDrive(-speedLinear,0)" ontouchend="sendDrive(0,0)">▼</button></div>
       </div>
     </div>
 
@@ -881,16 +886,15 @@
             badge.innerText = d.camera_source.includes('WEBCAM') ? 'WEBCAM LAPTOP' : (d.camera_source.includes('OAK-D') ? 'OAK-D S2' : 'MÔ PHỎNG');
             badge.style.color = d.camera_source.includes('WEBCAM') ? 'var(--emerald)' : 'var(--cyan)';
           }
-            const hud = document.getElementById('cam-hud');
-            if (hud) {
-              hud.innerText = `${d.camera_source} · ${(d.calc_fps || 15).toFixed(1)} FPS`;
-            }
+          const hud = document.getElementById('cam-hud');
+          if (hud) {
+            hud.innerText = `${d.camera_source} · ${(d.calc_fps || 15).toFixed(1)} FPS`;
           }
+        }
 
-          // Cập nhật trạng thái nút bấm Tự hành Bám người HRI
-          if (d.follower_enabled !== undefined) {
-            updateFollowerBtn(d.follower_enabled);
-          }
+        // Cập nhật trạng thái nút bấm Tự hành Bám người HRI
+        if (d.follower_enabled !== undefined) {
+          updateFollowerBtn(d.follower_enabled);
         }
       } catch (e) {}
       setTimeout(pollState, 140);
@@ -989,6 +993,30 @@
 
     // Điều khiển động cơ với phản hồi trực quan (Visual Teleop Feedback)
     let driveTimer = null;
+    let speedLinear = 0.20;
+    let speedAngular = 0.50;
+
+    function setSpeed(lin, ang, mode) {
+      speedLinear = lin;
+      speedAngular = ang;
+      ['spd-slow', 'spd-norm', 'spd-fast'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+          el.style.background = '#131d2e';
+          el.style.color = '#94a3b8';
+          el.style.borderColor = '#1e2d44';
+          el.style.fontWeight = 'normal';
+        }
+      });
+      const cur = document.getElementById('spd-' + mode);
+      if (cur) {
+        cur.style.background = 'rgba(0,240,255,0.2)';
+        cur.style.color = 'var(--cyan)';
+        cur.style.borderColor = 'var(--cyan)';
+        cur.style.fontWeight = 'bold';
+      }
+    }
+
     function sendDrive(linear, angular) {
       if (driveTimer) clearInterval(driveTimer);
       fetch('/api/drive?v=' + linear + '&w=' + angular).catch(() => {});
@@ -1010,10 +1038,10 @@
       if (e.repeat) return;
       const k = e.key.toLowerCase();
       const code = e.code;
-      if (k === 'w' || code === 'KeyW' || k === 'arrowup') { sendDrive(0.20, 0); setBtnActive('btn-up', true); }
-      else if (k === 's' || code === 'KeyS' || k === 'arrowdown') { sendDrive(-0.20, 0); setBtnActive('btn-down', true); }
-      else if (k === 'a' || code === 'KeyA' || k === 'arrowleft') { sendDrive(0, 0.50); setBtnActive('btn-left', true); }
-      else if (k === 'd' || code === 'KeyD' || k === 'arrowright') { sendDrive(0, -0.50); setBtnActive('btn-right', true); }
+      if (k === 'w' || code === 'KeyW' || k === 'arrowup') { sendDrive(speedLinear, 0); setBtnActive('btn-up', true); }
+      else if (k === 's' || code === 'KeyS' || k === 'arrowdown') { sendDrive(-speedLinear, 0); setBtnActive('btn-down', true); }
+      else if (k === 'a' || code === 'KeyA' || k === 'arrowleft') { sendDrive(0, speedAngular); setBtnActive('btn-left', true); }
+      else if (k === 'd' || code === 'KeyD' || k === 'arrowright') { sendDrive(0, -speedAngular); setBtnActive('btn-right', true); }
       else if (k === ' ' || k === 'escape' || code === 'Space') { sendDrive(0, 0); setBtnActive('btn-stop', true); }
     });
 

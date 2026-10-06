@@ -128,9 +128,14 @@ class SpatialPerceptionEngine:
         except Exception:
             pass
 
+    TARGET_SEMANTIC_CLASSES = {
+        "PERSON", "CHAIR", "COUCH", "TABLE", "BOTTLE", "CUP", "BACKPACK",
+        "LAPTOP", "TV / MONITOR", "CELL PHONE", "BOOK"
+    }
+
     @classmethod
     def filter_detections(cls, raw_list):
-        """Lọc, chuẩn hóa đơn vị mm -> m, và ánh xạ nhãn COCO, LOẠI BỎ BÓNG PHẢN CHIẾU SÀN"""
+        """Lọc, chuẩn hóa đơn vị mm -> m, loại bỏ vật thể ngoại lai, bóng sàn và vệt mép tường giả người"""
         filtered = []
         for det in raw_list:
             if not isinstance(det, dict): continue
@@ -153,6 +158,10 @@ class SpatialPerceptionEngine:
 
             if not target_name: continue
 
+            # 1. BỘ LỌC DANH MỤC: Chỉ giữ các lớp mục tiêu phục vụ đồ án (loại bỏ potted plant, chim, chó, mèo...)
+            if target_name not in cls.TARGET_SEMANTIC_CLASSES:
+                continue
+
             try:
                 x = float(det.get("x", 0.0))
                 y = float(det.get("y", 0.0))
@@ -166,24 +175,31 @@ class SpatialPerceptionEngine:
                 y /= 1000.0
                 z /= 1000.0
 
-            # Lọc cự ly an toàn [15cm - 10m] và ngưỡng tin cậy nhạy hơn (0.20)
+            # Lọc cự ly an toàn [15cm - 10m]
             if z < cls.DEPTH_MIN or z > cls.DEPTH_MAX: continue
-            if score < 0.20: continue
 
-            # ── BỘ LỌC CHỐNG BÓNG SÀN (FLOOR GLARE REJECTION) ──
-            # Camera JetBot cao ~12cm đặt nằm ngang (pitch=0). Mặt sàn nằm ở Y=+0.12m (Y hướng xuống).
-            # Mọi đối tượng PERSON có Y > +0.10m (nằm dưới mặt đất) hoặc có hộp 2D nằm trọn ở đáy sàn
-            # đều là bóng phản chiếu trên sàn gạch men bóng kính -> PHẢI LOẠI BỎ NGAY LẬP TỨC!
+            # 2. BỘ LỌC ĐỘ TIN CẬY & HÌNH THÁI HÌNH HỌC (CHỐNG NHẬN DIỆN ẢO TỪA LƯA)
             if target_name == "PERSON":
+                # Người thật cần độ tin cậy >= 50%
+                if score < 0.50: continue
+
                 if "bbox" in det and det["bbox"] is not None:
                     bx1, by1, bx2, by2 = det["bbox"]
-                    bh = by2 - by1
-                    # Nếu hộp nằm hoàn toàn ở 40% đáy khung hình và chiều cao ngắn (< 120px) -> Bóng sàn!
+                    bw = abs(bx2 - bx1)
+                    bh = abs(by2 - by1)
+                    if bh > 0:
+                        aspect = bw / float(bh)
+                        # Người đứng/ngồi có tỉ lệ w/h trong [0.18, 1.8], không mỏng dính như mép tủ/khe cửa
+                        if aspect < 0.18 or aspect > 1.8 or bw < 30:
+                            continue
+                    # Bóng phản chiếu sàn gạch men
                     if by1 > 210 and bh < 130:
                         continue
                 elif y > 0.09:
-                    # Tọa độ 3D chìm dưới mặt sàn gạch -> Bóng sàn!
                     continue
+            else:
+                # Đồ vật khác (Ghế, Bàn, Chai nước, Balo): độ tin cậy tối thiểu 45%
+                if score < 0.45: continue
 
             d_entry = {
                 "id": target_id if target_id is not None else 0,
@@ -200,14 +216,14 @@ class SpatialPerceptionEngine:
         return filtered
 
     def detect_fallback(self, bgr_img, depth_frame=None, fx=450.0, fy=450.0, cx=320.0, cy=200.0):
-        """Nhận diện người vững chắc khi camera đặt thấp 12cm (quét chân & thân trên mặt sàn)"""
+        """Nhận diện người dự phòng quang học (Haar Cascade Mặt/Thân trên) - Không suy đoán từ độ sâu tường phẳng"""
         if bgr_img is None: return []
         h, w = bgr_img.shape[:2]
         if h < 40 or w < 40: return []
 
         found_boxes = []
 
-        # 1. Quét khuôn mặt nếu người cúi xuống gần camera
+        # Quét khuôn mặt hoặc thân trên nếu người đứng trong tầm nhìn
         scale = 0.35
         small = cv2.resize(bgr_img, (int(w * scale), int(h * scale)))
         gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
@@ -221,42 +237,6 @@ class SpatialPerceptionEngine:
             uppers = self.upper_cascade.detectMultiScale(gray, scaleFactor=1.30, minNeighbors=3, minSize=(25, 25))
             for (ux, uy, uw, uh) in uppers:
                 found_boxes.append((int(ux / scale), int(uy / scale), int(uw / scale), int(uh / scale), "PERSON", 0.85))
-
-        # 2. Dò tìm cụm chân người đứng bằng Depth Map (Độc quyền xử lý camera góc thấp 12cm)
-        if not found_boxes and depth_frame is not None and isinstance(depth_frame, np.ndarray):
-            try:
-                dh, dw = depth_frame.shape[:2]
-                # Chỉ lấy vùng từ 5% đến 65% chiều cao (trên mặt sàn để loại bỏ 100% bóng phản chiếu sàn)
-                roi_d = depth_frame[int(dh * 0.05):int(dh * 0.65), :]
-                if roi_d.dtype == np.uint16 or roi_d.max() > 100.0:
-                    d_m = roi_d.astype(np.float32) / 1000.0
-                else:
-                    d_m = roi_d.astype(np.float32)
-
-                # Tìm các điểm ở cự ly người đứng (0.50m đến 2.80m)
-                mask = (d_m >= 0.50) & (d_m <= 2.80)
-                if np.sum(mask) > (dw * 8):
-                    col_hist = np.sum(mask, axis=0)
-                    if np.max(col_hist) >= 15:
-                        smooth_hist = cv2.GaussianBlur(col_hist.astype(np.float32), (31, 1), 0)
-                        center_col = int(np.argmax(smooth_hist))
-                        # Lấy mẫu độ sâu quanh tâm người
-                        col_start = max(0, center_col - 30)
-                        col_end = min(dw, center_col + 30)
-                        c_roi = d_m[:, col_start:col_end]
-                        valid_z = c_roi[(c_roi >= 0.50) & (c_roi <= 2.80)]
-                        if len(valid_z) >= 20:
-                            z_target = float(np.median(valid_z))
-                            # Chiều rộng người đứng ~0.45m
-                            bw_px = int(max(40, min(w * 0.7, 0.45 * fx / z_target * w / dw)))
-                            # Chiều cao bao trọn từ đỉnh ảnh xuống gần mặt sàn
-                            bh_px = int(min(h - 10, max(120, int(h * 0.85))))
-                            bx = int(center_col * w / dw - bw_px / 2)
-                            by = 0  # Chân người bắt đầu từ đỉnh khung hình đi xuống
-                            bx = max(0, min(w - bw_px - 1, bx))
-                            found_boxes.append((bx, by, bw_px, bh_px, "PERSON", 0.88))
-            except Exception:
-                pass
 
         detections = []
         for (bx, by, bw, bh, name, score) in found_boxes:
