@@ -520,7 +520,7 @@ def benchmark_worker():
 
         except Exception as e:
             pass
-        time.sleep(3.0)
+        time.sleep(15.0)
 
 # ─── ROS SUBSCRIBERS ──────────────────────────────────────────────────────────
 cmd_vel_pub = None
@@ -534,6 +534,34 @@ def image_cb(msg):
             if msg.encoding == 'rgb8': img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
         else:
             img = raw.reshape((h, w, -1))
+
+        # Vẽ bounding box trực tiếp lên luồng video camera thật từ dữ liệu AI
+        with state.lock:
+            dets = list(state.detections)
+            fx, fy, cx, cy = state.fx, state.fy, state.cx, state.cy
+
+        for det in dets:
+            try:
+                x_m = float(det.get('x', 0.0))
+                y_m = float(det.get('y', 0.0))
+                z_m = float(det.get('z', 0.0))
+                name = str(det.get('name', 'OBJ'))
+                score = float(det.get('score', 0.8))
+
+                if z_m > 0.3:
+                    u = int(cx + (x_m * fx / z_m))
+                    v = int(cy + (y_m * fy / z_m))
+                    if 10 <= u < w - 10 and 10 <= v < h - 10:
+                        bw = max(35, min(200, int(160.0 / z_m)))
+                        bh = max(50, min(300, int(240.0 / z_m)))
+                        x1, y1 = max(0, u - bw // 2), max(0, v - bh // 2)
+                        x2, y2 = min(w - 1, u + bw // 2), min(h - 1, v + bh // 2)
+                        col = (42, 42, 255) if 'PERSON' in name else (0, 255, 163)
+                        cv2.rectangle(img, (x1, y1), (x2, y2), col, 2)
+                        cv2.putText(img, f"{name} {int(score*100)}% ({z_m:.1f}m)",
+                                    (x1, max(22, y1 - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.52, col, 2)
+            except Exception: pass
+
         _, jpeg = cv2.imencode('.jpg', img, [int(cv2.IMWRITE_JPEG_QUALITY), 65])
         with state.lock:
             state.latest_jpeg = jpeg.tobytes()
@@ -850,13 +878,13 @@ HTML_PAGE = """<!DOCTYPE html>
     <div class="card">
       <div class="card-hdr">🎮 ĐIỀU KHIỂN XE (PHÍM W, A, S, D)</div>
       <div class="dpad-container">
-        <div class="dpad-row"><button class="btn-drive" onmousedown="sendDrive(0.2,0)" onmouseup="sendDrive(0,0)">▲</button></div>
+        <div class="dpad-row"><button class="btn-drive" onmousedown="sendDrive(0.2,0)" onmouseup="sendDrive(0,0)" ontouchstart="sendDrive(0.2,0)" ontouchend="sendDrive(0,0)">▲</button></div>
         <div class="dpad-row">
-          <button class="btn-drive" onmousedown="sendDrive(0,0.6)" onmouseup="sendDrive(0,0)">◀</button>
+          <button class="btn-drive" onmousedown="sendDrive(0,0.6)" onmouseup="sendDrive(0,0)" ontouchstart="sendDrive(0,0.6)" ontouchend="sendDrive(0,0)">◀</button>
           <button class="btn-drive btn-stop" onclick="sendDrive(0,0)">■</button>
-          <button class="btn-drive" onmousedown="sendDrive(0,-0.6)" onmouseup="sendDrive(0,0)">▶</button>
+          <button class="btn-drive" onmousedown="sendDrive(0,-0.6)" onmouseup="sendDrive(0,0)" ontouchstart="sendDrive(0,-0.6)" ontouchend="sendDrive(0,0)">▶</button>
         </div>
-        <div class="dpad-row"><button class="btn-drive" onmousedown="sendDrive(-0.2,0)" onmouseup="sendDrive(0,0)">▼</button></div>
+        <div class="dpad-row"><button class="btn-drive" onmousedown="sendDrive(-0.2,0)" onmouseup="sendDrive(0,0)" ontouchstart="sendDrive(-0.2,0)" ontouchend="sendDrive(0,0)">▼</button></div>
       </div>
     </div>
 

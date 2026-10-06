@@ -52,7 +52,7 @@ class JetBotPersonFollowerNode:
         self.deadzone_angle = 0.06      # 6 cm
 
         # Trạng thái theo dõi
-        self.is_enabled = True          # Mặc định bật
+        self.is_enabled = False         # Mặc định TẮT (để ưu tiên chế độ lái tay từ Web)
         self.last_person_time = 0.0
         self.last_ez = 0.0
         self.last_ex = 0.0
@@ -141,15 +141,16 @@ class JetBotPersonFollowerNode:
                 rospy.logerr_throttle(2.0, f"Lỗi xử lý bám người: {e}")
 
     def control_loop(self, event):
-        """Bảo vệ: Nếu quá 0.8s không thấy người trong tầm nhìn -> Tự động dừng xe"""
+        """Bảo vệ: Nếu quá 0.8s không thấy người trong tầm nhìn -> Tự động dừng xe 1 lần"""
         if not self.is_enabled: return
 
-        if time.time() - self.last_person_time > 0.8:
+        if self.last_person_time > 0 and (time.time() - self.last_person_time > 0.8):
             if HAS_ROS:
                 cmd = Twist()
                 cmd.linear.x = 0.0
                 cmd.angular.z = 0.0
                 self.pub_cmd.publish(cmd)
+            self.last_person_time = 0.0  # Dừng 1 lần rồi thôi, không spam cướp quyền điều khiển
 
     def shutdown(self):
         if HAS_ROS:
