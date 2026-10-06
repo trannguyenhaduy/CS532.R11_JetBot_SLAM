@@ -537,6 +537,7 @@ def image_cb(msg):
         _, jpeg = cv2.imencode('.jpg', img, [int(cv2.IMWRITE_JPEG_QUALITY), 65])
         with state.lock:
             state.latest_jpeg = jpeg.tobytes()
+            state.camera_source = "OAK-D S2"
             state.img_counter += 1
     except Exception: pass
 
