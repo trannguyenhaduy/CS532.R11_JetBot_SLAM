@@ -20,10 +20,6 @@ include_directories(
 )
 
 catkin_install_python(PROGRAMS
-  motor_driver_node.py
-  person_follower_node.py
-  spatial_perception_node.py
-  semantic_mapping_node.py
-  slam_web_dashboard.py
+  main.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
