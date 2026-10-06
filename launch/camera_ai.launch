@@ -1,29 +1,23 @@
 <launch>
   <!-- ═════════════════════════════════════════════════════════════════════════ -->
   <!-- CAMERA AI LAUNCH — OAK-D S2 CAMERA & VPU SPATIAL AI (TINY-YOLOV4)         -->
-  <!-- Ngưỡng tin cậy 0.25 giúp nhận diện nhạy cả Chai nước, Ghế và Người        -->
+  <!-- Khởi động phần cứng OAK-D S2 với Tiny-YOLOv4 trên chip VPU Myriad X       -->
   <!-- ═════════════════════════════════════════════════════════════════════════ -->
-  <arg name="enableRviz"    default="false" />
-  <arg name="confidence"    default="0.25" />
-  <arg name="camera_model"  default="OAK-D" />
-  <arg name="use_yolo"      default="true" />
+  <arg name="camera_model"   default="OAK-D" />
+  <arg name="spatial_camera" default="true" />
+  <arg name="confidence"     default="0.25" />
 
   <!-- 1. CÂY TỌA ĐỘ TF2: base_link -> oak-d_frame (camera trước mũi xe) -->
   <node pkg="tf2_ros" type="static_transform_publisher" name="base_to_camera_tf"
         args="0.08 0.0 0.12 0 0 0 base_link oak-d_frame" />
 
-  <!-- 2. KHỞI CHẠY DRIVER CAMERA OAK-D S2 (YOLO VPU HOẶC STEREO INERTIAL) -->
-  <group if="$(arg use_yolo)">
-    <include file="$(find depthai_examples)/launch/yolov4_publisher.launch">
-      <arg name="enableRviz"    value="$(arg enableRviz)" />
-      <arg name="camera_model"  value="$(arg camera_model)" />
-      <arg name="confidence"    value="$(arg confidence)" />
-    </include>
-  </group>
+  <!-- 2. NẠP THAM SỐ ĐỘ NHẠY LÊN ROS PARAMETER SERVER CHO NODE YOLO -->
+  <param name="/yolov4_publisher/confidence" value="$(arg confidence)" />
+  <param name="/stereo_inertial_publisher/confidence" value="$(arg confidence)" />
 
-  <group unless="$(arg use_yolo)">
-    <include file="$(find depthai_examples)/launch/stereo_inertial_node.launch">
-      <arg name="enableRviz" value="$(arg enableRviz)" />
-    </include>
-  </group>
+  <!-- 3. KHỞI CHẠY DRIVER CAMERA OAK-D S2 VỚI MẠNG TINY-YOLOV4 SPATIAL -->
+  <include file="$(find depthai_examples)/launch/yolov4_publisher.launch">
+    <arg name="camera_model"   value="$(arg camera_model)" />
+    <arg name="spatial_camera" value="$(arg spatial_camera)" />
+  </include>
 </launch>

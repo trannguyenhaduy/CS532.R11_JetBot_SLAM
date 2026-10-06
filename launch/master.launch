@@ -2,11 +2,13 @@
   <!-- ═════════════════════════════════════════════════════════════════════════ -->
   <!-- JETBOT MASTER BRINGUP — KHỞI CHẠY TẤT CẢ VỚI 1 LỆNH DUY NHẤT            -->
   <!-- ═════════════════════════════════════════════════════════════════════════ -->
-  <arg name="enableRviz" default="false" />
+  <arg name="camera_model"   default="OAK-D" />
+  <arg name="confidence"     default="0.25" />
 
-  <!-- 1. KHỞI CHẠY CAMERA OAK-D S2 -->
+  <!-- 1. KHỞI CHẠY CAMERA OAK-D S2 VỚI MẠNG TINY-YOLOV4 -->
   <include file="$(find jetbot_slam)/launch/camera_ai.launch">
-    <arg name="enableRviz" value="$(arg enableRviz)" />
+    <arg name="camera_model" value="$(arg camera_model)" />
+    <arg name="confidence"   value="$(arg confidence)" />
   </include>
 
   <!-- 2. KHỞI CHẠY TRẠM ĐIỀU PHỐI TRUNG TÂM MAIN.PY & WEB COCKPIT -->
