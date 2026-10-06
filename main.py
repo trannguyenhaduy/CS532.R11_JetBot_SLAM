@@ -239,46 +239,99 @@ class JetBotMasterSystem:
         if not self.yolo: return
         raw_list = []
         try:
+            img_w, img_h = 640, 360
+            if self.latest_raw_bgr is not None:
+                img_h, img_w = self.latest_raw_bgr.shape[:2]
+
             for det in getattr(msg, 'detections', []):
+                # 1. Trích xuất tọa độ 3D không gian (X, Y, Z)
+                pos = getattr(det, 'position', None)
+                x, y, z = 0.0, 0.0, 0.0
+                if pos:
+                    x, y, z = float(pos.x), float(pos.y), float(pos.z)
+                    # Chuyển đổi mm -> m nếu cảm biến trả về milimet
+                    if z > 20.0:
+                        x /= 1000.0
+                        y /= 1000.0
+                        z /= 1000.0
+
+                # 2. Trích xuất Bounding Box 2D thật chuẩn xác từ mạng nơ-ron
+                bbox_pixels = None
+                bbox_obj = getattr(det, 'bbox', None)
+                if bbox_obj is not None:
+                    cx, cy, sx, sy = None, None, None, None
+                    if hasattr(bbox_obj, 'center') and hasattr(bbox_obj, 'size_x'):
+                        cx = float(bbox_obj.center.x)
+                        cy = float(bbox_obj.center.y)
+                        sx = float(bbox_obj.size_x)
+                        sy = float(bbox_obj.size_y)
+                    elif hasattr(bbox_obj, 'xmin'):
+                        cx = (float(bbox_obj.xmin) + float(bbox_obj.xmax)) / 2.0
+                        cy = (float(bbox_obj.ymin) + float(bbox_obj.ymax)) / 2.0
+                        sx = float(bbox_obj.xmax) - float(bbox_obj.xmin)
+                        sy = float(bbox_obj.ymax) - float(bbox_obj.ymin)
+
+                    if cx is not None and sx is not None and sx > 0 and sy > 0:
+                        if cx <= 1.0 and sx <= 1.0:
+                            x1 = int((cx - sx / 2.0) * img_w)
+                            y1 = int((cy - sy / 2.0) * img_h)
+                            x2 = int((cx + sx / 2.0) * img_w)
+                            y2 = int((cy + sy / 2.0) * img_h)
+                        else:
+                            x1 = int(cx - sx / 2.0)
+                            y1 = int(cy - sy / 2.0)
+                            x2 = int(cx + sx / 2.0)
+                            y2 = int(cy + sy / 2.0)
+                        bbox_pixels = [max(0, x1), max(0, y1), min(img_w - 1, x2), min(img_h - 1, y2)]
+
+                # 3. Trích xuất thông tin nhãn lớp
                 for res in getattr(det, 'results', []):
-                    pos = getattr(det, 'position', None)
-                    if pos:
-                        cid = getattr(res, 'id', 0)
-                        raw_list.append({
-                            "id": cid,
-                            "name": getattr(res, 'label', 'OBJ'),
-                            "score": float(getattr(res, 'score', 0.8)),
-                            "x": float(pos.x),
-                            "y": float(pos.y),
-                            "z": float(pos.z)
-                        })
+                    cid = getattr(res, 'id', getattr(res, 'class_id', 0))
+                    label_name = getattr(res, 'label', '')
+                    score = float(getattr(res, 'score', 0.8))
+
+                    item = {
+                        "id": int(cid),
+                        "name": label_name,
+                        "score": score,
+                        "x": round(x, 2),
+                        "y": round(y, 2),
+                        "z": round(z, 2)
+                    }
+                    if bbox_pixels:
+                        item["bbox"] = bbox_pixels
+                    raw_list.append(item)
+
             filtered = self.yolo.filter_detections(raw_list)
+            # Đi qua bộ lọc ổn định thời gian TemporalTracker chống nhấp nháy
+            tracked = self.yolo.tracker.update(filtered)
             with self.lock:
-                self.detections = filtered
+                self.detections = tracked
                 self.last_vpu_det_time = time.time()
         except Exception: pass
 
     def _ai_inference_loop(self):
-        """Vòng lặp AI dự phòng: Tự động chạy nhận diện thông minh trên CPU khi VPU chưa phát topic"""
+        """Vòng lặp AI dự phòng: Chỉ chạy khi VPU hoàn toàn không phát topic (>3s)"""
         while self.running:
             if self.flags.yolo and self.yolo:
                 now = time.time()
-                # Nếu không có tin nhắn nhận diện từ VPU trong 1.2s và đang có ảnh camera
-                if (now - self.last_vpu_det_time > 1.2) and (self.latest_raw_bgr is not None):
+                # Nếu VPU đang hoạt động tốt (trong 3s), tuyệt đối không chạy CPU để tránh giật lag
+                if (now - self.last_vpu_det_time > 3.0) and (self.latest_raw_bgr is not None):
                     try:
                         img_copy = self.latest_raw_bgr.copy()
                         depth_copy = self.latest_depth_np
                         dets = self.yolo.detect_fallback(img_copy, depth_copy)
-                        if dets:
+                        tracked = self.yolo.tracker.update(dets)
+                        if tracked:
                             with self.lock:
-                                self.detections = dets
+                                self.detections = tracked
                             self.last_fallback_found_time = now
                         elif now - self.last_fallback_found_time > 1.5:
                             with self.lock:
                                 self.detections = []
                     except Exception:
                         pass
-            time.sleep(0.25)
+            time.sleep(0.50)
 
     def _ros_image_cb(self, msg):
         if not self.camera: return

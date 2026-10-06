@@ -35,11 +35,86 @@ LABEL_SYNONYMS = {
     "book": (73, "BOOK"), "bottle": (39, "BOTTLE"), "cup": (41, "CUP")
 }
 
+class TemporalTracker:
+    """Bộ lọc thời gian làm mượt quỹ đạo và chống chập chờn (Coasting / Anti-Flicker)"""
+    def __init__(self, max_age_seconds=0.6):
+        self.max_age = max_age_seconds
+        self.tracks = {}
+
+    def update(self, new_detections):
+        import time, math
+        now = time.time()
+        updated = {}
+
+        for det in new_detections:
+            name = det.get('name', 'OBJ')
+            x, y, z = det.get('x', 0.0), det.get('y', 0.0), det.get('z', 0.0)
+            bbox = det.get('bbox', None)
+
+            best_k = None
+            min_d = 0.85
+
+            for k, trk in self.tracks.items():
+                if trk['name'] == name:
+                    d = math.sqrt((trk['x'] - x)**2 + (trk['y'] - y)**2 + (trk['z'] - z)**2)
+                    if d < min_d:
+                        min_d = d
+                        best_k = k
+
+            if best_k is not None:
+                old = self.tracks[best_k]
+                sx = round(0.70 * x + 0.30 * old['x'], 2)
+                sy = round(0.70 * y + 0.30 * old['y'], 2)
+                sz = round(0.70 * z + 0.30 * old['z'], 2)
+                updated[best_k] = {
+                    "id": det.get('id', 0),
+                    "name": name,
+                    "score": max(det.get('score', 0.8), round(old['score'] * 0.96, 2)),
+                    "x": sx, "y": sy, "z": sz,
+                    "bbox": bbox if bbox else old.get('bbox'),
+                    "last_seen": now
+                }
+            else:
+                k = f"{name}_{now}_{len(updated)}"
+                updated[k] = {
+                    "id": det.get('id', 0),
+                    "name": name,
+                    "score": det.get('score', 0.8),
+                    "x": round(x, 2), "y": round(y, 2), "z": round(z, 2),
+                    "bbox": bbox,
+                    "last_seen": now
+                }
+
+        # Coasting: Giữ lại track vừa mất dấu trong 0.6s để không bị nhấp nháy
+        for k, trk in self.tracks.items():
+            if k not in updated and (now - trk['last_seen'] < self.max_age):
+                trk['score'] = round(trk['score'] * 0.92, 2)
+                updated[k] = trk
+
+        self.tracks = updated
+
+        res = []
+        for trk in self.tracks.values():
+            item = {
+                "id": trk["id"],
+                "name": trk["name"],
+                "score": round(trk["score"], 2),
+                "x": trk["x"],
+                "y": trk["y"],
+                "z": trk["z"]
+            }
+            if trk.get("bbox"):
+                item["bbox"] = trk["bbox"]
+            res.append(item)
+        return res
+
+
 class SpatialPerceptionEngine:
-    DEPTH_MIN = 0.20
+    DEPTH_MIN = 0.15
     DEPTH_MAX = 10.00
 
     def __init__(self):
+        self.tracker = TemporalTracker(max_age_seconds=0.6)
         self.face_cascade = None
         self.upper_cascade = None
         try:
@@ -55,7 +130,7 @@ class SpatialPerceptionEngine:
 
     @classmethod
     def filter_detections(cls, raw_list):
-        """Lọc và chuẩn hóa danh sách vật thể từ VPU"""
+        """Lọc, chuẩn hóa đơn vị mm -> m, và ánh xạ nhãn COCO"""
         filtered = []
         for det in raw_list:
             if not isinstance(det, dict): continue
@@ -85,9 +160,15 @@ class SpatialPerceptionEngine:
                 score = float(det.get("score", 0.8))
             except (ValueError, TypeError): continue
 
-            # Lọc cự ly an toàn
+            # Tự động phát hiện và chuyển đổi đơn vị nếu xuất milimet (mm -> m)
+            if z > 20.0:
+                x /= 1000.0
+                y /= 1000.0
+                z /= 1000.0
+
+            # Lọc cự ly an toàn [15cm - 10m] và ngưỡng tin cậy nhạy hơn (0.20)
             if z < cls.DEPTH_MIN or z > cls.DEPTH_MAX: continue
-            if score < 0.30: continue
+            if score < 0.20: continue
 
             d_entry = {
                 "id": target_id if target_id is not None else 0,
@@ -104,28 +185,28 @@ class SpatialPerceptionEngine:
         return filtered
 
     def detect_fallback(self, bgr_img, depth_frame=None, fx=450.0, fy=450.0, cx=320.0, cy=200.0):
-        """Nhận diện dự phòng thông minh trên CPU (Face & UpperBody) khi chưa bật VPU YOLO"""
+        """Nhận diện dự phòng siêu nhẹ trên CPU khi chưa có topic từ VPU"""
         if bgr_img is None: return []
         h, w = bgr_img.shape[:2]
         if h < 40 or w < 40: return []
 
-        scale = 0.5
+        scale = 0.35
         small = cv2.resize(bgr_img, (int(w * scale), int(h * scale)))
         gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
 
-        detections = []
         found_boxes = []
 
         if self.face_cascade and not self.face_cascade.empty():
-            faces = self.face_cascade.detectMultiScale(gray, scaleFactor=1.2, minNeighbors=4, minSize=(20, 20))
+            faces = self.face_cascade.detectMultiScale(gray, scaleFactor=1.25, minNeighbors=4, minSize=(16, 16))
             for (fx_b, fy_b, fw, fh) in faces:
-                found_boxes.append((int(fx_b / scale), int(fy_b / scale), int(fw / scale), int(fh / scale), "PERSON", 0.92))
+                found_boxes.append((int(fx_b / scale), int(fy_b / scale), int(fw / scale), int(fh / scale), "PERSON", 0.90))
 
         if not found_boxes and self.upper_cascade and not self.upper_cascade.empty():
-            uppers = self.upper_cascade.detectMultiScale(gray, scaleFactor=1.25, minNeighbors=3, minSize=(30, 30))
+            uppers = self.upper_cascade.detectMultiScale(gray, scaleFactor=1.30, minNeighbors=3, minSize=(25, 25))
             for (ux, uy, uw, uh) in uppers:
-                found_boxes.append((int(ux / scale), int(uy / scale), int(uw / scale), int(uh / scale), "PERSON", 0.85))
+                found_boxes.append((int(ux / scale), int(uy / scale), int(uw / scale), int(uh / scale), "PERSON", 0.82))
 
+        detections = []
         for (bx, by, bw, bh, name, score) in found_boxes:
             u_center = bx + bw // 2
             v_center = by + bh // 2
@@ -139,13 +220,12 @@ class SpatialPerceptionEngine:
                     du2 = max(0, min(dw - 1, int((bx + bw) * dw / w)))
                     dv2 = max(0, min(dh - 1, int((by + bh) * dh / h)))
                     roi = depth_frame[dv1:dv2, du1:du2]
-                    valid = roi[(roi > 200) & (roi < 6000)]
-                    if len(valid) > 10:
+                    valid = roi[(roi > 150) & (roi < 6000)]
+                    if len(valid) > 8:
                         z_m = float(np.median(valid)) / 1000.0
                 except Exception: pass
 
-            # Nếu depth map chưa có hoặc quá gần, ước tính cự ly qua độ rộng khuôn mặt chuẩn ~16cm
-            if z_m < 0.25 or z_m > 8.0:
+            if z_m < 0.20 or z_m > 8.0:
                 z_m = round(float(fx * 0.16 / max(bw, 1)), 2)
                 z_m = max(0.30, min(4.5, z_m))
 
@@ -188,7 +268,7 @@ class SpatialPerceptionEngine:
 
     @staticmethod
     def draw_detections(img, detections, fx=450.0, fy=450.0, cx=320.0, cy=200.0):
-        """Vẽ khung hộp nhận diện và cự ly trực tiếp lên khung ảnh camera"""
+        """Vẽ khung hộp nhận diện chuẩn 2D từ YOLO với nhãn và cự ly chính xác"""
         if img is None: return img
         h, w = img.shape[:2]
         for det in detections:
@@ -197,8 +277,13 @@ class SpatialPerceptionEngine:
                 name = str(det.get('name', 'OBJ'))
                 score = float(det.get('score', 0.8))
 
-                if 'bbox' in det:
-                    x1, y1, x2, y2 = det['bbox']
+                # Ưu tiên số 1: Bounding Box 2D thật từ mạng YOLO
+                if 'bbox' in det and det['bbox'] is not None:
+                    bx1, by1, bx2, by2 = det['bbox']
+                    x1 = max(0, min(w - 2, int(bx1)))
+                    y1 = max(0, min(h - 2, int(by1)))
+                    x2 = max(x1 + 5, min(w - 1, int(bx2)))
+                    y2 = max(y1 + 5, min(h - 1, int(by2)))
                 elif zm > 0.15:
                     u = int(cx + (xm * fx / zm))
                     v = int(cy + (ym * fy / zm))
@@ -210,10 +295,26 @@ class SpatialPerceptionEngine:
                     else: continue
                 else: continue
 
-                col = (42, 42, 255) if 'PERSON' in name else (0, 255, 163)
+                # Bảng màu chuyên nghiệp theo danh mục đối tượng
+                if 'PERSON' in name:
+                    col = (42, 42, 255) # Đỏ rực
+                elif 'LAPTOP' in name or 'TV' in name:
+                    col = (255, 180, 0) # Xanh dương / Vàng cam
+                elif 'BOTTLE' in name or 'CUP' in name:
+                    col = (255, 0, 200) # Hồng tím
+                elif 'CHAIR' in name or 'TABLE' in name:
+                    col = (0, 215, 255) # Vàng hổ phách
+                else:
+                    col = (0, 255, 163) # Xanh ngọc neon Cyberpunk
+
                 cv2.rectangle(img, (x1, y1), (x2, y2), col, 2)
-                cv2.putText(img, f"{name} {int(score*100)}% ({zm:.1f}m)",
-                            (x1, max(22, y1 - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.52, col, 2)
+
+                dist_str = f" ({zm:.2f}m)" if zm > 0.05 else ""
+                label_txt = f"{name} {int(score*100)}%{dist_str}"
+                (tw, th), _ = cv2.getTextSize(label_txt, cv2.FONT_HERSHEY_SIMPLEX, 0.48, 1)
+                ty = max(18, y1 - 4)
+                cv2.rectangle(img, (x1, ty - th - 3), (x1 + tw + 6, ty + 2), col, -1)
+                cv2.putText(img, label_txt, (x1 + 3, ty - 2), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 0, 0), 1, cv2.LINE_AA)
             except Exception: pass
         return img
 
