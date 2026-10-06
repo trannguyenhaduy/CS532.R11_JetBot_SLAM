@@ -53,21 +53,29 @@ except ImportError:
     HAS_DEPTHAI_MSGS = False
     SpatialDetectionArray = object
 
-# ─── BẢNG 5 LỚP MỤC TIÊU THEO YÊU CẦU THÀNH VIÊN 2 ───────────────────────────
-TARGET_CLASSES = {
-    0: "PERSON",
-    56: "CHAIR",
-    60: "TABLE",
-    62: "TV / MONITOR",
-    11: "STOP SIGN / DOOR"
+# ─── BẢNG TẤT CẢ CÁC LỚP ĐỐI TƯỢNG OAK-D / COCO (80 CLASSES) ────────────────
+COCO_CLASSES = {
+    0: "PERSON", 1: "BICYCLE", 2: "CAR", 3: "MOTORCYCLE", 4: "AIRPLANE", 5: "BUS", 6: "TRAIN", 7: "TRUCK", 8: "BOAT",
+    9: "TRAFFIC LIGHT", 10: "FIRE HYDRANT", 11: "STOP SIGN / DOOR", 12: "PARKING METER", 13: "BENCH", 14: "BIRD", 15: "CAT",
+    16: "DOG", 17: "HORSE", 18: "SHEEP", 19: "COW", 20: "ELEPHANT", 21: "BEAR", 22: "ZEBRA", 23: "GIRAFFE",
+    24: "BACKPACK", 25: "UMBRELLA", 26: "HANDBAG", 27: "TIE", 28: "SUITCASE", 29: "FRISBEE", 30: "SKIS",
+    31: "SNOWBOARD", 32: "SPORTS BALL", 33: "KITE", 34: "BASEBALL BAT", 35: "BASEBALL GLOVE", 36: "SKATEBOARD",
+    37: "SURFBOARD", 38: "TENNIS RACKET", 39: "BOTTLE", 40: "WINE GLASS", 41: "CUP", 42: "FORK", 43: "KNIFE",
+    44: "SPOON", 45: "BOWL", 46: "BANANA", 47: "APPLE", 48: "SANDWICH", 49: "ORANGE", 50: "BROCCOLI",
+    51: "CARROT", 52: "HOT DOG", 53: "PIZZA", 54: "DONUT", 55: "CAKE", 56: "CHAIR", 57: "COUCH",
+    58: "POTTED PLANT", 59: "BED", 60: "TABLE", 61: "TOILET", 62: "TV / MONITOR", 63: "LAPTOP", 64: "MOUSE",
+    65: "REMOTE", 66: "KEYBOARD", 67: "CELL PHONE", 68: "MICROWAVE", 69: "OVEN", 70: "TOASTER", 71: "SINK",
+    72: "REFRIGERATOR", 73: "BOOK", 74: "CLOCK", 75: "VASE", 76: "SCISSORS", 77: "TEDDY BEAR", 78: "HAIR DRIER",
+    79: "TOOTHBRUSH"
 }
+TARGET_CLASSES = COCO_CLASSES
 
 # Ánh xạ nhãn văn bản phụ trợ nếu detector xuất dạng tên chuỗi
 LABEL_SYNONYMS = {
     "person": (0, "PERSON"),
     "chair": (56, "CHAIR"),
-    "couch": (56, "CHAIR"),
-    "sofa": (56, "CHAIR"),
+    "couch": (57, "COUCH"),
+    "sofa": (57, "COUCH"),
     "dining table": (60, "TABLE"),
     "diningtable": (60, "TABLE"),
     "table": (60, "TABLE"),
@@ -79,22 +87,29 @@ LABEL_SYNONYMS = {
     "screen": (62, "TV / MONITOR"),
     "stop sign": (11, "STOP SIGN / DOOR"),
     "stopsign": (11, "STOP SIGN / DOOR"),
-    "door": (11, "STOP SIGN / DOOR")
+    "door": (11, "STOP SIGN / DOOR"),
+    "bottle": (39, "BOTTLE"),
+    "cup": (41, "CUP"),
+    "backpack": (24, "BACKPACK"),
+    "laptop": (63, "LAPTOP"),
+    "cell phone": (67, "CELL PHONE"),
+    "cellphone": (67, "CELL PHONE"),
+    "phone": (67, "CELL PHONE")
 }
 
 # Ngưỡng độ sâu an toàn theo hợp đồng
-DEPTH_MIN_METERS = 0.30  # Bỏ qua Z < 0.3m (quá gần mắt stereo)
-DEPTH_MAX_METERS = 4.00  # Bỏ qua Z > 4.0m (ngoài tầm chính xác của OAK-D S2)
+DEPTH_MIN_METERS = 0.25  # Bỏ qua Z < 0.25m (quá gần mắt stereo)
+DEPTH_MAX_METERS = 4.50  # Bỏ qua Z > 4.5m (ngoài tầm chính xác của OAK-D S2)
 
 
 class SpatialPerceptionFilter:
-    """Module logic thuần túy (dễ dàng Unit Test độc lập)"""
+    """Module lọc và chuẩn hóa dữ liệu nhận diện không gian 3D từ OAK-D"""
 
     @staticmethod
     def filter_target_objects(raw_detections):
         """
-        Lọc đúng 5 lớp mục tiêu và lọc cự ly chiều sâu 0.3m <= Z <= 4.0m.
-        Chuẩn hóa format JSON theo Hợp đồng Thành viên 2.
+        Nhận diện BẤT KỲ vật thể nào từ camera OAK-D S2 (toàn bộ 80 lớp COCO & custom labels)
+        và lọc cự ly chiều sâu an toàn 0.25m <= Z <= 4.5m.
         """
         filtered = []
         if not raw_detections or not isinstance(raw_detections, list):
@@ -110,21 +125,26 @@ class SpatialPerceptionFilter:
             target_id = None
             target_name = None
 
-            # Kiểm tra theo ID số nguyên
-            if raw_id is not None and int(raw_id) in TARGET_CLASSES:
+            # 1. Xác định ID và tên vật thể
+            if raw_id is not None and str(raw_id).isdigit() and int(raw_id) in TARGET_CLASSES:
                 target_id = int(raw_id)
                 target_name = TARGET_CLASSES[target_id]
-            else:
-                # Kiểm tra theo tên nhãn văn bản
+            elif raw_name:
                 norm_label = raw_name.lower()
                 if norm_label in LABEL_SYNONYMS:
                     target_id, target_name = LABEL_SYNONYMS[norm_label]
+                else:
+                    target_id = int(raw_id) if (raw_id is not None and str(raw_id).isdigit()) else 99
+                    target_name = raw_name.upper()
+            elif raw_id is not None and str(raw_id).isdigit():
+                target_id = int(raw_id)
+                target_name = f"OBJECT #{target_id}"
 
-            # Bỏ qua nếu không nằm trong 5 lớp chỉ định
-            if target_id is None:
+            # Nếu không thể xác định được đối tượng, bỏ qua
+            if target_name is None:
                 continue
 
-            # Lấy tọa độ 3D và điểm tin cậy
+            # 2. Lấy tọa độ 3D và độ tin cậy
             try:
                 x = float(det.get("x", 0.0))
                 y = float(det.get("y", 0.0))
@@ -133,12 +153,16 @@ class SpatialPerceptionFilter:
             except (ValueError, TypeError):
                 continue
 
-            # 2. Lọc cự ly độ sâu RoI [0.3m -> 4.0m]
+            # 3. Lọc nhiễu độ sâu [0.25m -> 4.5m]
             if z < DEPTH_MIN_METERS or z > DEPTH_MAX_METERS:
                 continue
 
+            # 4. Lọc độ tin cậy tối thiểu
+            if score < 0.30:
+                continue
+
             filtered.append({
-                "id": target_id,
+                "id": target_id if target_id is not None else 0,
                 "name": target_name,
                 "score": round(score, 2),
                 "x": round(x, 2),

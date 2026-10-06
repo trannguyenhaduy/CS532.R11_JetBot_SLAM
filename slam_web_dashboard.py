@@ -639,15 +639,21 @@ def map_cb(msg: OccupancyGrid):
 
 def detections_cb(msg):
     dets = []
-    labels_map = {0: "PERSON", 56: "CHAIR", 60: "TABLE", 62: "TV", 11: "STOP SIGN"}
     for d in getattr(msg, 'detections', []):
         for res in getattr(d, 'results', []):
             pos = getattr(d, 'position', None)
             if pos:
                 cid = getattr(res, 'id', 0)
+                lbl = getattr(res, 'label', None)
+                if cid in TARGET_CLASSES:
+                    name = TARGET_CLASSES[cid]
+                elif lbl:
+                    name = str(lbl).upper()
+                else:
+                    name = f"OBJ #{cid}"
                 dets.append({
                     "id": cid,
-                    "name": labels_map.get(cid, f"OBJ #{cid}"),
+                    "name": name,
                     "score": round(float(getattr(res, 'score', 0)), 2),
                     "x": round(float(pos.x), 2),
                     "y": round(float(pos.y), 2),
