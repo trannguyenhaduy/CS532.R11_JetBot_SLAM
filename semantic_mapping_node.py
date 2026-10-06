@@ -12,12 +12,20 @@ JETBOT 3D SEMANTIC MAPPING ENGINE (MEMBER 3 CORE NODE)
 """
 
 import rospy
-import tf2_ros
-import tf2_geometry_msgs
-from geometry_msgs.msg import PointStamped
+from nav_msgs.msg import Odometry
 from visualization_msgs.msg import Marker, MarkerArray
 from std_msgs.msg import String
 import json, math, time
+
+try:
+    import tf2_ros
+    import tf2_geometry_msgs
+    from geometry_msgs.msg import PointStamped
+    HAS_TF2 = True
+except (ImportError, Exception):
+    HAS_TF2 = False
+    tf2_ros = None
+    PointStamped = object
 
 try:
     from depthai_ros_msgs.msg import SpatialDetectionArray
@@ -55,9 +63,31 @@ class SemanticMappingNode:
         self.min_seen_to_publish = 4     # Thấy >= 4 lần mới chính thức cắm cờ
         self.object_catalog = []          # Danh mục vật thể toàn cục
 
-        # Cây tọa độ TF2
-        self.tf_buffer = tf2_ros.Buffer(cache_time=rospy.Duration(10.0))
-        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer)
+        # Robot Pose từ Odometry
+        self.robot_x = 0.0
+        self.robot_y = 0.0
+        self.robot_z = 0.0
+        self.robot_yaw = 0.0
+        rospy.Subscriber('/rtabmap/odom', Odometry, self.odom_cb, queue_size=1)
+
+        # Cây tọa độ TF2 (nếu môi trường hỗ trợ)
+        self.tf_buffer = None
+        if HAS_TF2:
+            try:
+                self.tf_buffer = tf2_ros.Buffer(cache_time=rospy.Duration(10.0))
+                self.tf_listener = tf2_ros.TransformListener(self.tf_buffer)
+            except Exception:
+                self.tf_buffer = None
+
+    def odom_cb(self, msg: Odometry):
+        p = msg.pose.pose.position
+        q = msg.pose.pose.orientation
+        siny = 2.0 * (q.w * q.z + q.x * q.y)
+        cosy = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
+        self.robot_yaw = math.atan2(siny, cosy)
+        self.robot_x = p.x
+        self.robot_y = p.y
+        self.robot_z = p.z
 
         # Publishers
         self.marker_pub = rospy.Publisher('/semantic_markers', MarkerArray, queue_size=5)
@@ -77,25 +107,36 @@ class SemanticMappingNode:
         rospy.loginfo("🧠 JetBot Semantic Mapping Engine Started! Waiting for 3D objects...")
 
     def transform_to_map(self, x_cam, y_cam, z_cam, frame_id='oak-d_frame'):
-        """Chiếu điểm từ Camera Frame sang Map Frame qua TF2"""
-        try:
-            pt = PointStamped()
-            pt.header.frame_id = frame_id
-            pt.header.stamp = rospy.Time(0)  # Lấy transform mới nhất
-            pt.point.x = x_cam
-            pt.point.y = y_cam
-            pt.point.z = z_cam
-
-            # Chờ transform tối đa 0.3s
-            pt_map = self.tf_buffer.transform(pt, 'map', timeout=rospy.Duration(0.3))
-            return pt_map.point.x, pt_map.point.y, pt_map.point.z
-        except Exception:
-            # Fallback nếu chưa có SLAM/Map frame: tra cứu odom
+        """Chiếu điểm từ Camera Frame sang Map/World Frame qua TF2 hoặc Odometry"""
+        if self.tf_buffer is not None:
             try:
-                pt_odom = self.tf_buffer.transform(pt, 'odom', timeout=rospy.Duration(0.2))
-                return pt_odom.point.x, pt_odom.point.y, pt_odom.point.z
+                pt = PointStamped()
+                pt.header.frame_id = frame_id
+                pt.header.stamp = rospy.Time(0)
+                pt.point.x = x_cam
+                pt.point.y = y_cam
+                pt.point.z = z_cam
+                pt_map = self.tf_buffer.transform(pt, 'map', timeout=rospy.Duration(0.3))
+                return pt_map.point.x, pt_map.point.y, pt_map.point.z
             except Exception:
-                return None
+                try:
+                    pt_odom = self.tf_buffer.transform(pt, 'odom', timeout=rospy.Duration(0.2))
+                    return pt_odom.point.x, pt_odom.point.y, pt_odom.point.z
+                except Exception:
+                    pass
+
+        # Fallback vi sai trực tiếp từ Odometry của xe
+        # Camera: X phải, Y xuống, Z tới -> Robot: X tới (z_cam), Y trái (-x_cam), Z lên (-y_cam + 0.12)
+        x_rob = z_cam
+        y_rob = -x_cam
+        z_rob = -y_cam + 0.12
+
+        cos_y = math.cos(self.robot_yaw)
+        sin_y = math.sin(self.robot_yaw)
+        wx = self.robot_x + (x_rob * cos_y - y_rob * sin_y)
+        wy = self.robot_y + (x_rob * sin_y + y_rob * cos_y)
+        wz = self.robot_z + z_rob
+        return wx, wy, wz
 
     def add_or_update_object(self, obj_id, name, x_m, y_m, z_m, score):
         """Thuật toán Euclidean Clustering"""

@@ -31,7 +31,7 @@ try:
     from geometry_msgs.msg import Twist
     from nav_msgs.msg import OccupancyGrid, Odometry
     from sensor_msgs.msg import Image, CameraInfo
-    from std_msgs.msg import Float32MultiArray, String
+    from std_msgs.msg import Float32, Float32MultiArray, String
     HAS_ROS = True
 except ImportError:
     HAS_ROS = False
@@ -40,6 +40,7 @@ except ImportError:
     Odometry = object
     OccupancyGrid = object
     Twist = object
+    Float32 = object
     Float32MultiArray = object
     String = object
 
@@ -527,9 +528,12 @@ cmd_vel_pub = None
 _img_skip = 0
 _depth_skip = 0
 
-def obstacle_distance_cb(msg: Float32):
+def obstacle_distance_cb(msg):
     with state.lock:
-        state.obstacle_distance = round(float(msg.data), 2)
+        try:
+            state.obstacle_distance = round(float(getattr(msg, 'data', msg)), 2)
+        except Exception:
+            pass
 
 def image_cb(msg):
     global _img_skip
