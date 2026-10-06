@@ -178,12 +178,13 @@ class JetBotLibDriver:
 class MotorController:
     """Bộ điều khiển động cơ vi sai với Phanh an toàn, Watchdog & Đảo kênh chuẩn Waveshare"""
     def __init__(self, bus_num=1, addr=0x60, wheel_sep=0.12, max_v=0.35, max_w=1.20, brake_dist=0.15,
-                 swap_motors=True, invert_left=False, invert_right=False):
+                 swap_motors=True, invert_linear=True, invert_left=False, invert_right=False):
         self.wheel_sep = wheel_sep
         self.max_v = max_v
         self.max_w = max_w
         self.brake_dist = brake_dist
         self.swap_motors = swap_motors
+        self.invert_linear = invert_linear
         self.invert_left = invert_left
         self.invert_right = invert_right
 
@@ -256,9 +257,12 @@ class MotorController:
             self.target_v = v
             self.target_w = w
 
+            actual_v = -v if self.invert_linear else v
+            actual_w = w
+
             # Giải động học vi sai (Differential Drive Kinematics)
-            v_l = v - (w * self.wheel_sep / 2.0)
-            v_r = v + (w * self.wheel_sep / 2.0)
+            v_l = actual_v - (actual_w * self.wheel_sep / 2.0)
+            v_r = actual_v + (actual_w * self.wheel_sep / 2.0)
 
             norm = max(abs(v_l), abs(v_r), self.max_v)
             scale = 1.0 / norm if norm > 0 else 1.0
@@ -280,6 +284,8 @@ class MotorController:
         """Cho phép đặt tốc độ trực tiếp từng bánh [-1.0, 1.0] để kiểm tra hoặc bù lệch bánh"""
         with self.lock:
             self.last_cmd_time = time.time()
+            if self.invert_linear:
+                left, right = -left, -right
             if self.invert_left: left = -left
             if self.invert_right: right = -right
             if self.swap_motors:

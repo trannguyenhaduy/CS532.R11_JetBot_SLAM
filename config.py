@@ -29,6 +29,7 @@ MAX_ANGULAR_SPEED  = 1.20  # Vận tốc quay tối đa (rad/s)
 
 # ─── CẤU HÌNH ĐẢO KÊNH ĐỘNG CƠ (MOTOR ORIENTATION) ────────────────────────────
 SWAP_MOTORS        = True   # True: Đảo kênh Trái <-> Phải (Khắc phục lỗi M1=Phải, M2=Trái gây quay ngược)
+INVERT_LINEAR      = True   # True: Đảo chiều tiến/lùi (Khắc phục lỗi W bị lùi và S bị tiến)
 INVERT_LEFT_MOTOR  = False  # True: Đảo cực tính bánh trái nếu bị quay lùi khi tiến
 INVERT_RIGHT_MOTOR = False  # True: Đảo cực tính bánh phải nếu bị quay lùi khi tiến
 

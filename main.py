@@ -101,6 +101,7 @@ class JetBotMasterSystem:
                 max_v=config.MAX_LINEAR_SPEED, max_w=config.MAX_ANGULAR_SPEED,
                 brake_dist=config.SAFETY_BRAKE_DIST_M,
                 swap_motors=getattr(self.flags, 'swap_motors', getattr(config, 'SWAP_MOTORS', True)),
+                invert_linear=getattr(self.flags, 'invert_linear', getattr(config, 'INVERT_LINEAR', True)),
                 invert_left=getattr(config, 'INVERT_LEFT_MOTOR', False),
                 invert_right=getattr(config, 'INVERT_RIGHT_MOTOR', False)
             )
@@ -304,6 +305,10 @@ class JetBotMasterSystem:
             self.motors.swap_motors = not self.motors.swap_motors
             print(f"🔄 [TOGGLE] Đảo kênh Motor: {'BẬT' if self.motors.swap_motors else 'TẮT'}")
             return self.motors.swap_motors
+        elif "linear" in flag_name and self.motors:
+            self.motors.invert_linear = not self.motors.invert_linear
+            print(f"🔄 [TOGGLE] Đảo chiều Tiến/Lùi: {'BẬT' if self.motors.invert_linear else 'TẮT'}")
+            return self.motors.invert_linear
         return False
 
     def shutdown(self):
@@ -321,6 +326,9 @@ def parse_arguments():
     parser.add_argument('--swap-motors', action='store_true', dest='swap_motors', default=None,
                         help="Đảo kênh motor Trái <-> Phải (sửa lỗi rẽ trái thành quay phải)")
     parser.add_argument('--no-swap-motors', action='store_false', dest='swap_motors')
+    parser.add_argument('--invert-linear', action='store_true', dest='invert_linear', default=None,
+                        help="Đảo chiều tiến/lùi nếu W bị lùi và S bị tiến")
+    parser.add_argument('--no-invert-linear', action='store_false', dest='invert_linear')
     parser.add_argument('--pin', '--battery', action='store_true', dest='battery', default=None)
     parser.add_argument('--no-pin', '--no-battery', action='store_false', dest='battery')
     parser.add_argument('--camera', action='store_true', dest='camera', default=None)
@@ -338,6 +346,7 @@ def parse_arguments():
     # Mặc định lấy theo biến khai báo ON/OFF ở đầu file main.py & config:
     if args.motors is None: args.motors = to_bool(MOTOR)
     if args.swap_motors is None: args.swap_motors = getattr(config, 'SWAP_MOTORS', True)
+    if args.invert_linear is None: args.invert_linear = getattr(config, 'INVERT_LINEAR', True)
     if args.battery is None: args.battery = to_bool(PIN)
     if args.camera is None: args.camera = to_bool(CAMERA)
     if args.yolo is None: args.yolo = to_bool(YOLO)
