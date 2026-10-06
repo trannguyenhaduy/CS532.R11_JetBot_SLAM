@@ -94,12 +94,16 @@ LABEL_SYNONYMS = {
     "laptop": (63, "LAPTOP"),
     "cell phone": (67, "CELL PHONE"),
     "cellphone": (67, "CELL PHONE"),
-    "phone": (67, "CELL PHONE")
+    "phone": (67, "CELL PHONE"),
+    "backpack": (24, "BACKPACK"),
+    "bag": (24, "BACKPACK")
 }
 
+TARGET_CLASSES[24] = "BACKPACK"
+
 # Ngưỡng độ sâu an toàn theo hợp đồng
-DEPTH_MIN_METERS = 0.25  # Bỏ qua Z < 0.25m (quá gần mắt stereo)
-DEPTH_MAX_METERS = 4.50  # Bỏ qua Z > 4.5m (ngoài tầm chính xác của OAK-D S2)
+DEPTH_MIN_METERS = 0.20  # Bỏ qua Z < 0.20m (quá gần mắt stereo)
+DEPTH_MAX_METERS = 10.00 # Mở rộng tầm quét lên 10.0m cho phòng học rộng
 
 
 class SpatialPerceptionFilter:

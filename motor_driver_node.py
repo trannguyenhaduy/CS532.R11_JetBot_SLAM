@@ -45,61 +45,79 @@ except ImportError:
 # ─── LỚP ĐIỀU KHIỂN ĐỘNG CƠ WAVESHARE TB6612 (BYPASS LỖI TORCH) ──────────────
 class WaveshareMotorHAT:
     def __init__(self, addr=0x60, i2c_bus=1):
+        self.is_connected = False
+        self._mode = None
+        self._hat_api = None
+        self._driver = None
+        self._left = None
+        self._right = None
+        self._jetbot_robot = None
+
+        # Ưu tiên 1: Thử thư viện chuẩn JetBot của NVIDIA/Waveshare
+        e_jb = None
+        try:
+            from jetbot import Robot
+            self._jetbot_robot = Robot()
+            self._mode = "jetbot"
+            self.is_connected = True
+            print("🤖 [MOTOR] Đã kết nối phần cứng thành công qua thư viện 'jetbot.Robot'!")
+            return
+        except Exception as err:
+            e_jb = err
+
+        # Ưu tiên 2: Kết nối trực tiếp qua Adafruit_MotorHAT (I2C addr 0x60, Bus 1)
+        e_ada = None
         try:
             from Adafruit_MotorHAT import Adafruit_MotorHAT
             self._hat_api = Adafruit_MotorHAT
             self._driver = Adafruit_MotorHAT(addr=addr, i2c_bus=i2c_bus)
             self._left = self._driver.getMotor(1)
             self._right = self._driver.getMotor(2)
-            self._pins = ((1, 0), (2, 3)) # Left: ina=1, inb=0 | Right: ina=2, inb=3
+            self._mode = "adafruit"
             self.stop()
             self.is_connected = True
-            print("🤖 [MOTOR] Đã kết nối trực tiếp mạch Waveshare Motor HAT (0x60)!")
-        except Exception as e:
-            try:
-                from jetbot import Robot
-                self._jetbot_robot = Robot()
-                self._hat_api = None
-                self.is_connected = True
-                print("🤖 [MOTOR] Đã kết nối qua thư viện JetBot mặc định!")
-            except Exception as e2:
-                print("⚠️ [MOTOR] Không phát hiện phần cứng động cơ. Chạy chế độ GIẢ LẬP.")
-                self.is_connected = False
-                self._hat_api = None
+            print("🤖 [MOTOR] Đã kết nối trực tiếp mạch Waveshare Motor HAT qua 'Adafruit_MotorHAT' (0x60)!")
+            return
+        except Exception as err:
+            e_ada = err
 
-    def _set_one(self, motor, pins, value):
-        if not self.is_connected or self._hat_api is None: return
-        value = max(-1.0, min(1.0, float(value)))
-        mapped = int(255.0 * value)
-        speed = min(max(abs(mapped), 0), 255)
-        motor.setSpeed(speed)
-        ina, inb = pins
-        if mapped < 0:
+        print(f"⚠️ [MOTOR] Không phát hiện phần cứng động cơ: jetbot={e_jb} | Adafruit={e_ada}. Chạy chế độ GIẢ LẬP.")
+        self.is_connected = False
+
+    def _set_one_adafruit(self, motor, value: float):
+        if not self.is_connected or self._hat_api is None or motor is None:
+            return
+        val = max(-1.0, min(1.0, float(value)))
+        speed = int(abs(val) * 255)
+        if speed < 15:
+            motor.run(self._hat_api.RELEASE)
+            motor.setSpeed(0)
+        elif val > 0:
+            motor.setSpeed(speed)
             motor.run(self._hat_api.FORWARD)
-            self._driver._pwm.setPWM(ina, 0, 0)
-            self._driver._pwm.setPWM(inb, 0, speed * 16)
         else:
+            motor.setSpeed(speed)
             motor.run(self._hat_api.BACKWARD)
-            self._driver._pwm.setPWM(ina, 0, speed * 16)
-            self._driver._pwm.setPWM(inb, 0, 0)
 
-    def set_motors(self, left, right):
-        if not self.is_connected: return
-        if self._hat_api is not None:
-            self._set_one(self._left, self._pins[0], left)
-            self._set_one(self._right, self._pins[1], right)
-        elif hasattr(self, '_jetbot_robot'):
-            self._jetbot_robot.set_motors(left, right)
+    def set_motors(self, left: float, right: float):
+        if not self.is_connected:
+            return
+        if self._mode == "jetbot" and self._jetbot_robot is not None:
+            self._jetbot_robot.set_motors(float(left), float(right))
+        elif self._mode == "adafruit":
+            self._set_one_adafruit(self._left, left)
+            self._set_one_adafruit(self._right, right)
 
     def stop(self):
-        if not self.is_connected: return
-        if self._hat_api is not None:
-            for motor, pins in ((self._left, self._pins[0]), (self._right, self._pins[1])):
-                motor.run(self._hat_api.RELEASE)
-                self._driver._pwm.setPWM(pins[0], 0, 0)
-                self._driver._pwm.setPWM(pins[1], 0, 0)
-        elif hasattr(self, '_jetbot_robot'):
+        if not self.is_connected:
+            return
+        if self._mode == "jetbot" and self._jetbot_robot is not None:
             self._jetbot_robot.stop()
+        elif self._mode == "adafruit" and self._hat_api is not None:
+            if self._left is not None:
+                self._left.run(self._hat_api.RELEASE)
+            if self._right is not None:
+                self._right.run(self._hat_api.RELEASE)
 
 # ─── ĐỌC VÀ TÍNH TOÁN PIN THỜI GIAN THỰC (INA219 3S LI-ION) ───────────────────
 _LI_ION_CURVE_3S = [
@@ -145,7 +163,7 @@ class JetBotMotorDriverNode:
         self.motor_hat = WaveshareMotorHAT()
         self.last_cmd_time = time.time()
         self.obstacle_distance_m = 99.0
-        self.safety_brake_dist_m = 0.25 # Ngưỡng phanh Virtual Bumper 25cm
+        self.safety_brake_dist_m = 0.15 # Ngưỡng phanh Virtual Bumper 15cm (tránh kẹt khi gần vật thể)
         self.wheel_separation_m = 0.12 # Khoảng cách 2 bánh JetBot
         self.max_linear_speed = 0.35   # m/s
         self.max_angular_speed = 1.2   # rad/s
@@ -177,7 +195,7 @@ class JetBotMotorDriverNode:
                 self.target_v = 0.0
                 self.motor_hat.stop()
                 if HAS_ROS:
-                    rospy.logwarn_throttle(1.0, f"🚨 [PHANH KHẨN CẤP] Vật cản cách {self.obstacle_distance_m:.2f}m (< 0.25m). Ngắt truyền động tiến!")
+                    rospy.logwarn_throttle(2.0, f"🚨 [PHANH KHẨN CẤP] Vật cản cách {self.obstacle_distance_m:.2f}m (< 0.15m). Ngắt truyền động tiến!")
 
     def cmd_vel_cb(self, msg: Twist):
         with self.lock:
@@ -185,11 +203,11 @@ class JetBotMotorDriverNode:
             v = msg.linear.x
             w = msg.angular.z
 
-            # BẢO VỆ AN TOÀN: Nếu phía trước có vật cản gần < 25cm, triệt tiêu lệnh tiến
+            # BẢO VỆ AN TOÀN: Nếu phía trước có vật cản gần < 15cm, triệt tiêu lệnh tiến
             if self.obstacle_distance_m < self.safety_brake_dist_m and v > 0.0:
                 v = 0.0
                 if HAS_ROS:
-                    rospy.logwarn_throttle(1.0, "⚠️ [VIRTUAL BUMPER] Chặn lệnh tiến do quá sát vật cản! Chỉ cho phép lùi/quay.")
+                    rospy.logwarn_throttle(2.0, "⚠️ [VIRTUAL BUMPER] Chặn lệnh tiến do quá sát vật cản (< 0.15m)! Chỉ cho phép lùi/quay.")
 
             self.target_v = v
             self.target_w = w

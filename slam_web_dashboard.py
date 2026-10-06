@@ -524,8 +524,19 @@ def benchmark_worker():
 
 # ─── ROS SUBSCRIBERS ──────────────────────────────────────────────────────────
 cmd_vel_pub = None
+_img_skip = 0
+_depth_skip = 0
+
+def obstacle_distance_cb(msg: Float32):
+    with state.lock:
+        state.obstacle_distance = round(float(msg.data), 2)
 
 def image_cb(msg):
+    global _img_skip
+    _img_skip += 1
+    # Bỏ qua 1 frame giữa chừng để giảm 50% tải CPU Jetson Nano
+    if _img_skip % 2 != 0:
+        return
     try:
         w, h = msg.width, msg.height
         raw = np.frombuffer(msg.data, dtype=np.uint8)
@@ -548,7 +559,7 @@ def image_cb(msg):
                 name = str(det.get('name', 'OBJ'))
                 score = float(det.get('score', 0.8))
 
-                if z_m > 0.3:
+                if z_m > 0.15:
                     u = int(cx + (x_m * fx / z_m))
                     v = int(cy + (y_m * fy / z_m))
                     if 10 <= u < w - 10 and 10 <= v < h - 10:
@@ -578,14 +589,18 @@ def camera_info_cb(msg: CameraInfo):
             state.cy = msg.K[5]
 
 def depth_cb(msg: Image):
-    """Chiếu Depth thành đám mây điểm 3D (3D Point Cloud) để hiển thị Three.js"""
+    """Chiếu Depth thành đám mây điểm 3D (giảm tần số xuống 3 Hz để giải phóng 70% CPU)"""
+    global _depth_skip
+    _depth_skip += 1
+    if _depth_skip % 5 != 0:
+        return
     try:
         w, h = msg.width, msg.height
         # 16-bit depth (mm)
         depth_data = np.frombuffer(msg.data, dtype=np.uint16).reshape((h, w))
 
-        # Downsample: lấy mẫu cách nhau mỗi 18 pixel để nhẹ mạng & FPS cao trên Web
-        step = 18
+        # Downsample: lấy mẫu cách nhau mỗi 25 pixel để cực nhẹ CPU
+        step = 25
         u_grid, v_grid = np.meshgrid(np.arange(0, w, step), np.arange(0, h, step))
         z_sample = depth_data[v_grid, u_grid].astype(np.float32) / 1000.0  # chuyển sang mét
 
@@ -1435,6 +1450,8 @@ HTML_PAGE = """<!DOCTYPE html>
               <span style="color:var(--dim);">X:${det.x}m Y:${det.y}m Cự ly:${det.z}m</span>
             </div>
           `).join('');
+        } else {
+          rl.innerHTML = '<div style="text-align:center; color:var(--dim); padding:15px;">Đang quét vật thể 3D trong không gian...</div>';
         }
 
         // 7. Cập nhật Đánh Giá 3 Thành Viên Nhóm Đồ Án
@@ -1956,6 +1973,7 @@ def main():
         rospy.Subscriber('/rtabmap/grid_map', OccupancyGrid, map_cb, queue_size=1)
         rospy.Subscriber('/battery_telemetry', Float32MultiArray, battery_cb, queue_size=1)
         rospy.Subscriber('/spatial_objects', String, spatial_objects_json_cb, queue_size=1)
+        rospy.Subscriber('/obstacle_distance', Float32, obstacle_distance_cb, queue_size=1)
 
         if HAS_DEPTHAI:
             rospy.Subscriber('/stereo_inertial_publisher/color/yolov4_Spatial_detections', SpatialDetectionArray, detections_cb, queue_size=1)
