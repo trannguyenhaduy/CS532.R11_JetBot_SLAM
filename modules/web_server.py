@@ -18,14 +18,27 @@ if hasattr(sys.stdout, 'reconfigure'):
     try: sys.stdout.reconfigure(encoding='utf-8')
     except Exception: pass
 
-# Lấy trực tiếp HTML_PAGE từ slam_web_dashboard để giữ nguyên 100% giao diện đẹp mắt
-try:
-    from slam_web_dashboard import HTML_PAGE
-except Exception:
-    HTML_PAGE = """<!DOCTYPE html><html><head><title>JetBot Cockpit</title></head>
+# Tải giao diện Three.js Cyber Cockpit 3D từ modules/templates/cockpit.html
+TEMPLATE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'templates', 'cockpit.html')
+
+def get_cockpit_html():
+    if os.path.exists(TEMPLATE_PATH):
+        try:
+            with open(TEMPLATE_PATH, 'r', encoding='utf-8') as f:
+                return f.read()
+        except Exception as e:
+            print(f"⚠️ [WEB] Không thể đọc {TEMPLATE_PATH}: {e}")
+    try:
+        from slam_web_dashboard import HTML_PAGE as legacy_html
+        return legacy_html
+    except Exception:
+        pass
+    return """<!DOCTYPE html><html><head><title>JetBot Cockpit</title></head>
     <body style='background:#07090e;color:#00f0ff;font-family:sans-serif;text-align:center;padding:50px;'>
-    <h1>🤖 JETBOT MODULAR COCKPIT</h1><p>Đang tải giao diện điều khiển 3D Three.js...</p>
+    <h1>🤖 JETBOT MODULAR COCKPIT</h1><p>Không tìm thấy cockpit.html</p>
     </body></html>"""
+
+HTML_PAGE = get_cockpit_html()
 
 class WebHandler(BaseHTTPRequestHandler):
     server_instance = None
@@ -39,7 +52,8 @@ class WebHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header('Content-Type', 'text/html; charset=utf-8')
             self.end_headers()
-            self.wfile.write(HTML_PAGE.encode('utf-8'))
+            content = HTML_PAGE if (HTML_PAGE and len(HTML_PAGE) > 500) else get_cockpit_html()
+            self.wfile.write(content.encode('utf-8'))
         elif self.path.startswith('/stream.mjpg'):
             self.send_response(200)
             self.send_header('Content-Type', 'multipart/x-mixed-replace; boundary=frame')
