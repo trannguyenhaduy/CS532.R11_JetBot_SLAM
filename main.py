@@ -111,6 +111,7 @@ class JetBotMasterSystem:
         self.last_depth_clearance = 99.0
         self.last_yolo_clearance = 99.0
         self.obstacle_distance = 99.0
+        self.last_vpu_det_time = 0.0
         self.battery_metrics = (11.1, 50, 0.85, 9.4, 120)
         self.last_manual_drive_time = 0.0
 
@@ -406,8 +407,13 @@ class JetBotMasterSystem:
                 self._ros_first_img_logged = True
                 print("🎥 [TERMINAL 1 -> 2] Đã nhận luồng hình ảnh màu RGB trực tiếp từ 'camera_ai.launch' thành công!")
 
-            annotator = (lambda im: self.yolo.draw_detections(im, self.detections)) if self.yolo else None
-            self.camera.process_color_frame(img, annotator)
+            with self.lock:
+                current_dets = list(self.detections)
+                obs_dist = self.obstacle_distance
+
+            annotator = (lambda im: self.yolo.draw_detections(im, current_dets)) if self.yolo else None
+            self.camera.process_color_frame(img, annotator, detections=current_dets, obstacle_dist=obs_dist)
+
         except Exception: pass
 
     def _ros_depth_cb(self, msg):
@@ -559,26 +565,32 @@ class JetBotMasterSystem:
         while self.running:
             if self.flags.yolo and self.yolo and (self.latest_raw_bgr is not None):
                 try:
-                    frame = self.latest_raw_bgr
-                    depth = self.latest_depth_np
-                    live_dets = self.yolo.detect_fallback(frame, depth)
-                    tracked = self.yolo.tracker.update(live_dets)
-                    with self.lock:
-                        self.detections = tracked
+                    now = time.time()
+                    # Nếu đang có luồng nhận diện từ VPU của OAK-D (qua ROS trong 1.8s gần nhất),
+                    # KHÔNG chạy fallback CPU để tránh ghi đè làm mất các vật thể từ OAK-D
+                    vpu_active = (now - getattr(self, 'last_vpu_det_time', 0.0) < 1.8)
 
-                    calc_dist = self.yolo.calculate_obstacle_distance(depth, tracked)
-                    with self.lock:
-                        if calc_dist is not None:
-                            self.last_yolo_clearance = calc_dist
-                            if depth is not None:
-                                self.last_depth_clearance = calc_dist
-                        else:
-                            self.last_yolo_clearance = 99.0
-                            if depth is not None:
-                                self.last_depth_clearance = 99.0
+                    if not vpu_active:
+                        frame = self.latest_raw_bgr
+                        depth = self.latest_depth_np
+                        live_dets = self.yolo.detect_fallback(frame, depth)
+                        tracked = self.yolo.tracker.update(live_dets)
+                        with self.lock:
+                            self.detections = tracked
 
-                    # Hợp nhất cự ly cản an toàn, cập nhật Motor & Camera HUD
-                    self._update_fused_obstacle_clearance()
+                        calc_dist = self.yolo.calculate_obstacle_distance(depth, tracked)
+                        with self.lock:
+                            if calc_dist is not None:
+                                self.last_yolo_clearance = calc_dist
+                                if depth is not None:
+                                    self.last_depth_clearance = calc_dist
+                            else:
+                                self.last_yolo_clearance = 99.0
+                                if depth is not None:
+                                    self.last_depth_clearance = 99.0
+
+                        # Hợp nhất cự ly cản an toàn, cập nhật Motor & Camera HUD
+                        self._update_fused_obstacle_clearance()
                 except Exception:
                     pass
             time.sleep(0.04) # Cập nhật AI ~20-25 Hz mượt mà, không chặn luồng video
