@@ -119,7 +119,11 @@
 </head>
 <body>
   <header>
-    <div class="brand"><div class="pulse-dot"></div>JETBOT 3D SEMANTIC SLAM</div>
+    <div class="brand">
+      <div class="pulse-dot"></div>
+      JETBOT 3D SEMANTIC SLAM
+      <span id="sys-version-tag" style="font-size:0.68rem; margin-left:8px; padding:2px 8px; border-radius:4px; background:rgba(0,240,255,0.15); border:1px solid var(--cyan); color:var(--cyan); font-weight:700; font-family:'Rajdhani',sans-serif; letter-spacing:0.5px;">v2.4.0-SAFETY-DUAL-ROS</span>
+    </div>
     <div class="telemetry">
       <div class="stat-box batt-box" id="batt-container">
         <div class="batt-header">
@@ -1027,6 +1031,11 @@
         document.getElementById('pose-val').innerText = `${d.robot_x.toFixed(2)}, ${d.robot_y.toFixed(2)}, ${deg}°`;
         const numPts = (d.points_3d && Array.isArray(d.points_3d)) ? d.points_3d.length : 0;
         document.getElementById('pts-count').innerText = `${numPts} PTS`;
+
+        if (d.system_version) {
+          const vTag = document.getElementById('sys-version-tag');
+          if (vTag) vTag.innerText = d.system_version;
+        }
 
         // 1-4. Cập nhật Three.js 3D (chỉ chạy khi có thư viện 3D)
         if (hasThree && robotGroup && scene) {

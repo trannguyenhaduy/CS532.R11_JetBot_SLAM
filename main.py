@@ -236,7 +236,11 @@ class JetBotMasterSystem:
                                          SpatialDetectionArray, self._ros_depthai_detections_cb, queue_size=2)
                         rospy.Subscriber('/mobilenet_publisher/color/mobilenet_spatial_detections',
                                          SpatialDetectionArray, self._ros_depthai_detections_cb, queue_size=2)
-                    print("🔗 [ROS] Đã kết nối thành công với ROS Core và các Topics chuẩn.")
+                    print("🔗 [ROS] Đã kết nối thành công với ROS Core (Master URI: http://localhost:11311)!")
+                    print("📡 [ROS TOPIC] Đang lắng nghe luồng từ Terminal 1 (camera_ai.launch):")
+                    print("   ├─ Ảnh màu RGB : /yolov4_publisher/color/image")
+                    print("   ├─ Độ sâu Depth: /yolov4_publisher/stereo/depth")
+                    print("   └─ Nhận diện 3D: /yolov4_publisher/color/yolov4_Spatial_detections")
                     connected = True
                     break
                 except Exception:
@@ -397,6 +401,10 @@ class JetBotMasterSystem:
 
             self.last_ros_img_time = time.time()
             self.latest_raw_bgr = img
+            if not getattr(self, '_ros_first_img_logged', False):
+                self._ros_first_img_logged = True
+                print("🎥 [TERMINAL 1 -> 2] Đã nhận luồng hình ảnh màu RGB trực tiếp từ 'camera_ai.launch' thành công!")
+
             annotator = (lambda im: self.yolo.draw_detections(im, self.detections)) if self.yolo else None
             self.camera.process_color_frame(img, annotator)
         except Exception: pass
@@ -414,6 +422,9 @@ class JetBotMasterSystem:
             else:
                 depth_np = np.frombuffer(msg.data, dtype=np.uint16).reshape((h, w))
             self.latest_depth_np = depth_np
+            if not getattr(self, '_ros_first_depth_logged', False):
+                self._ros_first_depth_logged = True
+                print("📐 [TERMINAL 1 -> 2] Đã nhận ma trận Stereo Depth từ 'camera_ai.launch'! Hệ thống Phanh Khẩn Cấp đã sẵn sàng.")
             with self.lock:
                 rx, ry, rz, yaw = self.robot_x, self.robot_y, self.robot_z, self.robot_yaw
             self.camera.process_depth_frame(depth_np, rx, ry, rz, yaw)
@@ -692,6 +703,9 @@ class JetBotMasterSystem:
                 "camera_source": f"{cam_src} [{cam_mode_str}]",
                 "calc_fps": cam_fps,
                 "camera_mode": getattr(self.camera, 'view_mode', 'ai') if self.camera else 'ai',
+                "system_version": getattr(config, 'SYSTEM_VERSION', 'v2.4.0-SAFETY-DUAL-ROS'),
+                "system_codename": getattr(config, 'VERSION_CODENAME', 'Aegis JetBot'),
+                "system_build": getattr(config, 'BUILD_TAG', 'v2.4.0-safety-dual-ros'),
                 "benchmark": {
                     "tv1": {
                         "total_score": 29, "max_score": 30, "grade": "XUẤT SẮC",
@@ -803,16 +817,28 @@ def parse_arguments():
 
 def main():
     args = parse_arguments()
-    print("\n" + "═" * 70)
-    print("🤖 KHỞI ĐỘNG JETBOT MODULAR MASTER SYSTEM (MAIN.PY)")
+    sys_ver = getattr(config, 'SYSTEM_VERSION', 'v2.4.0-SAFETY-DUAL-ROS')
+    sys_code = getattr(config, 'VERSION_CODENAME', 'AEGIS JETBOT (Bảo Vệ Toàn Diện & Phanh Tự Hành)')
+    build_date = getattr(config, 'BUILD_DATE', '2026-10-07')
+    build_tag = getattr(config, 'BUILD_TAG', 'v2.4.0-safety-dual-ros')
+    workflow = getattr(config, 'WORKFLOW_MODE', '2-Terminal Mode')
+
+    print("\n" + "═" * 74)
+    print("🤖 JETBOT MODULAR MASTER SYSTEM (MAIN.PY)")
+    print(f"📦 PHIÊN BẢN (VERSION) : {sys_ver}")
+    print(f"🏷️  CODE NAME           : {sys_code}")
+    print(f"📅 PHÁT HÀNH           : {build_date} | TAG: {build_tag}")
+    print(f"🔄 CHẾ ĐỘ CHẠY (FLOW)  : {workflow}")
+    print("─" * 74)
     print(f"  ├─ Động cơ (PCA9685 0x60):  {'BẬT' if args.motors else 'TẮT'}")
     print(f"  ├─ Đo Pin (INA219 0x41):    {'BẬT' if args.battery else 'TẮT'}")
-    print(f"  ├─ Camera OAK-D S2:         {'BẬT' if args.camera else 'TẮT'}")
-    print(f"  ├─ Spatial YOLO:            {'BẬT' if args.yolo else 'TẮT'}")
+    print(f"  ├─ Camera OAK-D S2:         {'BẬT (Hỗ trợ ROS Topic & USB OAK-D)' if args.camera else 'TẮT'}")
+    print(f"  ├─ Spatial YOLO:            {'BẬT (Hỗ trợ ROS confidence:=0.25)' if args.yolo else 'TẮT'}")
+    print(f"  ├─ Phanh khẩn cấp:          BẬT (< 25cm khóa tiến, cho phép lùi/quay)")
     print(f"  ├─ Bám người (Follower):    {'BẬT' if args.follower else 'TẮT (Ưu tiên lái tay)'}")
     print(f"  ├─ Bản đồ ngữ nghĩa 3D:     {'BẬT' if args.mapper else 'TẮT'}")
-    print(f"  └─ Web Cockpit (Port 8080): {'BẬT' if args.web else 'TẮT'}")
-    print("═" * 70 + "\n")
+    print(f"  └─ Web Cockpit (Port 8080): {'BẬT (http://0.0.0.0:8080)' if args.web else 'TẮT'}")
+    print("═" * 74 + "\n")
 
     bot = JetBotMasterSystem(args)
     try:

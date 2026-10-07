@@ -5,6 +5,13 @@ Cấu hình tập trung cho toàn bộ hệ thống JetBot (Centralized Configur
 Chứa tất cả các cờ tính năng (Feature Flags) và thông số kỹ thuật.
 """
 
+# ─── THÔNG TIN PHIÊN BẢN HỆ THỐNG (SYSTEM VERSIONING) ─────────────────────────
+SYSTEM_VERSION     = "v2.4.0-SAFETY-DUAL-ROS"
+VERSION_CODENAME   = "AEGIS JETBOT (Bảo Vệ Toàn Diện & Phanh Tự Hành)"
+BUILD_TAG          = "v2.4.0-safety-dual-ros"
+BUILD_DATE         = "2026-10-07"
+WORKFLOW_MODE      = "2-Terminal Mode (Terminal 1: camera_ai.launch | Terminal 2: main.py)"
+
 # ─── CỜ BẬT / TẮT TÍNH NĂNG (FEATURE FLAGS) ───────────────────────────────────
 ENABLE_MOTORS       = True   # Bật/Tắt module động cơ (PCA9685 I2C 0x60)
 ENABLE_BATTERY      = True   # Bật/Tắt module đọc pin INA219 (I2C 0x41)
