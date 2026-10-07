@@ -220,6 +220,7 @@ class JetBotMasterSystem:
                     rospy.Subscriber('/yolov4_publisher/depth', Image, self._ros_depth_cb, queue_size=1)
                     rospy.Subscriber('/yolov4_publisher/depth/image_raw', Image, self._ros_depth_cb, queue_size=1)
                     rospy.Subscriber('/camera/depth/image_raw', Image, self._ros_depth_cb, queue_size=1)
+                    rospy.Subscriber('/obstacle_distance', Float32, self._ros_obstacle_dist_cb, queue_size=1)
 
                     rospy.Subscriber('/rtabmap/odom', Odometry, self._ros_odom_cb, queue_size=1)
                     rospy.Subscriber('/cmd_vel', Twist, self._ros_cmd_cb, queue_size=1)
@@ -439,6 +440,14 @@ class JetBotMasterSystem:
             elif self.yolo:
                 dist = self.yolo.calculate_obstacle_distance(depth_np)
                 self.last_depth_clearance = dist
+                self._update_fused_obstacle_clearance()
+        except Exception: pass
+
+    def _ros_obstacle_dist_cb(self, msg):
+        try:
+            val = float(msg.data)
+            if val < 4.0:
+                self.last_depth_clearance = val
                 self._update_fused_obstacle_clearance()
         except Exception: pass
 
