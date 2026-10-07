@@ -5,6 +5,7 @@ Module 3: Quản lý luồng Camera OAK-D S2 & Mây điểm 3D (Camera Streamer)
 Tuân thủ Quy tắc Harness 3: Giảm tải CPU bằng cách skip frames và downsampling.
 """
 
+import os
 import sys
 import time
 import math
@@ -14,6 +15,25 @@ import cv2
 if hasattr(sys.stdout, 'reconfigure'):
     try: sys.stdout.reconfigure(encoding='utf-8')
     except Exception: pass
+
+# 20 nhãn lớp chuẩn của mô hình MobileNet-SSD trên VPU Myriad X
+MOBILENET_LABELS = [
+    "background", "aeroplane", "bicycle", "bird", "boat", "bottle", "bus",
+    "car", "cat", "chair", "cow", "diningtable", "dog", "horse",
+    "motorbike", "person", "pottedplant", "sheep", "sofa", "train", "tvmonitor"
+]
+
+try:
+    import rospy
+    from sensor_msgs.msg import Image as ROSImage
+    from std_msgs.msg import Float32 as ROSFloat32
+    from std_msgs.msg import String as ROSString
+    HAS_ROS = True
+except ImportError:
+    HAS_ROS = False
+    ROSImage = object
+    ROSFloat32 = object
+    ROSString = object
 
 class CameraStreamer:
     """
@@ -65,10 +85,12 @@ class CameraStreamer:
         self._oak_device = None
         self._oak_q_rgb = None
         self._oak_q_raw_depth = None
+        self._oak_q_nn = None
         self._last_oak_check = 0.0
         self.is_oak_connected = False
         self.latest_oak_depth = None
         self._cached_oak_frame = None
+        self.latest_vpu_detections = []
 
         # Đồng bộ luồng phát hình ảnh độ trễ thấp (Zero Latency Event & ID)
         import threading
@@ -200,15 +222,93 @@ class CameraStreamer:
                     print(f"⚠️ [OAK-D USB] Bỏ qua Stereo Depth: {ex_stereo}")
                     has_stereo = False
 
-                device = dai.Device(pipeline)
+                # Tích hợp mô hình VPU Spatial Detection Network nếu có sẵn blob trên Jetson Nano
+                has_vpu_nn = False
+                blob_candidates = [
+                    "/home/jetbot/catkin_ws/src/depthai-ros/depthai_examples/resources/mobilenet-ssd_openvino_2021.2_6shave.blob",
+                ]
+                chosen_blob = None
+                for b_path in blob_candidates:
+                    if os.path.exists(b_path):
+                        chosen_blob = b_path
+                        break
+
+                if chosen_blob is not None and has_stereo:
+                    try:
+                        spatial_nn = pipeline.create(dai.node.MobileNetSpatialDetectionNetwork)
+                        spatial_nn.setBlobPath(chosen_blob)
+                        spatial_nn.setConfidenceThreshold(0.25)
+                        spatial_nn.input.setBlocking(False)
+                        spatial_nn.setBoundingBoxScaleFactor(0.5)
+                        spatial_nn.setDepthLowerThreshold(100)   # 10cm
+                        spatial_nn.setDepthUpperThreshold(5000)  # 5m
+
+                        manip = pipeline.create(dai.node.ImageManip)
+                        manip.initialConfig.setResize(300, 300)
+                        manip.initialConfig.setFrameType(dai.RawImgFrame.Type.BGR888p)
+                        manip.inputConfig.setWaitForMessage(False)
+
+                        cam_rgb.preview.link(manip.inputImage)
+                        manip.out.link(spatial_nn.input)
+                        stereo.depth.link(spatial_nn.inputDepth)
+
+                        xout_nn = pipeline.create(dai.node.XLinkOut)
+                        xout_nn.setStreamName("nn")
+                        spatial_nn.out.link(xout_nn.input)
+                        has_vpu_nn = True
+                        print(f"🧠 [OAK-D VPU] Đã kết nối mạng VPU MobileNet-SSD: {chosen_blob}")
+                    except Exception as ex_nn:
+                        print(f"ℹ️ [OAK-D VPU] Bỏ qua nạp VPU NN ({ex_nn}), sử dụng thị giác tiêu chuẩn.")
+                        has_vpu_nn = False
+
+                try:
+                    device = dai.Device(pipeline)
+                except Exception as ex_dev:
+                    if has_vpu_nn:
+                        print(f"⚠️ [OAK-D VPU] Runtime không khớp blob VPU ({ex_dev}). Khởi chạy RGB + Stereo Depth thuần túy!")
+                        pipeline = dai.Pipeline()
+                        cam_rgb = pipeline.create(dai.node.ColorCamera)
+                        cam_rgb.setPreviewSize(640, 480)
+                        cam_rgb.setInterleaved(False)
+                        cam_rgb.setColorOrder(dai.ColorCameraProperties.ColorOrder.BGR)
+                        cam_rgb.setFps(30)
+                        xout_rgb = pipeline.create(dai.node.XLinkOut)
+                        xout_rgb.setStreamName("rgb")
+                        cam_rgb.preview.link(xout_rgb.input)
+                        if has_stereo:
+                            mono_l = pipeline.create(dai.node.MonoCamera)
+                            mono_l.setResolution(dai.MonoCameraProperties.SensorResolution.THE_400_P)
+                            mono_l.setBoardSocket(dai.CameraBoardSocket.LEFT)
+                            mono_r = pipeline.create(dai.node.MonoCamera)
+                            mono_r.setResolution(dai.MonoCameraProperties.SensorResolution.THE_400_P)
+                            mono_r.setBoardSocket(dai.CameraBoardSocket.RIGHT)
+                            stereo = pipeline.create(dai.node.StereoDepth)
+                            stereo.setDefaultProfilePreset(dai.node.StereoDepth.PresetMode.HIGH_DENSITY)
+                            stereo.initialConfig.setMedianFilter(dai.MedianFilter.KERNEL_7x7)
+                            stereo.setLeftRightCheck(True)
+                            stereo.setExtendedDisparity(True)
+                            mono_l.out.link(stereo.left)
+                            mono_r.out.link(stereo.right)
+                            xout_raw_depth = pipeline.create(dai.node.XLinkOut)
+                            xout_raw_depth.setStreamName("raw_depth")
+                            stereo.depth.link(xout_raw_depth.input)
+                        device = dai.Device(pipeline)
+                        has_vpu_nn = False
+                    else:
+                        raise ex_dev
+
                 self._oak_device = device
                 self._oak_q_rgb = device.getOutputQueue(name="rgb", maxSize=1, blocking=False)
                 if has_stereo:
                     self._oak_q_raw_depth = device.getOutputQueue(name="raw_depth", maxSize=1, blocking=False)
                 else:
                     self._oak_q_raw_depth = None
+                if has_vpu_nn:
+                    self._oak_q_nn = device.getOutputQueue(name="nn", maxSize=1, blocking=False)
+                else:
+                    self._oak_q_nn = None
                 self.is_oak_connected = True
-                print("✅ [OAK-D USB] Đã kích hoạt Camera OAK-D S2 (DepthAI v2) trực tiếp trên Jetson Nano thành công!")
+                print("✅ [OAK-D USB] Đã kích hoạt Camera OAK-D S2 trực tiếp trên Jetson Nano thành công!")
                 return True
         except Exception as e:
             err_str = str(e)
@@ -247,15 +347,19 @@ class CameraStreamer:
             except Exception:
                 pass
             self._cap = None
+        self._oak_q_nn = None
+        self._cached_oak_frame = None
         self.is_oak_connected = False
 
     def read_oak_frame(self):
-        """Đọc cả ảnh màu RGB và bản đồ độ sâu Depth từ OAK-D cắm USB máy tính"""
+        """Đọc cả ảnh màu RGB, bản đồ độ sâu Depth và VPU detections từ OAK-D cắm USB"""
         if not self._try_open_oak():
             return None, None
         try:
             in_rgb = self._oak_q_rgb.tryGet() if self._oak_q_rgb else None
             in_depth = self._oak_q_raw_depth.tryGet() if self._oak_q_raw_depth else None
+            in_nn = self._oak_q_nn.tryGet() if getattr(self, '_oak_q_nn', None) else None
+
             frame = None
             if in_rgb is not None:
                 frame = in_rgb.getCvFrame() if hasattr(in_rgb, 'getCvFrame') else (in_rgb.getFrame() if hasattr(in_rgb, 'getFrame') else None)
@@ -266,11 +370,86 @@ class CameraStreamer:
                 self._cached_oak_frame = frame
             if depth is not None:
                 self.latest_oak_depth = depth
+
+            # Xử lý kết quả nhận diện từ chip VPU OAK-D
+            if in_nn is not None and hasattr(in_nn, 'detections'):
+                vpu_dets = []
+                for d in in_nn.detections:
+                    lbl = MOBILENET_LABELS[d.label] if (hasattr(d, 'label') and d.label < len(MOBILENET_LABELS)) else "OBJECT"
+                    x_m = round(float(d.spatialCoordinates.x) / 1000.0, 2)
+                    y_m = round(float(d.spatialCoordinates.y) / 1000.0, 2)
+                    z_m = round(float(d.spatialCoordinates.z) / 1000.0, 2)
+                    bx = max(0, min(640, int(d.xmin * 640)))
+                    by = max(0, min(480, int(d.ymin * 480)))
+                    bw = max(10, min(640 - bx, int((d.xmax - d.xmin) * 640)))
+                    bh = max(10, min(480 - by, int((d.ymax - d.ymin) * 480)))
+                    vpu_dets.append({
+                        "id": 0,
+                        "class": lbl.upper(),
+                        "name": lbl.upper(),
+                        "score": round(float(d.confidence), 2),
+                        "x": x_m, "y": y_m, "z": z_m,
+                        "distance": z_m,
+                        "bbox": [bx, by, bw, bh],
+                        "source": "OAK-D VPU"
+                    })
+                self.latest_vpu_detections = vpu_dets
+
+            # Tự động xuất bản các Topics ROS nếu roscore đang bật
+            self._publish_ros_frames(frame, depth, self.obstacle_distance)
+
             return frame, depth
         except Exception as e:
             print(f"⚠️ [OAK-D USB] Mất kết nối OAK-D: {e}")
             self.shutdown()
             return None, None
+
+    def _publish_ros_frames(self, rgb_frame, depth_frame, obstacle_dist=None):
+        """Tự động xuất bản các Topics ROS chuẩn khi roscore đang chạy"""
+        if not HAS_ROS:
+            return
+        try:
+            if not rospy.core.is_initialized():
+                return
+            if not getattr(self, '_ros_pubs_initialized', False):
+                self._ros_pub_rgb = rospy.Publisher('/camera/color/image_raw', ROSImage, queue_size=1)
+                self._ros_pub_rgb_alias = rospy.Publisher('/stereo_inertial_publisher/color/image', ROSImage, queue_size=1)
+                self._ros_pub_depth = rospy.Publisher('/camera/depth/image_raw', ROSImage, queue_size=1)
+                self._ros_pub_depth_alias = rospy.Publisher('/stereo_inertial_publisher/stereo/depth', ROSImage, queue_size=1)
+                self._ros_pub_dist = rospy.Publisher('/obstacle_distance', ROSFloat32, queue_size=1)
+                self._ros_pubs_initialized = True
+
+            now_ros = rospy.Time.now()
+            if rgb_frame is not None and hasattr(self, '_ros_pub_rgb'):
+                msg_rgb = self._build_image_msg(rgb_frame, "bgr8", "oak-d_frame", now_ros)
+                self._ros_pub_rgb.publish(msg_rgb)
+                self._ros_pub_rgb_alias.publish(msg_rgb)
+
+            if depth_frame is not None and hasattr(self, '_ros_pub_depth'):
+                msg_depth = self._build_image_msg(depth_frame, "16UC1", "oak-d_frame", now_ros)
+                self._ros_pub_depth.publish(msg_depth)
+                self._ros_pub_depth_alias.publish(msg_depth)
+
+            if obstacle_dist is not None and hasattr(self, '_ros_pub_dist'):
+                self._ros_pub_dist.publish(ROSFloat32(data=float(obstacle_dist)))
+        except Exception:
+            pass
+
+    @staticmethod
+    def _build_image_msg(img_np, encoding, frame_id="oak-d_frame", stamp=None):
+        msg = ROSImage()
+        msg.header.stamp = stamp if stamp is not None else rospy.Time.now()
+        msg.header.frame_id = frame_id
+        msg.height = int(img_np.shape[0])
+        msg.width = int(img_np.shape[1])
+        msg.encoding = encoding
+        msg.is_bigendian = 0
+        if len(img_np.shape) == 3:
+            msg.step = int(msg.width * img_np.shape[2] * img_np.itemsize)
+        else:
+            msg.step = int(msg.width * img_np.itemsize)
+        msg.data = img_np.tobytes()
+        return msg
 
     def _open_laptop_camera(self):
         """Mở kết nối tới Webcam của Laptop khi không có OAK-D và không có ROS"""
@@ -337,10 +516,12 @@ class CameraStreamer:
             oak_frame, oak_depth = self.read_oak_frame()
             if oak_frame is not None:
                 return oak_frame, (oak_depth if oak_depth is not None else self.latest_oak_depth), "OAK-D S2 (USB LIVE)"
-            else:
+            elif getattr(self, '_cached_oak_frame', None) is not None:
                 # OAK-D đang chờ frame kế tiếp trong chu kỳ 30 FPS:
                 # Trả về cached frame để AI inference và an toàn không bị gián đoạn
                 return self._cached_oak_frame, self.latest_oak_depth, "OAK-D S2 (USB LIVE)"
+            else:
+                return None, self.latest_oak_depth, "OAK-D S2 (CONNECTING)"
 
         # Chỉ khi OAK-D không cắm hoặc mất kết nối hoàn toàn mới dùng Webcam Laptop
         lap_frame = self.read_laptop_frame()
@@ -637,7 +818,6 @@ def run_ros_camera_node():
 
 
 if __name__ == '__main__':
-    import os
     # Nếu chạy qua roslaunch hoặc có tham số node / ROS environment
     if len(sys.argv) > 1 and any(arg.startswith('__name:=') or arg == '--node' for arg in sys.argv):
         run_ros_camera_node()
@@ -646,8 +826,10 @@ if __name__ == '__main__':
     # Tự kiểm thử standalone nếu chạy thủ công
     print("🧪 [SELF-TEST] Bắt đầu tự kiểm thử CameraStreamer...")
     cs = CameraStreamer()
+    # Tạo frame ảnh giả lập
     fake_img = np.zeros((400, 640, 3), dtype=np.uint8)
     cv2.putText(fake_img, "TEST STREAM", (200, 200), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 2)
+    # Xử lý 2 frame để qua bộ lọc skip
     cs.process_color_frame(fake_img)
     jpeg = cs.process_color_frame(fake_img)
     assert jpeg is not None and len(jpeg) > 1000, "Lỗi: Không tạo được ảnh JPEG!"

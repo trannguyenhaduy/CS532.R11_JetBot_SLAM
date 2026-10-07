@@ -137,23 +137,23 @@ class SpatialPerceptionEngine:
 
         try:
             import os
-            cascade_dirs = [
-                getattr(cv2, 'data', None) and getattr(cv2.data, 'haarcascades', None),
-                '/usr/share/opencv4/haarcascades/',
-                '/usr/share/opencv/haarcascades/',
-                '/usr/local/share/opencv4/haarcascades/',
-                '/usr/local/share/opencv/haarcascades/'
-            ]
-            for cdir in cascade_dirs:
-                if not cdir or not os.path.exists(cdir): continue
-                p_face = os.path.join(cdir, 'haarcascade_frontalface_default.xml')
-                if not self.face_cascade and os.path.exists(p_face):
-                    self.face_cascade = cv2.CascadeClassifier(p_face)
-                p_upper = os.path.join(cdir, 'haarcascade_upperbody.xml')
-                if not self.upper_cascade and os.path.exists(p_upper):
-                    self.upper_cascade = cv2.CascadeClassifier(p_upper)
+            p_face = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+            if os.path.exists(p_face):
+                self.face_cascade = cv2.CascadeClassifier(p_face)
+            p_upper = cv2.data.haarcascades + 'haarcascade_upperbody.xml'
+            if os.path.exists(p_upper):
+                self.upper_cascade = cv2.CascadeClassifier(p_upper)
         except Exception:
             pass
+
+        # Khởi tạo bộ nhận diện người HOG chuẩn OpenCV (chạy 100% offline, cực nhạy)
+        try:
+            self.hog = cv2.HOGDescriptor()
+            self.hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
+        except Exception:
+            self.hog = None
+        self._last_hog_time = 0.0
+        self._cached_hog_boxes = []
 
     TARGET_SEMANTIC_CLASSES = {
         "PERSON", "OBSTACLE", "CHAIR", "COUCH", "TABLE", "BOTTLE", "CUP", "BACKPACK",
@@ -204,22 +204,28 @@ class SpatialPerceptionEngine:
                 y /= 1000.0
                 z /= 1000.0
 
-            # Lọc cự ly an toàn
-            if z > cls.DEPTH_MAX: continue
-            if z < cls.DEPTH_MIN:
-                # Nếu cự ly stereo bị mù (0m) do vật quá gần hoặc thiếu map depth, gán cự ly danh định an toàn
-                z = 0.22
+            # Lọc cự ly an toàn [15cm - 10m]
+            if z < cls.DEPTH_MIN or z > cls.DEPTH_MAX: continue
 
-            # 2. BỘ LỌC ĐỘ TIN CẬY: Đặt ngưỡng 0.20 phù hợp trần Tiny-YOLOv4 (0.25) trên OAK-D VPU
-            if score < 0.20: continue
-            if "bbox" in det and det["bbox"] is not None:
-                bx1, by1, bx2, by2 = det["bbox"]
-                bw = abs(bx2 - bx1)
-                bh = abs(by2 - by1)
-                if bh > 0:
-                    aspect = bw / float(bh)
-                    if aspect < 0.10 or aspect > 3.0:
-                        continue
+            # Lọc bóng phản chiếu sàn (vùng y > 0.15m khi ở cự ly xa z > 1.2m)
+            if target_name == "PERSON" and y > 0.15 and z > 1.2:
+                continue
+
+            # 2. BỘ LỌC ĐỘ TIN CẬY
+            if target_name == "PERSON":
+                if score < 0.35: continue
+                if "bbox" in det and det["bbox"] is not None:
+                    bx1, by1, bx2, by2 = det["bbox"]
+                    bw = abs(bx2 - bx1)
+                    bh = abs(by2 - by1)
+                    if bh > 0:
+                        aspect = bw / float(bh)
+                        if aspect < 0.15 or aspect > 2.2:
+                            continue
+            elif target_name == "OBSTACLE":
+                if score < 0.30: continue
+            else:
+                if score < 0.28: continue
 
             d_entry = {
                 "id": target_id if target_id is not None else 0,
@@ -317,6 +323,62 @@ class SpatialPerceptionEngine:
 
             if self._cached_dnn_boxes:
                 found_boxes = list(self._cached_dnn_boxes)
+
+        # ─── 1.5. HOG PEOPLE DETECTOR (OPENCV CHUẨN, 100% OFFLINE KHÔNG CẦN MODEL NGOÀI) ───
+        if self.hog is not None and not any(b[4] == 'PERSON' for b in found_boxes):
+            now = time.time()
+            if (now - self._last_hog_time >= 0.08) or not self._cached_hog_boxes:
+                self._last_hog_time = now
+                try:
+                    small_gray = cv2.resize(gray, (320, 240))
+                    h_boxes, h_weights = self.hog.detectMultiScale(small_gray, winStride=(8, 8), padding=(4, 4), scale=1.05)
+                    sx, sy = w / 320.0, h / 240.0
+                    cached_hog = []
+                    for (bx, by, bw, bh), wgt in zip(h_boxes, h_weights):
+                        if wgt > 0.08:
+                            rx = max(0, min(w - 2, int(bx * sx)))
+                            ry = max(0, min(h - 2, int(by * sy)))
+                            rw = max(10, min(w - rx, int(bw * sx)))
+                            rh = max(10, min(h - ry, int(bh * sy)))
+                            cached_hog.append((rx, ry, rw, rh, "PERSON", min(0.95, float(wgt) + 0.50)))
+                    self._cached_hog_boxes = cached_hog
+                except Exception:
+                    pass
+            if self._cached_hog_boxes:
+                found_boxes.extend(self._cached_hog_boxes)
+
+        # ─── 1.6. PHÁT HIỆN VẬT CẢN 3D TỪ ĐÁM MÂY ĐIỂM STEREO DEPTH THỜI GIAN THỰC ───
+        if depth_frame is not None and isinstance(depth_frame, np.ndarray):
+            try:
+                dh, dw = depth_frame.shape[:2]
+                if dh >= 10 and dw >= 10:
+                    valid_d = (depth_frame >= 80) & (depth_frame <= 2200)
+                    small_d = cv2.resize(valid_d.astype(np.uint8), (160, 120), interpolation=cv2.INTER_NEAREST)
+                    cnts_d, _ = cv2.findContours(small_d, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                    scale_dw, scale_dh = w / 160.0, h / 120.0
+                    for cd in cnts_d:
+                        area_d = cv2.contourArea(cd)
+                        if area_d > (160 * 120 * 0.03):
+                            dbx, dby, dbw, dbh = cv2.boundingRect(cd)
+                            real_bx = max(0, min(w - 2, int(dbx * scale_dw)))
+                            real_by = max(0, min(h - 2, int(dby * scale_dh)))
+                            real_bw = max(10, min(w - real_bx, int(dbw * scale_dw)))
+                            real_bh = max(10, min(h - real_by, int(dbh * scale_dh)))
+                            has_overlap = any(
+                                abs((real_bx + real_bw//2) - (fb[0] + fb[2]//2)) < (real_bw * 0.6)
+                                for fb in found_boxes
+                            )
+                            if not has_overlap:
+                                aspect = real_bw / float(max(1, real_bh))
+                                if aspect < 0.45:
+                                    name_d = "BOTTLE"
+                                elif aspect > 1.35:
+                                    name_d = "CHAIR"
+                                else:
+                                    name_d = "OBSTACLE"
+                                found_boxes.append((real_bx, real_by, real_bw, real_bh, name_d, 0.88))
+            except Exception:
+                pass
 
         # ─── 2. BỔ TRỢ KHUÔN MẶT HAAR CASCADE (ĐẶC BIỆT KHI NGỒI GẦN WEBCAM) ───
         if self.face_cascade is not None and not any(b[4] == 'PERSON' for b in found_boxes):

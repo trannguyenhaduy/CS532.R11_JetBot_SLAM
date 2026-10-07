@@ -232,16 +232,12 @@ class JetBotMasterSystem:
                     rospy.Subscriber('/spatial_objects', String, self._ros_spatial_objects_cb, queue_size=2)
                     rospy.Subscriber('/stereo_inertial_publisher/color/raw_detections', String, self._ros_spatial_objects_cb, queue_size=2)
                     if HAS_DEPTHAI_MSGS:
-                        for top in [
-                            '/stereo_inertial_publisher/color/yolov4_Spatial_detections',
-                            '/stereo_inertial_publisher/color/yolov4_spatial_detections',
-                            '/stereo_inertial_publisher/color/spatial_detections',
-                            '/yolov4_publisher/color/yolov4_Spatial_detections',
-                            '/yolov4_publisher/color/yolov4_spatial_detections',
-                            '/yolov4_publisher/color/spatial_detections',
-                            '/mobilenet_publisher/color/mobilenet_spatial_detections',
-                        ]:
-                            rospy.Subscriber(top, SpatialDetectionArray, self._ros_depthai_detections_cb, queue_size=2)
+                        rospy.Subscriber('/stereo_inertial_publisher/color/yolov4_Spatial_detections',
+                                         SpatialDetectionArray, self._ros_depthai_detections_cb, queue_size=2)
+                        rospy.Subscriber('/yolov4_publisher/color/yolov4_Spatial_detections',
+                                         SpatialDetectionArray, self._ros_depthai_detections_cb, queue_size=2)
+                        rospy.Subscriber('/mobilenet_publisher/color/mobilenet_spatial_detections',
+                                         SpatialDetectionArray, self._ros_depthai_detections_cb, queue_size=2)
                     print("🔗 [ROS] Đã kết nối thành công với ROS Core (Master URI: http://localhost:11311)!")
                     print("📡 [ROS TOPIC] Đang lắng nghe luồng từ Terminal 1 (camera_ai.launch):")
                     print("   ├─ Ảnh màu RGB : /yolov4_publisher/color/image")
@@ -368,25 +364,7 @@ class JetBotMasterSystem:
                 for res in getattr(det, 'results', []):
                     cid = getattr(res, 'id', getattr(res, 'class_id', 0))
                     label_name = getattr(res, 'label', '')
-                    if not label_name:
-                        from modules.spatial_detector import COCO_CLASSES
-                        label_name = COCO_CLASSES.get(int(cid), f"OBJ_{cid}")
                     score = float(getattr(res, 'score', 0.8))
-
-                    # Nếu cự ly z bị mù (0m) hoặc thiếu depth, trích xuất từ ma trận latest_depth_np
-                    if (z < 0.10 or z > 10.0) and bbox_pixels and self.latest_depth_np is not None:
-                        try:
-                            bx1, by1, bx2, by2 = bbox_pixels
-                            dh, dw = self.latest_depth_np.shape[:2]
-                            du1, du2 = max(0, min(dw - 1, bx1)), max(0, min(dw - 1, bx2))
-                            dv1, dv2 = max(0, min(dh - 1, by1)), max(0, min(dh - 1, by2))
-                            crop = self.latest_depth_np[dv1:dv2, du1:du2]
-                            valid_crop = crop[(crop > 50) & (crop < 4500)]
-                            if len(valid_crop) > 5:
-                                z = round(float(np.median(valid_crop)) / 1000.0, 2)
-                        except Exception: pass
-                    if z < 0.10:
-                        z = 0.25  # Cự ly an toàn mặc định
 
                     item = {
                         "id": int(cid),
@@ -604,12 +582,8 @@ class JetBotMasterSystem:
                         with self.lock:
                             if calc_dist is not None:
                                 self.last_yolo_clearance = calc_dist
-                                if depth is not None:
-                                    self.last_depth_clearance = calc_dist
                             else:
                                 self.last_yolo_clearance = 99.0
-                                if depth is not None:
-                                    self.last_depth_clearance = 99.0
 
                         # Hợp nhất cự ly cản an toàn, cập nhật Motor & Camera HUD
                         self._update_fused_obstacle_clearance()
@@ -637,7 +611,21 @@ class JetBotMasterSystem:
 
             # Nếu chưa có luồng ảnh thật từ ROS, tự động lấy ảnh từ OAK-D (cắm USB) hoặc Laptop Webcam
             if not has_fresh_ros_frame:
-                live_frame, live_depth, src_name = self.camera.get_live_frame()
+                try:
+                    live_frame, live_depth, src_name = self.camera.get_live_frame()
+                except Exception as ex_cam:
+                    live_frame, live_depth, src_name = None, None, "ERROR"
+
+                # Đọc nhận diện 3D từ phần cứng VPU OAK-D nếu có
+                vpu_dets = getattr(self.camera, 'latest_vpu_detections', [])
+                if vpu_dets:
+                    with self.lock:
+                        self.detections = vpu_dets
+                        self.last_vpu_det_time = now
+                        vpu_dists = [d['z'] for d in vpu_dets if 'z' in d and 0.15 <= d['z'] <= 10.0]
+                        if vpu_dists:
+                            self.last_yolo_clearance = min(vpu_dists)
+                    self._update_fused_obstacle_clearance()
                 if live_depth is not None:
                     self.latest_depth_np = live_depth
                     with self.lock:
@@ -860,11 +848,11 @@ def parse_arguments():
 
 def main():
     args = parse_arguments()
-    sys_ver = getattr(config, 'SYSTEM_VERSION', 'v2.4.0-SAFETY-DUAL-ROS')
-    sys_code = getattr(config, 'VERSION_CODENAME', 'AEGIS JETBOT (Bảo Vệ Toàn Diện & Phanh Tự Hành)')
+    sys_ver = getattr(config, 'SYSTEM_VERSION', 'v2.5.0-UNIFIED-MODULAR')
+    sys_code = getattr(config, 'VERSION_CODENAME', 'AEGIS JETBOT (Hệ Thống Thống Nhất 1-Terminal & ROS Hybrid)')
     build_date = getattr(config, 'BUILD_DATE', '2026-10-07')
-    build_tag = getattr(config, 'BUILD_TAG', 'v2.4.0-safety-dual-ros')
-    workflow = getattr(config, 'WORKFLOW_MODE', '2-Terminal Mode')
+    build_tag = getattr(config, 'BUILD_TAG', 'v2.5.0-unified-modular')
+    workflow = getattr(config, 'WORKFLOW_MODE', '1-Terminal Mode (python3 main.py)')
 
     print("\n" + "═" * 74)
     print("🤖 JETBOT MODULAR MASTER SYSTEM (MAIN.PY)")
@@ -875,8 +863,8 @@ def main():
     print("─" * 74)
     print(f"  ├─ Động cơ (PCA9685 0x60):  {'BẬT' if args.motors else 'TẮT'}")
     print(f"  ├─ Đo Pin (INA219 0x41):    {'BẬT' if args.battery else 'TẮT'}")
-    print(f"  ├─ Camera OAK-D S2:         {'BẬT (Hỗ trợ ROS Topic & USB OAK-D)' if args.camera else 'TẮT'}")
-    print(f"  ├─ Spatial YOLO:            {'BẬT (Hỗ trợ ROS confidence:=0.25)' if args.yolo else 'TẮT'}")
+    print(f"  ├─ Camera OAK-D S2:         {'BẬT (Trực tiếp USB & Tự động phát ROS Topics)' if args.camera else 'TẮT'}")
+    print(f"  ├─ Spatial AI:              {'BẬT (HOG People Detector & 3D Depth Spatial Clustering)' if args.yolo else 'TẮT'}")
     print(f"  ├─ Phanh khẩn cấp:          BẬT (< 25cm khóa tiến, cho phép lùi/quay)")
     print(f"  ├─ Bám người (Follower):    {'BẬT' if args.follower else 'TẮT (Ưu tiên lái tay)'}")
     print(f"  ├─ Bản đồ ngữ nghĩa 3D:     {'BẬT' if args.mapper else 'TẮT'}")
