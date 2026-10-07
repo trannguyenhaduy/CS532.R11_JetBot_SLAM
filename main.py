@@ -221,6 +221,8 @@ class JetBotMasterSystem:
 
                     rospy.Subscriber('/rtabmap/odom', Odometry, self._ros_odom_cb, queue_size=1)
                     rospy.Subscriber('/cmd_vel', Twist, self._ros_cmd_cb, queue_size=1)
+                    rospy.Subscriber('/rtabmap/grid_map', OccupancyGrid, self._ros_grid_map_cb, queue_size=1)
+                    rospy.Subscriber('/map', OccupancyGrid, self._ros_grid_map_cb, queue_size=1)
 
                     # Subscribers nhận danh sách nhận diện 3D từ OAK-D S2 VPU
                     rospy.Subscriber('/spatial_objects', String, self._ros_spatial_objects_cb, queue_size=2)
@@ -238,6 +240,14 @@ class JetBotMasterSystem:
                 except Exception:
                     pass
             time.sleep(2.0)
+
+    def _ros_grid_map_cb(self, msg):
+        """Nhận bản đồ chiếm dụng 2D trực tiếp từ ROS RTAB-Map hoặc Gmapping"""
+        if self.mapper and self.flags.mapper:
+            try:
+                self.mapper.update_from_ros_grid(msg)
+            except Exception:
+                pass
 
     def _update_fused_obstacle_clearance(self):
         """Hợp nhất cự ly cản gần nhất giữa ma trận Depth quang học và đối tượng 3D AI"""
@@ -432,6 +442,9 @@ class JetBotMasterSystem:
                 rx, ry, rz, yaw = self.robot_x, self.robot_y, self.robot_z, self.robot_yaw
             self.camera.process_depth_frame(depth_np, rx, ry, rz, yaw)
 
+            if self.mapper and self.flags.mapper:
+                self.mapper.update_scan(rx, ry, self.camera.points_3d)
+
             if self.safety_brake:
                 dist = self.safety_brake.calculate_clearance(depth_np)
                 self.last_depth_clearance = dist
@@ -553,6 +566,10 @@ class JetBotMasterSystem:
             if not has_fresh_ros_frame:
                 if not self.camera.points_3d:
                     self.camera.points_3d = list(mock_pts)
+                if self.mapper and self.flags.mapper:
+                    with self.lock:
+                        rx, ry = self.robot_x, self.robot_y
+                    self.mapper.update_scan(rx, ry, self.camera.points_3d)
                 if not self.detections:
                     with self.lock:
                         self.detections = [
@@ -589,6 +606,7 @@ class JetBotMasterSystem:
             pts = self.camera.points_3d if self.camera else []
             has_person = any(d.get('name') == 'PERSON' for d in self.detections)
             confirmed_objs = self.mapper.get_confirmed_objects() if (self.flags.mapper and self.mapper) else []
+            map_payload = self.mapper.get_map_payload() if (self.flags.mapper and self.mapper) else {}
             brake_dist = getattr(config, 'SAFETY_BRAKE_DIST_M', 0.25)
             return {
                 "battery_v": v, "battery_pct": pct, "battery_cell_v": round(v / 3.0, 2),
@@ -596,7 +614,15 @@ class JetBotMasterSystem:
                 "battery_status": "BÌNH THƯỜNG" if v >= 10.8 else ("YẾU" if v >= 10.2 else "NGUY HIỂM"),
                 "robot_x": round(self.robot_x, 3), "robot_y": round(self.robot_y, 3), "robot_z": round(self.robot_z, 3),
                 "robot_yaw": round(self.robot_yaw, 3), "path": self.path_history,
-                "map_b64": "", "map_version": 1, "map_origin_x": -3.5, "map_origin_y": -3.5, "map_resolution": 0.05,
+                "map_b64": map_payload.get("map_b64", ""),
+                "map_version": map_payload.get("map_version", 1),
+                "map_origin_x": map_payload.get("map_origin_x", -4.0),
+                "map_origin_y": map_payload.get("map_origin_y", -4.0),
+                "map_resolution": map_payload.get("map_resolution", 0.05),
+                "map_width": map_payload.get("map_width", 160),
+                "map_height": map_payload.get("map_height", 160),
+                "free_cells": map_payload.get("free_cells", 0),
+                "occ_cells": map_payload.get("occ_cells", 0),
                 "points_3d": pts,
                 "detections": self.detections, "obstacle_distance": self.obstacle_distance,
                 "safety_brake_dist": brake_dist,

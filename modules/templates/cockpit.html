@@ -63,15 +63,16 @@
     .viewport img { width: 100%; height: 100%; object-fit: contain; }
     #three-viewport { width: 100%; height: 100%; cursor: grab; }
     #three-viewport:active { cursor: grabbing; }
-    .canvas-map { width: 100%; height: 100%; background: #101520; }
+    .canvas-map { width: 100%; height: 100%; background: #070b12; cursor: grab; display: block; touch-action: none; }
+    .canvas-map:active { cursor: grabbing; }
     .hud {
       position: absolute; top: 10px; left: 10px; z-index: 10;
       background: rgba(0,0,0,0.7); border: 1px solid var(--cyan); border-radius: 6px;
       padding: 4px 10px; font-family: 'Orbitron', monospace; font-size: 0.75rem; color: var(--cyan);
     }
     .hud-tip {
-      position: absolute; bottom: 10px; right: 10px; z-index: 10;
-      background: rgba(0,0,0,0.6); border-radius: 4px; padding: 4px 8px;
+      position: absolute; bottom: 10px; left: 10px; z-index: 10;
+      background: rgba(0,0,0,0.75); border-radius: 4px; padding: 4px 8px;
       font-size: 0.7rem; color: var(--dim);
     }
 
@@ -135,21 +136,28 @@
   </header>
 
   <div class="grid">
-    <!-- 3D Holographic Scene -->
+    <!-- 2D / 3D SLAM Map Scene -->
     <div class="card">
       <div class="card-hdr">
-        <span>🌐 3D HOLOGRAPHIC SLAM (THREE.JS)</span>
-        <div>
-          <button class="tab-btn active" id="btn-view-3d" onclick="switchView('3d')">3D VIEW</button>
-          <button class="tab-btn" id="btn-view-2d" onclick="switchView('2d')">2D GRID</button>
-          <button class="tab-btn" style="border-color:var(--amber); color:var(--amber);" onclick="reset3DCamera()">RESET CAM</button>
+        <span id="slam-hdr-title">🌐 2D OCCUPANCY SLAM & LASERSCAN</span>
+        <div style="display:flex; gap:5px; align-items:center;">
+          <button class="tab-btn active" id="btn-view-2d" onclick="switchView('2d')">2D GRID</button>
+          <button class="tab-btn" id="btn-view-3d" onclick="switchView('3d')">3D VIEW</button>
+          <button class="tab-btn" style="border-color:var(--amber); color:var(--amber);" onclick="resetMapCamera()" title="Căn giữa góc nhìn">🎯 RESET CAM</button>
         </div>
       </div>
-      <div class="viewport">
-        <div id="three-viewport"></div>
-        <canvas id="map-canvas" class="canvas-map" style="display:none;"></canvas>
-        <div class="hud" id="hud-info">3D POINT CLOUD & MÔ HÌNH ROBOT</div>
-        <div class="hud-tip">💡 Chuột trái: Xoay 360° | Chuột phải: Kéo | Cuộn chuột: Phóng to/Thu nhỏ</div>
+      <div class="viewport" id="map-viewport-container">
+        <canvas id="map-canvas" class="canvas-map" style="display:block;"></canvas>
+        <div id="three-viewport" style="display:none;"></div>
+        <div class="hud" id="hud-info">2D OCCUPANCY GRID MAP & LASERSCAN</div>
+        <div class="hud-tip" id="hud-tip-text">💡 Kéo chuột: Di chuyển bản đồ | Cuộn: Phóng to / Thu nhỏ | Reset Cam: Căn giữa JetBot</div>
+        
+        <!-- On-canvas quick controls for 2D Map -->
+        <div id="map-overlay-controls" style="position:absolute; right:12px; bottom:30px; display:flex; flex-direction:column; gap:5px; z-index:15;">
+          <button class="tab-btn" onclick="zoom2D(1.2)" style="padding:4px 8px; font-weight:bold; font-size:12px; background:rgba(10,14,23,0.85);" title="Phóng to">➕</button>
+          <button class="tab-btn" onclick="zoom2D(0.83)" style="padding:4px 8px; font-weight:bold; font-size:12px; background:rgba(10,14,23,0.85);" title="Thu nhỏ">➖</button>
+          <button class="tab-btn" id="btn-follow-toggle" onclick="toggleFollowRobot()" style="padding:4px 8px; font-size:11px; background:rgba(10,14,23,0.85); color:var(--cyan); border-color:var(--cyan);" title="Khóa tâm bám theo Robot">🎯 BÁM XE: BẬT</button>
+        </div>
       </div>
     </div>
 
@@ -420,9 +428,58 @@
       }
     }
 
-    // ════ 2D / 3D VIEW TOGGLE ════
-    let currentView = '3d';
+    // ════ 2D / 3D VIEW TOGGLE & MAP CONTROLS ════
+    let currentView = '2d'; // Mặc định hiển thị bản đồ 2D siêu mượt theo yêu cầu
     let lastStateData = null;
+    let mapPanX = 0; // Độ lệch tọa độ thế giới (mét) theo trục X
+    let mapPanY = 0; // Độ lệch tọa độ thế giới (mét) theo trục Y
+    let mapZoom = 1.0; // Hệ số thu phóng (0.4x đến 5.0x)
+    let followRobot = true; // Tự động khóa tâm bám theo Robot
+    let isDraggingMap = false;
+    let dragStartX = 0, dragStartY = 0;
+    let dragStartPanX = 0, dragStartPanY = 0;
+
+    function resetMapCamera() {
+      if (currentView === '2d') {
+        if (lastStateData) {
+          mapPanX = lastStateData.robot_x || 0;
+          mapPanY = lastStateData.robot_y || 0;
+        } else {
+          mapPanX = 0;
+          mapPanY = 0;
+        }
+        mapZoom = 1.0;
+        followRobot = true;
+        updateFollowBtn();
+        if (lastStateData) draw2DMap(lastStateData);
+      } else {
+        reset3DCamera();
+      }
+    }
+
+    function toggleFollowRobot() {
+      followRobot = !followRobot;
+      updateFollowBtn();
+      if (followRobot && lastStateData) {
+        mapPanX = lastStateData.robot_x || 0;
+        mapPanY = lastStateData.robot_y || 0;
+        draw2DMap(lastStateData);
+      }
+    }
+
+    function updateFollowBtn() {
+      const btn = document.getElementById('btn-follow-toggle');
+      if (btn) {
+        btn.style.color = followRobot ? 'var(--cyan)' : 'var(--dim)';
+        btn.style.borderColor = followRobot ? 'var(--cyan)' : 'var(--border)';
+        btn.innerText = followRobot ? '🎯 BÁM XE: BẬT' : '🔓 TỰ DO: TẮT';
+      }
+    }
+
+    function zoom2D(factor) {
+      mapZoom = Math.min(5.0, Math.max(0.4, mapZoom * factor));
+      if (lastStateData) draw2DMap(lastStateData);
+    }
 
     function switchView(mode) {
       currentView = mode;
@@ -430,17 +487,108 @@
       document.getElementById('btn-view-2d').classList.toggle('active', mode === '2d');
       document.getElementById('three-viewport').style.display = mode === '3d' ? 'block' : 'none';
       document.getElementById('map-canvas').style.display = mode === '2d' ? 'block' : 'none';
-      document.getElementById('hud-info').innerText = mode === '3d' ? '3D POINT CLOUD & MÔ HÌNH ROBOT' : '2D OCCUPANCY GRID MAP';
+      document.getElementById('hud-info').innerText = mode === '3d' ? '3D POINT CLOUD & MÔ HÌNH ROBOT' : '2D OCCUPANCY GRID MAP & LASERSCAN';
+      
+      const tip = document.getElementById('hud-tip-text') || document.querySelector('.hud-tip');
+      if (tip) {
+        tip.innerText = mode === '3d'
+          ? '💡 Chuột trái: Xoay 360° | Chuột phải: Kéo | Cuộn chuột: Phóng to/Thu nhỏ'
+          : '💡 Kéo chuột: Di chuyển bản đồ | Cuộn: Phóng to / Thu nhỏ | Reset Cam: Căn giữa JetBot';
+      }
+      const overlay = document.getElementById('map-overlay-controls');
+      if (overlay) overlay.style.display = mode === '2d' ? 'flex' : 'none';
+      
       if (mode === '2d' && lastStateData) {
         setTimeout(() => draw2DMap(lastStateData), 20);
       }
     }
 
-    // ════ 2D OCCUPANCY GRID MAP RENDERER ════
+    // ════ 2D OCCUPANCY GRID MAP & LASERSCAN RENDERER ════
     const mapCanvas = document.getElementById('map-canvas');
     const mapCtx = mapCanvas.getContext('2d');
     let currentMapVer = -1;
     let mapImage = new Image();
+
+    // Lắng nghe sự kiện chuột để kéo (Pan) và cuộn (Zoom) bản đồ 2D
+    mapCanvas.addEventListener('mousedown', (e) => {
+      isDraggingMap = true;
+      dragStartX = e.clientX;
+      dragStartY = e.clientY;
+      dragStartPanX = mapPanX;
+      dragStartPanY = mapPanY;
+      mapCanvas.style.cursor = 'grabbing';
+    });
+
+    window.addEventListener('mousemove', (e) => {
+      if (!isDraggingMap) return;
+      const dx = e.clientX - dragStartX;
+      const dy = e.clientY - dragStartY;
+      const rect = mapCanvas.getBoundingClientRect();
+      const baseScale = (Math.min(rect.width || 600, rect.height || 420) / 7.0) * mapZoom;
+      mapPanX = dragStartPanX - (dx / baseScale);
+      mapPanY = dragStartPanY + (dy / baseScale);
+      followRobot = false;
+      updateFollowBtn();
+      if (lastStateData) draw2DMap(lastStateData);
+    });
+
+    window.addEventListener('mouseup', () => {
+      if (isDraggingMap) {
+        isDraggingMap = false;
+        mapCanvas.style.cursor = 'grab';
+      }
+    });
+
+    mapCanvas.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const factor = e.deltaY < 0 ? 1.15 : 0.87;
+      zoom2D(factor);
+    }, { passive: false });
+
+    // Hỗ trợ cảm ứng vuốt & chạm trên Smartphone/Tablet
+    let touchStartDist = 0;
+    mapCanvas.addEventListener('touchstart', (e) => {
+      if (e.touches.length === 1) {
+        isDraggingMap = true;
+        dragStartX = e.touches[0].clientX;
+        dragStartY = e.touches[0].clientY;
+        dragStartPanX = mapPanX;
+        dragStartPanY = mapPanY;
+      } else if (e.touches.length === 2) {
+        touchStartDist = Math.hypot(
+          e.touches[0].clientX - e.touches[1].clientX,
+          e.touches[0].clientY - e.touches[1].clientY
+        );
+      }
+    }, { passive: true });
+
+    mapCanvas.addEventListener('touchmove', (e) => {
+      if (e.touches.length === 1 && isDraggingMap) {
+        const dx = e.touches[0].clientX - dragStartX;
+        const dy = e.touches[0].clientY - dragStartY;
+        const rect = mapCanvas.getBoundingClientRect();
+        const baseScale = (Math.min(rect.width || 600, rect.height || 420) / 7.0) * mapZoom;
+        mapPanX = dragStartPanX - (dx / baseScale);
+        mapPanY = dragStartPanY + (dy / baseScale);
+        followRobot = false;
+        updateFollowBtn();
+        if (lastStateData) draw2DMap(lastStateData);
+      } else if (e.touches.length === 2) {
+        const dist = Math.hypot(
+          e.touches[0].clientX - e.touches[1].clientX,
+          e.touches[0].clientY - e.touches[1].clientY
+        );
+        if (touchStartDist > 0) {
+          zoom2D(dist / touchStartDist);
+          touchStartDist = dist;
+        }
+      }
+    }, { passive: true });
+
+    mapCanvas.addEventListener('touchend', () => {
+      isDraggingMap = false;
+      touchStartDist = 0;
+    }, { passive: true });
 
     function draw2DMap(d) {
       if (!mapCanvas || !mapCtx) return;
@@ -462,71 +610,172 @@
       const W = rect.width || (targetW / dpr);
       const H = rect.height || (targetH / dpr);
 
-      // Xóa nền với màu Cyber Dark
-      mapCtx.fillStyle = '#0a0e17';
+      // Nếu đang bật chế độ bám xe, đồng bộ mapPan theo robot
+      if (followRobot) {
+        mapPanX = d.robot_x || 0;
+        mapPanY = d.robot_y || 0;
+      }
+
+      // Xóa nền màu Cyber Blueprint Dark
+      mapCtx.fillStyle = '#070b12';
       mapCtx.fillRect(0, 0, W, H);
 
       // Thang đo tỉ lệ (Scale): 1 mét thực tế = bao nhiêu pixel trên canvas
-      const scale = Math.min(W, H) / 7.0; 
+      const baseScale = Math.min(W, H) / 7.0; 
+      const scale = baseScale * mapZoom;
       const centerX = W / 2.0;
       const centerY = H / 2.0;
 
       function worldToCanvas(wx, wy) {
         return {
-          x: centerX + wx * scale,
-          y: centerY - wy * scale
+          x: centerX + (wx - mapPanX) * scale,
+          y: centerY - (wy - mapPanY) * scale
         };
       }
 
-      // 1. Lưới tọa độ mét ảo (Grid Lines)
-      mapCtx.lineWidth = 1;
-      for (let m = -4; m <= 4; m += 0.5) {
-        const isMajor = Math.abs(m % 1.0) < 0.01;
-        mapCtx.strokeStyle = isMajor ? 'rgba(0, 240, 255, 0.12)' : 'rgba(255, 255, 255, 0.03)';
-        
-        const p1 = worldToCanvas(m, -4);
-        const p2 = worldToCanvas(m, 4);
-        mapCtx.beginPath(); mapCtx.moveTo(p1.x, p1.y); mapCtx.lineTo(p2.x, p2.y); mapCtx.stroke();
+      // 1. LƯỚI TỌA ĐỘ MÉT BLUEPRINT TƯƠNG PHẢN CAO
+      const visibleRangeX = (W / scale) / 2.0;
+      const visibleRangeY = (H / scale) / 2.0;
+      const minMeterX = Math.floor(mapPanX - visibleRangeX - 1);
+      const maxMeterX = Math.ceil(mapPanX + visibleRangeX + 1);
+      const minMeterY = Math.floor(mapPanY - visibleRangeY - 1);
+      const maxMeterY = Math.ceil(mapPanY + visibleRangeY + 1);
 
-        const q1 = worldToCanvas(-4, m);
-        const q2 = worldToCanvas(4, m);
-        mapCtx.beginPath(); mapCtx.moveTo(q1.x, q1.y); mapCtx.lineTo(q2.x, q2.y); mapCtx.stroke();
+      // Đường phụ (Minor grid: mỗi 0.5m)
+      mapCtx.lineWidth = 1;
+      for (let m = minMeterX; m <= maxMeterX; m += 0.5) {
+        if (Math.abs(m % 1.0) >= 0.01) {
+          const p1 = worldToCanvas(m, minMeterY);
+          const p2 = worldToCanvas(m, maxMeterY);
+          mapCtx.strokeStyle = 'rgba(0, 240, 255, 0.07)';
+          mapCtx.beginPath(); mapCtx.moveTo(p1.x, p1.y); mapCtx.lineTo(p2.x, p2.y); mapCtx.stroke();
+        }
+      }
+      for (let m = minMeterY; m <= maxMeterY; m += 0.5) {
+        if (Math.abs(m % 1.0) >= 0.01) {
+          const q1 = worldToCanvas(minMeterX, m);
+          const q2 = worldToCanvas(maxMeterX, m);
+          mapCtx.strokeStyle = 'rgba(0, 240, 255, 0.07)';
+          mapCtx.beginPath(); mapCtx.moveTo(q1.x, q1.y); mapCtx.lineTo(q2.x, q2.y); mapCtx.stroke();
+        }
       }
 
-      // 2. Vẽ Bản đồ Occupancy Grid (nếu có ảnh từ RTAB-Map hoặc Giả lập)
+      // Đường chính (Major grid: mỗi 1.0m) với nhãn tọa độ mét
+      mapCtx.font = '9px "Space Grotesk", monospace';
+      for (let m = minMeterX; m <= maxMeterX; m += 1.0) {
+        const isAxis = Math.abs(m) < 0.01;
+        const p1 = worldToCanvas(m, minMeterY);
+        const p2 = worldToCanvas(m, maxMeterY);
+        mapCtx.strokeStyle = isAxis ? 'rgba(0, 255, 163, 0.45)' : 'rgba(0, 240, 255, 0.18)';
+        mapCtx.lineWidth = isAxis ? 1.5 : 1.0;
+        mapCtx.beginPath(); mapCtx.moveTo(p1.x, p1.y); mapCtx.lineTo(p2.x, p2.y); mapCtx.stroke();
+
+        const labelPos = worldToCanvas(m, mapPanY);
+        if (labelPos.x > 30 && labelPos.x < W - 30) {
+          mapCtx.fillStyle = isAxis ? 'rgba(0, 255, 163, 0.8)' : 'rgba(0, 240, 255, 0.45)';
+          mapCtx.fillText((m >= 0 ? `+${m.toFixed(0)}m` : `${m.toFixed(0)}m`), labelPos.x + 3, H - 24);
+        }
+      }
+
+      for (let m = minMeterY; m <= maxMeterY; m += 1.0) {
+        const isAxis = Math.abs(m) < 0.01;
+        const q1 = worldToCanvas(minMeterX, m);
+        const q2 = worldToCanvas(maxMeterX, m);
+        mapCtx.strokeStyle = isAxis ? 'rgba(0, 240, 255, 0.45)' : 'rgba(0, 240, 255, 0.18)';
+        mapCtx.lineWidth = isAxis ? 1.5 : 1.0;
+        mapCtx.beginPath(); mapCtx.moveTo(q1.x, q1.y); mapCtx.lineTo(q2.x, q2.y); mapCtx.stroke();
+
+        const labelPos = worldToCanvas(mapPanX, m);
+        if (labelPos.y > 20 && labelPos.y < H - 40) {
+          mapCtx.fillStyle = isAxis ? 'rgba(0, 240, 255, 0.8)' : 'rgba(0, 240, 255, 0.45)';
+          mapCtx.fillText((m >= 0 ? `+${m.toFixed(0)}m` : `${m.toFixed(0)}m`), 8, labelPos.y - 3);
+        }
+      }
+
+      // Gốc tọa độ thế giới (0, 0)
+      const orig = worldToCanvas(0, 0);
+      mapCtx.strokeStyle = 'rgba(0, 255, 163, 0.7)';
+      mapCtx.lineWidth = 1.5;
+      mapCtx.beginPath();
+      mapCtx.arc(orig.x, orig.y, 4, 0, Math.PI * 2);
+      mapCtx.stroke();
+      mapCtx.fillStyle = 'rgba(0, 255, 163, 0.7)';
+      mapCtx.fillText('(0,0)', orig.x + 6, orig.y - 6);
+
+      // 2. BẢN ĐỒ CHIẾM DỤNG 2D (OCCUPANCY GRID LAYER)
       if (mapImage && mapImage.complete && mapImage.naturalWidth > 0) {
         const res = d.map_resolution || 0.05;
-        const ox = d.map_origin_x || -3.5;
-        const oy = d.map_origin_y || -3.5;
+        const ox = d.map_origin_x !== undefined ? d.map_origin_x : -4.0;
+        const oy = d.map_origin_y !== undefined ? d.map_origin_y : -4.0;
         const mw = (d.map_width || mapImage.width) * res;
         const mh = (d.map_height || mapImage.height) * res;
 
         const tl = worldToCanvas(ox, oy + mh);
         const br = worldToCanvas(ox + mw, oy);
-        
+        const imgW = br.x - tl.x;
+        const imgH = br.y - tl.y;
+
         mapCtx.save();
-        mapCtx.globalAlpha = 0.9;
-        mapCtx.drawImage(mapImage, tl.x, tl.y, br.x - tl.x, br.y - tl.y);
+        mapCtx.imageSmoothingEnabled = false; // Giữ nguyên độ sắc nét từng ô 5cm
+        mapCtx.drawImage(mapImage, tl.x, tl.y, imgW, imgH);
         mapCtx.restore();
 
-        // Viền phát sáng cho căn phòng
-        mapCtx.strokeStyle = 'rgba(0, 240, 255, 0.5)';
-        mapCtx.lineWidth = 1.5;
-        mapCtx.strokeRect(tl.x, tl.y, br.x - tl.x, br.y - tl.y);
-      } else {
-        const pTL = worldToCanvas(-2.0, 2.0);
-        const pBR = worldToCanvas(2.0, -2.0);
-        mapCtx.fillStyle = 'rgba(30, 41, 59, 0.6)';
-        mapCtx.fillRect(pTL.x, pTL.y, pBR.x - pTL.x, pBR.y - pTL.y);
-        mapCtx.strokeStyle = 'rgba(0, 240, 255, 0.8)';
-        mapCtx.lineWidth = 2;
-        mapCtx.strokeRect(pTL.x, pTL.y, pBR.x - pTL.x, pBR.y - pTL.y);
+        // Viền ranh giới không gian bản đồ
+        mapCtx.strokeStyle = 'rgba(0, 240, 255, 0.35)';
+        mapCtx.setLineDash([6, 6]);
+        mapCtx.lineWidth = 1;
+        mapCtx.strokeRect(tl.x, tl.y, imgW, imgH);
+        mapCtx.setLineDash([]);
       }
 
-      // 3. Vẽ Vệt đường đi (Path Trajectory)
+      // 3. CHIẾU ĐIỂM LASERSCAN 2D TRỰC TIẾP TỪ OAK-D S2 STEREO DEPTH
+      if (d.points_3d && Array.isArray(d.points_3d) && d.points_3d.length > 0) {
+        const robX = d.robot_x || 0;
+        const robY = d.robot_y || 0;
+        const brakeDist = (d.safety_brake_dist !== undefined) ? d.safety_brake_dist : 0.25;
+        const warnDist = brakeDist + 0.20;
+
+        mapCtx.save();
+        for (let i = 0; i < d.points_3d.length; i++) {
+          const pt = d.points_3d[i];
+          const px = pt[0], py = pt[1], pz = pt[2] || 0.2;
+          
+          // Lọc điểm vật cản ở tầm độ cao thân xe và mắt quét (-0.08m đến 0.90m)
+          if (pz < -0.08 || pz > 0.90) continue;
+
+          const dist = Math.hypot(px - robX, py - robY);
+          const cp = worldToCanvas(px, py);
+
+          // Bỏ qua nếu điểm nằm ngoài vùng hiển thị canvas
+          if (cp.x < -10 || cp.x > W + 10 || cp.y < -10 || cp.y > H + 10) continue;
+
+          // Phân loại màu sắc phát sáng theo cự ly vật cản
+          if (dist < brakeDist) {
+            mapCtx.fillStyle = '#ff2a6d'; // Đỏ Neon - Cực kỳ nguy hiểm
+            mapCtx.shadowColor = '#ff2a6d';
+            mapCtx.shadowBlur = 6;
+          } else if (dist < warnDist) {
+            mapCtx.fillStyle = '#ffb800'; // Vàng Hổ Phách - Cảnh báo giảm tốc
+            mapCtx.shadowColor = '#ffb800';
+            mapCtx.shadowBlur = 4;
+          } else {
+            mapCtx.fillStyle = '#00f0ff'; // Xanh Cyan - Bề mặt tường/vật cản thoáng
+            mapCtx.shadowColor = '#00f0ff';
+            mapCtx.shadowBlur = 2;
+          }
+
+          mapCtx.fillRect(cp.x - 1.5, cp.y - 1.5, 3, 3);
+        }
+        mapCtx.restore();
+      }
+
+      // 4. VỆT HÀNH TRÌNH DI CHUYỂN (ODOMETRY PATH)
       if (d.path && d.path.length > 1) {
+        mapCtx.save();
         mapCtx.strokeStyle = '#00ffa3';
-        mapCtx.lineWidth = 2.5;
+        mapCtx.shadowColor = '#00ffa3';
+        mapCtx.shadowBlur = 8;
+        mapCtx.lineWidth = 2.2;
         mapCtx.lineCap = 'round';
         mapCtx.lineJoin = 'round';
         mapCtx.beginPath();
@@ -537,9 +786,10 @@
           mapCtx.lineTo(pt.x, pt.y);
         }
         mapCtx.stroke();
+        mapCtx.restore();
       }
 
-      // 4. Vẽ các vật thể nhận diện (Semantic Objects: Ghế, Người, Balo...)
+      // 5. CÁC VẬT THỂ NHẬN DIỆN (SEMANTIC OBJECTS)
       const confirmedObjs = (d.semantic_objects && d.semantic_objects.length > 0) ? d.semantic_objects : [];
       if (confirmedObjs.length > 0) {
         confirmedObjs.forEach(obj => {
@@ -547,16 +797,15 @@
           const isPerson = (obj.id === 0 || obj.name === 'PERSON');
           const color = isPerson ? '#ff2a6d' : '#00f0ff';
 
-          // Mốc kim cương Semantic SLAM toàn cục
           mapCtx.save();
           mapCtx.fillStyle = color;
           mapCtx.shadowColor = color;
-          mapCtx.shadowBlur = 8;
+          mapCtx.shadowBlur = 10;
           mapCtx.beginPath();
-          mapCtx.moveTo(cp.x, cp.y - 9);
-          mapCtx.lineTo(cp.x + 8, cp.y);
-          mapCtx.lineTo(cp.x, cp.y + 9);
-          mapCtx.lineTo(cp.x - 8, cp.y);
+          mapCtx.moveTo(cp.x, cp.y - 10);
+          mapCtx.lineTo(cp.x + 9, cp.y);
+          mapCtx.lineTo(cp.x, cp.y + 10);
+          mapCtx.lineTo(cp.x - 9, cp.y);
           mapCtx.closePath();
           mapCtx.fill();
           mapCtx.strokeStyle = '#fff';
@@ -566,7 +815,8 @@
 
           mapCtx.font = 'bold 10px Orbitron, monospace';
           mapCtx.fillStyle = color;
-          mapCtx.fillText(`📌 ${obj.name} (${obj.seen}x)`, cp.x + 11, cp.y + 4);
+          const icon = isPerson ? '👤' : (obj.name.includes('CHAIR') ? '🪑' : '📦');
+          mapCtx.fillText(`${icon} ${obj.name} (${obj.seen}x)`, cp.x + 12, cp.y + 4);
         });
       } else if (d.detections && d.detections.length > 0) {
         d.detections.forEach(det => {
@@ -577,73 +827,131 @@
           const isPerson = (det.id === 0 || det.name === 'PERSON');
           const color = isPerson ? '#ff2a6d' : '#00ffa3';
 
-          // Vòng tròn vật thể
+          mapCtx.save();
           mapCtx.fillStyle = color;
+          mapCtx.shadowColor = color;
+          mapCtx.shadowBlur = 8;
           mapCtx.beginPath();
-          mapCtx.arc(cp.x, cp.y, 8, 0, Math.PI * 2);
+          mapCtx.arc(cp.x, cp.y, 7, 0, Math.PI * 2);
           mapCtx.fill();
           mapCtx.strokeStyle = '#fff';
           mapCtx.lineWidth = 1.5;
           mapCtx.stroke();
+          mapCtx.restore();
 
-          // Nhãn tên vật thể
-          mapCtx.font = 'bold 11px Orbitron, monospace';
+          mapCtx.font = 'bold 10px Orbitron, monospace';
           mapCtx.fillStyle = color;
-          mapCtx.fillText(`${det.name} ${(det.score*100).toFixed(0)}%`, cp.x + 12, cp.y + 4);
+          const icon = isPerson ? '👤' : '📦';
+          mapCtx.fillText(`${icon} ${det.name} ${(det.score*100).toFixed(0)}%`, cp.x + 11, cp.y + 4);
         });
       }
 
-      // 5. Vẽ Robot JetBot (Tam giác định hướng + Nón trường nhìn FOV)
+      // 6. ROBOT JETBOT (CHASSIS FOOTPRINT, BÁNH XE, MŨI TÊN ĐỊNH HƯỚNG & NÓN FOV)
       const rp = worldToCanvas(d.robot_x, d.robot_y);
       const yaw = d.robot_yaw;
+      const obsDist = d.obstacle_distance !== undefined ? d.obstacle_distance : 99.0;
+      const brakeRadius = (d.safety_brake_dist !== undefined) ? d.safety_brake_dist : 0.25;
 
-      // Nón trường nhìn Camera OAK-D S2 (FOV Cone 75 độ)
+      // Nón trường nhìn Camera OAK-D S2 (FOV Cone 75 độ, quét cự ly 2.5m)
       mapCtx.save();
-      mapCtx.fillStyle = 'rgba(0, 240, 255, 0.15)';
-      mapCtx.strokeStyle = 'rgba(0, 240, 255, 0.4)';
-      mapCtx.lineWidth = 1;
-      mapCtx.beginPath();
-      mapCtx.moveTo(rp.x, rp.y);
       const fovAngle = (75 * Math.PI) / 180;
-      const fovDist = 2.0 * scale;
+      const fovDist = 2.5 * scale;
       const a1 = -yaw - fovAngle / 2;
       const a2 = -yaw + fovAngle / 2;
+
+      const fovGrad = mapCtx.createRadialGradient(rp.x, rp.y, 5, rp.x, rp.y, fovDist);
+      fovGrad.addColorStop(0, 'rgba(0, 240, 255, 0.28)');
+      fovGrad.addColorStop(0.7, 'rgba(0, 240, 255, 0.08)');
+      fovGrad.addColorStop(1, 'rgba(0, 240, 255, 0.00)');
+
+      mapCtx.fillStyle = fovGrad;
+      mapCtx.strokeStyle = 'rgba(0, 240, 255, 0.45)';
+      mapCtx.lineWidth = 1.2;
+      mapCtx.beginPath();
+      mapCtx.moveTo(rp.x, rp.y);
       mapCtx.arc(rp.x, rp.y, fovDist, a1, a2);
       mapCtx.closePath();
       mapCtx.fill();
       mapCtx.stroke();
       mapCtx.restore();
 
-      // Vòng tròn an toàn Virtual Bumper (bán kính động theo safety_brake_dist)
-      const brakeRadius = (d.safety_brake_dist !== undefined) ? d.safety_brake_dist : 0.25;
+      // Vòng tròn an toàn Virtual Bumper
       mapCtx.save();
       mapCtx.setLineDash([4, 4]);
-      mapCtx.strokeStyle = 'rgba(255, 184, 0, 0.7)';
-      mapCtx.lineWidth = 1.5;
+      if (obsDist < brakeRadius) {
+        mapCtx.strokeStyle = 'rgba(255, 42, 109, 0.9)'; // Đỏ phanh gấp
+        mapCtx.fillStyle = 'rgba(255, 42, 109, 0.15)';
+        mapCtx.lineWidth = 2.5;
+      } else if (obsDist < brakeRadius + 0.20) {
+        mapCtx.strokeStyle = 'rgba(255, 184, 0, 0.85)'; // Vàng cảnh báo
+        mapCtx.fillStyle = 'rgba(255, 184, 0, 0.1)';
+        mapCtx.lineWidth = 2.0;
+      } else {
+        mapCtx.strokeStyle = 'rgba(0, 255, 163, 0.6)'; // Xanh an toàn
+        mapCtx.fillStyle = 'rgba(0, 255, 163, 0.05)';
+        mapCtx.lineWidth = 1.5;
+      }
       mapCtx.beginPath();
       mapCtx.arc(rp.x, rp.y, brakeRadius * scale, 0, Math.PI * 2);
+      mapCtx.fill();
       mapCtx.stroke();
       mapCtx.restore();
 
-      // Thân xe Robot JetBot
+      // Thân xe Robot JetBot chân thực (Footprint 18cm x 16cm + 2 Bánh xe + Mũi tên định hướng)
       mapCtx.save();
       mapCtx.translate(rp.x, rp.y);
       mapCtx.rotate(-yaw);
-      mapCtx.fillStyle = '#00f0ff';
+
+      const robBodyL = 0.18 * scale; // Chiều dài 18cm
+      const robBodyW = 0.16 * scale; // Chiều rộng 16cm
+      const wheelL = 0.08 * scale;
+      const wheelW = 0.03 * scale;
+
+      // 2 Bánh xe JetBot
+      mapCtx.fillStyle = '#222938';
+      mapCtx.strokeStyle = '#00f0ff';
+      mapCtx.lineWidth = 1;
+      // Bánh trái
+      mapCtx.fillRect(-wheelL/2, -robBodyW/2 - wheelW + 1, wheelL, wheelW);
+      mapCtx.strokeRect(-wheelL/2, -robBodyW/2 - wheelW + 1, wheelL, wheelW);
+      // Bánh phải
+      mapCtx.fillRect(-wheelL/2, robBodyW/2 - 1, wheelL, wheelW);
+      mapCtx.strokeRect(-wheelL/2, robBodyW/2 - 1, wheelL, wheelW);
+
+      // Thân xe (Chassis)
+      mapCtx.fillStyle = 'rgba(12, 22, 38, 0.9)';
+      mapCtx.strokeStyle = '#00f0ff';
+      mapCtx.lineWidth = 2;
       mapCtx.shadowColor = '#00f0ff';
       mapCtx.shadowBlur = 10;
       mapCtx.beginPath();
-      mapCtx.moveTo(14, 0);
-      mapCtx.lineTo(-10, -9);
-      mapCtx.lineTo(-6, 0);
-      mapCtx.lineTo(-10, 9);
+      if (mapCtx.roundRect) {
+        mapCtx.roundRect(-robBodyL/2, -robBodyW/2, robBodyL, robBodyW, 4);
+      } else {
+        mapCtx.rect(-robBodyL/2, -robBodyW/2, robBodyL, robBodyW);
+      }
+      mapCtx.fill();
+      mapCtx.stroke();
+
+      // Mũi tên định hướng phát sáng
+      mapCtx.fillStyle = '#00ffa3';
+      mapCtx.beginPath();
+      mapCtx.moveTo(robBodyL/2 + 6, 0);
+      mapCtx.lineTo(robBodyL/4, -robBodyW/3.5);
+      mapCtx.lineTo(robBodyL/3, 0);
+      mapCtx.lineTo(robBodyL/4, robBodyW/3.5);
       mapCtx.closePath();
       mapCtx.fill();
+
+      // Vị trí Camera OAK-D S2 ở phía mũi xe
+      mapCtx.fillStyle = '#ff2a6d';
+      mapCtx.fillRect(robBodyL/2 - 3, -4, 4, 8);
+
       mapCtx.restore();
 
-      // 6. Thước đo tỉ lệ (Scale Bar 1 mét) ở góc dưới bên trái
+      // 7. Thước đo tỉ lệ (Scale Bar 1 mét) ở góc dưới bên trái
       const scaleBarPx = 1.0 * scale;
-      const sbX = 18, sbY = H - 20;
+      const sbX = 18, sbY = H - 18;
       mapCtx.strokeStyle = '#00f0ff';
       mapCtx.lineWidth = 2;
       mapCtx.beginPath();
@@ -654,14 +962,19 @@
       mapCtx.moveTo(sbX + scaleBarPx, sbY - 4);
       mapCtx.lineTo(sbX + scaleBarPx, sbY + 4);
       mapCtx.stroke();
-      mapCtx.font = '10px Orbitron, monospace';
+      mapCtx.font = 'bold 9px Orbitron, monospace';
       mapCtx.fillStyle = '#00f0ff';
-      mapCtx.fillText('1.0 MÉT', sbX + 6, sbY - 6);
+      mapCtx.fillText('1.0 MÉT', sbX + 4, sbY - 6);
 
-      // 7. Chú giải Bản đồ (HUD Legend)
-      mapCtx.font = '10px Space Grotesk, sans-serif';
-      mapCtx.fillStyle = 'rgba(255,255,255,0.7)';
-      mapCtx.fillText('🟢 Free Space | 🟦 Tường/Vật cản | 🔺 Robot JetBot', W - 280, H - 15);
+      // 8. Chú giải Bản đồ (HUD Legend)
+      mapCtx.font = '10px "Space Grotesk", sans-serif';
+      mapCtx.fillStyle = 'rgba(255,255,255,0.85)';
+      mapCtx.fillText('🟢 Free Space  |  🟦 Tường / LaserScan  |  🔴 Cản gần  |  🔺 JetBot', W - 350, H - 14);
+
+      // 9. Telemetry mini box ở góc trên bản đồ
+      mapCtx.font = '9px Orbitron, monospace';
+      mapCtx.fillStyle = 'rgba(0, 240, 255, 0.75)';
+      mapCtx.fillText(`TỌA ĐỘ: (${d.robot_x.toFixed(2)}, ${d.robot_y.toFixed(2)}) · GÓC: ${(d.robot_yaw*180/Math.PI).toFixed(0)}° · ZOOM: ${mapZoom.toFixed(1)}x`, 18, 22);
 
       mapCtx.restore();
     }
