@@ -72,8 +72,8 @@ class EmergencyBrake:
         else:
             roi_m = roi.astype(np.float32)
 
-        # Lọc các điểm đo vật lý hợp lệ trong cự ly từ 10cm đến 3.5m
-        valid = roi_m[(roi_m >= 0.10) & (roi_m <= 3.5)]
+        # Lọc các điểm đo vật lý hợp lệ trong cự ly từ 5cm đến 3.5m (đồng bộ chuẩn test_emergency_brake.py)
+        valid = roi_m[(roi_m >= 0.05) & (roi_m <= 3.5)]
 
         # Phải có đủ số lượng điểm tối thiểu để tránh nhiễu do điểm ảnh chết hoặc sàn trơn
         if len(valid) >= self.min_pts_threshold:
@@ -81,10 +81,13 @@ class EmergencyBrake:
             clearance = float(np.percentile(valid, 5))
             self.last_clearance_m = round(clearance, 2)
         elif self.last_clearance_m < (self.warning_dist_m + 0.05) and len(valid) < self.min_pts_threshold:
-            # HIỆN TƯỢNG ĐIỂM MÙ STEREO (< 35cm):
+            # HIỆN TƯỢNG ĐIỂM MÙ STEREO (< 18cm):
             # Nếu trước đó đang thấy vật cản tiến sát (< 55cm), và đột ngột ảnh depth rơi vào vùng mù (điểm đo = 0),
             # vật cản KHÔNG THỂ bốc hơi mà đang áp sát mũi xe -> Duy trì cự ly khẩn cấp 0.20m để khóa phanh an toàn!
             self.last_clearance_m = 0.20
+        elif roi_m.size > 0 and (np.count_nonzero(roi_m <= 0.06) / float(roi_m.size)) > 0.40 and self.last_clearance_m <= 0.60:
+            # Vật cản che sát ống kính camera (< 6cm)
+            self.last_clearance_m = 0.18
         else:
             # Đường thoáng (hoặc sàn nhà phẳng không có vật cản)
             self.last_clearance_m = 99.0

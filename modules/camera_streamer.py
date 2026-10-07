@@ -110,13 +110,7 @@ class CameraStreamer:
 
         try:
             import depthai as dai
-            devices = dai.Device.getAllAvailableDevices() if hasattr(dai.Device, 'getAllAvailableDevices') else dai.Device.getAllConnectedDevices()
-            if not devices:
-                self.is_oak_connected = False
-                return False
-
-            dev_name = getattr(devices[0], 'deviceId', None) or getattr(devices[0], 'name', 'OAK-D')
-            print(f"🚀 [OAK-D USB] Phát hiện thiết bị OAK-D ({dev_name})! Đang khởi tạo pipeline...")
+            print("🚀 [OAK-D USB] Đang kiểm tra và khởi tạo Camera OAK-D S2...")
             pipeline = dai.Pipeline()
             is_v3 = not hasattr(dai.node, 'XLinkOut')
 
@@ -183,12 +177,10 @@ class CameraStreamer:
                     mono_l = pipeline.create(dai.node.MonoCamera)
                     mono_l.setResolution(dai.MonoCameraProperties.SensorResolution.THE_400_P)
                     mono_l.setBoardSocket(dai.CameraBoardSocket.LEFT)
-                    mono_l.setFps(30)
 
                     mono_r = pipeline.create(dai.node.MonoCamera)
                     mono_r.setResolution(dai.MonoCameraProperties.SensorResolution.THE_400_P)
                     mono_r.setBoardSocket(dai.CameraBoardSocket.RIGHT)
-                    mono_r.setFps(30)
 
                     stereo = pipeline.create(dai.node.StereoDepth)
                     stereo.setDefaultProfilePreset(dai.node.StereoDepth.PresetMode.HIGH_DENSITY)
@@ -203,7 +195,8 @@ class CameraStreamer:
                     xout_raw_depth.setStreamName("raw_depth")
                     stereo.depth.link(xout_raw_depth.input)
                     has_stereo = True
-                except Exception:
+                except Exception as ex_stereo:
+                    print(f"⚠️ [OAK-D USB] Bỏ qua Stereo Depth: {ex_stereo}")
                     has_stereo = False
 
                 device = dai.Device(pipeline)
@@ -214,12 +207,17 @@ class CameraStreamer:
                 else:
                     self._oak_q_raw_depth = None
                 self.is_oak_connected = True
-                print("✅ [OAK-D USB] Đã kích hoạt Camera OAK-D S2 (DepthAI v2) trực tiếp trên máy tính thành công!")
+                print("✅ [OAK-D USB] Đã kích hoạt Camera OAK-D S2 (DepthAI v2) trực tiếp trên Jetson Nano thành công!")
                 return True
         except Exception as e:
-            print(f"⚠️ [OAK-D USB] Khởi tạo OAK-D thất bại ({e}). Tự động fallback sang Webcam Laptop.")
+            err_str = str(e)
+            if "X_LINK_UNBOOTED" in err_str or "permission" in err_str.lower():
+                print(f"⚠️ [OAK-D USB] Cần cấp quyền USB trên Jetson Nano ({e})")
+                print("💡 [HƯỚNG DẪN FIX]: Chạy lệnh sau trên Jetson Nano: sudo udevadm control --reload-rules && sudo udevadm trigger")
+            else:
+                print(f"⚠️ [OAK-D USB] Không mở được OAK-D trực tiếp ({e}). Tự động fallback sang Webcam/ROS.")
             self._oak_device = None
-            if hasattr(self, '_oak_pipeline'):
+            if hasattr(self, '_oak_pipeline') and self._oak_pipeline:
                 try:
                     self._oak_pipeline.stop()
                 except Exception:
@@ -228,6 +226,28 @@ class CameraStreamer:
             self.is_oak_connected = False
             return False
 
+    def shutdown(self):
+        """Giải phóng toàn bộ tài nguyên Camera OAK-D và Webcam sạch sẽ"""
+        if self._oak_device:
+            try:
+                self._oak_device.close()
+            except Exception:
+                pass
+            self._oak_device = None
+        if hasattr(self, '_oak_pipeline') and self._oak_pipeline:
+            try:
+                self._oak_pipeline.stop()
+            except Exception:
+                pass
+            self._oak_pipeline = None
+        if self._cap is not None:
+            try:
+                self._cap.release()
+            except Exception:
+                pass
+            self._cap = None
+        self.is_oak_connected = False
+
     def read_oak_frame(self):
         """Đọc cả ảnh màu RGB và bản đồ độ sâu Depth từ OAK-D cắm USB máy tính"""
         if not self._try_open_oak():
@@ -235,8 +255,12 @@ class CameraStreamer:
         try:
             in_rgb = self._oak_q_rgb.tryGet() if self._oak_q_rgb else None
             in_depth = self._oak_q_raw_depth.tryGet() if self._oak_q_raw_depth else None
-            frame = in_rgb.getCvFrame() if in_rgb is not None else None
-            depth = in_depth.getFrame() if in_depth is not None else None
+            frame = None
+            if in_rgb is not None:
+                frame = in_rgb.getCvFrame() if hasattr(in_rgb, 'getCvFrame') else (in_rgb.getFrame() if hasattr(in_rgb, 'getFrame') else None)
+            depth = None
+            if in_depth is not None:
+                depth = in_depth.getFrame() if hasattr(in_depth, 'getFrame') else (in_depth.getCvFrame() if hasattr(in_depth, 'getCvFrame') else None)
             if frame is not None:
                 self._cached_oak_frame = frame
             if depth is not None:
@@ -244,19 +268,7 @@ class CameraStreamer:
             return frame, depth
         except Exception as e:
             print(f"⚠️ [OAK-D USB] Mất kết nối OAK-D: {e}")
-            if hasattr(self, '_oak_pipeline') and self._oak_pipeline:
-                try:
-                    self._oak_pipeline.stop()
-                except Exception:
-                    pass
-                self._oak_pipeline = None
-            if self._oak_device:
-                try:
-                    self._oak_device.close()
-                except Exception:
-                    pass
-                self._oak_device = None
-            self.is_oak_connected = False
+            self.shutdown()
             return None, None
 
     def _open_laptop_camera(self):
@@ -326,8 +338,8 @@ class CameraStreamer:
                 return oak_frame, (oak_depth if oak_depth is not None else self.latest_oak_depth), "OAK-D S2 (USB LIVE)"
             else:
                 # OAK-D đang chờ frame kế tiếp trong chu kỳ 30 FPS:
-                # Trả về None frame để không sinh frame JPEG trùng lặp, giữ chặt nguồn OAK-D
-                return None, self.latest_oak_depth, "OAK-D S2 (USB LIVE)"
+                # Trả về cached frame để AI inference và an toàn không bị gián đoạn
+                return self._cached_oak_frame, self.latest_oak_depth, "OAK-D S2 (USB LIVE)"
 
         # Chỉ khi OAK-D không cắm hoặc mất kết nối hoàn toàn mới dùng Webcam Laptop
         lap_frame = self.read_laptop_frame()

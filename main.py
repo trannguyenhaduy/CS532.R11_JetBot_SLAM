@@ -584,28 +584,28 @@ class JetBotMasterSystem:
             # Nếu chưa có luồng ảnh thật từ ROS, tự động lấy ảnh từ OAK-D (cắm USB) hoặc Laptop Webcam
             if not has_fresh_ros_frame:
                 live_frame, live_depth, src_name = self.camera.get_live_frame()
+                if live_depth is not None:
+                    self.latest_depth_np = live_depth
+                    with self.lock:
+                        rx, ry, rz, yaw = self.robot_x, self.robot_y, self.robot_z, self.robot_yaw
+                    self.camera.process_depth_frame(live_depth, rx, ry, rz, yaw)
+                    if self.mapper and self.flags.mapper:
+                        self.mapper.update_scan(rx, ry, self.camera.points_3d)
+
+                    # Giám sát an toàn tức thời từ ma trận Depth USB
+                    if self.safety_brake:
+                        d_clear = self.safety_brake.calculate_clearance(live_depth)
+                        with self.lock:
+                            self.last_depth_clearance = d_clear
+                        self._update_fused_obstacle_clearance()
+                    elif self.yolo:
+                        d_clear = self.yolo.calculate_obstacle_distance(live_depth)
+                        with self.lock:
+                            self.last_depth_clearance = d_clear if d_clear is not None else 99.0
+                        self._update_fused_obstacle_clearance()
+
                 if live_frame is not None:
                     self.latest_raw_bgr = live_frame
-                    if live_depth is not None:
-                        self.latest_depth_np = live_depth
-                        with self.lock:
-                            rx, ry, rz, yaw = self.robot_x, self.robot_y, self.robot_z, self.robot_yaw
-                        self.camera.process_depth_frame(live_depth, rx, ry, rz, yaw)
-                        if self.mapper and self.flags.mapper:
-                            self.mapper.update_scan(rx, ry, self.camera.points_3d)
-
-                        # Giám sát an toàn tức thời từ ma trận Depth USB
-                        if self.safety_brake:
-                            d_clear = self.safety_brake.calculate_clearance(live_depth)
-                            with self.lock:
-                                self.last_depth_clearance = d_clear
-                            self._update_fused_obstacle_clearance()
-                        elif self.yolo:
-                            d_clear = self.yolo.calculate_obstacle_distance(live_depth)
-                            with self.lock:
-                                self.last_depth_clearance = d_clear if d_clear is not None else 99.0
-                            self._update_fused_obstacle_clearance()
-
                     with self.lock:
                         current_dets = list(self.detections)
                         obs_dist = self.obstacle_distance
@@ -759,6 +759,7 @@ class JetBotMasterSystem:
         print("\n🛑 [SHUTDOWN] Đang dừng an toàn toàn bộ hệ thống JetBot...")
         self.running = False
         if self.motors: self.motors.shutdown()
+        if self.camera: self.camera.shutdown()
         if self.web: self.web.stop()
         print("✅ [SHUTDOWN] Đã giải phóng tài nguyên phần cứng thành công!")
 

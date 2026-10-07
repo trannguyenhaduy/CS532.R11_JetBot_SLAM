@@ -460,7 +460,7 @@ class SpatialPerceptionEngine:
                 valid = roi_mm[(roi_mm >= 50.0) & (roi_mm <= 3500.0)]
                 if len(valid) >= 25:
                     dist_mm = float(np.percentile(valid, 5))
-                    dist_m = round(max(0.18, dist_mm / 1000.0), 2)
+                    dist_m = round(max(0.05, dist_mm / 1000.0), 2)
                     cls._last_obstacle_dist = dist_m
                     return dist_m
                 elif cls._last_obstacle_dist is not None and cls._last_obstacle_dist <= 0.55:
