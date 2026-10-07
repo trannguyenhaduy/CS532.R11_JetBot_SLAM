@@ -21,7 +21,7 @@ include_directories(
 
 catkin_install_python(PROGRAMS
   main.py
-  camera_node.py
+  modules/camera_streamer.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 

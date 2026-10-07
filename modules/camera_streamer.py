@@ -68,6 +68,7 @@ class CameraStreamer:
         self._last_oak_check = 0.0
         self.is_oak_connected = False
         self.latest_oak_depth = None
+        self._cached_oak_frame = None
 
         # Đồng bộ luồng phát hình ảnh độ trễ thấp (Zero Latency Event & ID)
         import threading
@@ -557,13 +558,96 @@ class CameraStreamer:
         return self.points_3d
 
 
+def run_ros_camera_node():
+    """
+    Khởi chạy Node ROS OAK-D S2 trực tiếp từ CameraStreamer.
+    Cung cấp các Topics chuẩn:
+      - /stereo_inertial_publisher/color/image (BGR8)
+      - /stereo_inertial_publisher/stereo/depth (16UC1 mm)
+      - /yolov4_publisher/color/image
+      - /yolov4_publisher/stereo/depth
+      - /obstacle_distance (Mét, lọc sạch sàn nhà)
+    """
+    try:
+        import rospy
+        from sensor_msgs.msg import Image
+        from std_msgs.msg import Float32
+    except ImportError:
+        print("❌ [LỖI] Không tìm thấy rospy. Hãy chạy qua 'roslaunch' hoặc 'roscore'.")
+        return
+
+    rospy.init_node('oak_camera_publisher', anonymous=False)
+
+    pub_rgb_stereo = rospy.Publisher('/stereo_inertial_publisher/color/image', Image, queue_size=1)
+    pub_depth_stereo = rospy.Publisher('/stereo_inertial_publisher/stereo/depth', Image, queue_size=1)
+    pub_rgb_yolo = rospy.Publisher('/yolov4_publisher/color/image', Image, queue_size=1)
+    pub_depth_yolo = rospy.Publisher('/yolov4_publisher/stereo/depth', Image, queue_size=1)
+    pub_obs_dist = rospy.Publisher('/obstacle_distance', Float32, queue_size=1)
+
+    streamer = CameraStreamer()
+    if not streamer._try_open_oak():
+        rospy.logerr("❌ [OAK-D] Không thể mở kết nối OAK-D S2 qua USB!")
+        return
+
+    print("✅ [OAK-D] CameraStreamer đã kết nối OAK-D S2 thành công! Bắt đầu phát ROS topics 30 FPS...")
+
+    rate = rospy.Rate(35)
+    last_clearance_m = 99.0
+
+    def build_img_msg(img_np, encoding, frame_id="oak-d_frame"):
+        msg = Image()
+        msg.header.stamp = rospy.Time.now()
+        msg.header.frame_id = frame_id
+        msg.height, msg.width = img_np.shape[:2]
+        msg.encoding = encoding
+        msg.is_bigendian = 0
+        if len(img_np.shape) == 3:
+            msg.step = int(msg.width * img_np.shape[2] * img_np.itemsize)
+        else:
+            msg.step = int(msg.width * img_np.itemsize)
+        msg.data = img_np.tobytes()
+        return msg
+
+    while not rospy.is_shutdown():
+        frame, depth = streamer.read_oak_frame()
+        if frame is not None:
+            msg_rgb = build_img_msg(frame, "bgr8")
+            pub_rgb_stereo.publish(msg_rgb)
+            pub_rgb_yolo.publish(msg_rgb)
+
+        if depth is not None:
+            msg_depth = build_img_msg(depth, "16UC1")
+            pub_depth_stereo.publish(msg_depth)
+            pub_depth_yolo.publish(msg_depth)
+
+            # Tính cự ly an toàn chuẩn, tránh mặt sàn JetBot (10% đến 40% chiều cao)
+            h, w = depth.shape[:2]
+            roi = depth[int(h * 0.10):int(h * 0.40), int(w * 0.25):int(w * 0.75)]
+            valid = roi[(roi >= 150) & (roi <= 3500)]
+            if len(valid) >= 20:
+                last_clearance_m = round(float(np.percentile(valid, 15)) / 1000.0, 2)
+            elif roi.size > 0 and (np.count_nonzero(roi < 100) / float(roi.size)) > 0.45 and last_clearance_m <= 0.45:
+                last_clearance_m = 0.20
+            else:
+                last_clearance_m = 99.0
+
+            pub_obs_dist.publish(Float32(data=last_clearance_m))
+
+        rate.sleep()
+
+
 if __name__ == '__main__':
+    import os
+    # Nếu chạy qua roslaunch hoặc có tham số node / ROS environment
+    if len(sys.argv) > 1 and any(arg.startswith('__name:=') or arg == '--node' for arg in sys.argv):
+        run_ros_camera_node()
+        sys.exit(0)
+
+    # Tự kiểm thử standalone nếu chạy thủ công
     print("🧪 [SELF-TEST] Bắt đầu tự kiểm thử CameraStreamer...")
     cs = CameraStreamer()
-    # Tạo frame ảnh giả lập
     fake_img = np.zeros((400, 640, 3), dtype=np.uint8)
     cv2.putText(fake_img, "TEST STREAM", (200, 200), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 2)
-    # Xử lý 2 frame để qua bộ lọc skip
     cs.process_color_frame(fake_img)
     jpeg = cs.process_color_frame(fake_img)
     assert jpeg is not None and len(jpeg) > 1000, "Lỗi: Không tạo được ảnh JPEG!"

@@ -137,12 +137,21 @@ class SpatialPerceptionEngine:
 
         try:
             import os
-            p_face = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
-            if os.path.exists(p_face):
-                self.face_cascade = cv2.CascadeClassifier(p_face)
-            p_upper = cv2.data.haarcascades + 'haarcascade_upperbody.xml'
-            if os.path.exists(p_upper):
-                self.upper_cascade = cv2.CascadeClassifier(p_upper)
+            cascade_dirs = [
+                getattr(cv2, 'data', None) and getattr(cv2.data, 'haarcascades', None),
+                '/usr/share/opencv4/haarcascades/',
+                '/usr/share/opencv/haarcascades/',
+                '/usr/local/share/opencv4/haarcascades/',
+                '/usr/local/share/opencv/haarcascades/'
+            ]
+            for cdir in cascade_dirs:
+                if not cdir or not os.path.exists(cdir): continue
+                p_face = os.path.join(cdir, 'haarcascade_frontalface_default.xml')
+                if not self.face_cascade and os.path.exists(p_face):
+                    self.face_cascade = cv2.CascadeClassifier(p_face)
+                p_upper = os.path.join(cdir, 'haarcascade_upperbody.xml')
+                if not self.upper_cascade and os.path.exists(p_upper):
+                    self.upper_cascade = cv2.CascadeClassifier(p_upper)
         except Exception:
             pass
 
@@ -195,28 +204,22 @@ class SpatialPerceptionEngine:
                 y /= 1000.0
                 z /= 1000.0
 
-            # Lọc cự ly an toàn [15cm - 10m]
-            if z < cls.DEPTH_MIN or z > cls.DEPTH_MAX: continue
+            # Lọc cự ly an toàn
+            if z > cls.DEPTH_MAX: continue
+            if z < cls.DEPTH_MIN:
+                # Nếu cự ly stereo bị mù (0m) do vật quá gần hoặc thiếu map depth, gán cự ly danh định an toàn
+                z = 0.22
 
-            # Lọc bóng phản chiếu sàn (vùng y > 0.15m khi ở cự ly xa z > 1.2m)
-            if target_name == "PERSON" and y > 0.15 and z > 1.2:
-                continue
-
-            # 2. BỘ LỌC ĐỘ TIN CẬY
-            if target_name == "PERSON":
-                if score < 0.35: continue
-                if "bbox" in det and det["bbox"] is not None:
-                    bx1, by1, bx2, by2 = det["bbox"]
-                    bw = abs(bx2 - bx1)
-                    bh = abs(by2 - by1)
-                    if bh > 0:
-                        aspect = bw / float(bh)
-                        if aspect < 0.15 or aspect > 2.2:
-                            continue
-            elif target_name == "OBSTACLE":
-                if score < 0.30: continue
-            else:
-                if score < 0.28: continue
+            # 2. BỘ LỌC ĐỘ TIN CẬY: Đặt ngưỡng 0.20 phù hợp trần Tiny-YOLOv4 (0.25) trên OAK-D VPU
+            if score < 0.20: continue
+            if "bbox" in det and det["bbox"] is not None:
+                bx1, by1, bx2, by2 = det["bbox"]
+                bw = abs(bx2 - bx1)
+                bh = abs(by2 - by1)
+                if bh > 0:
+                    aspect = bw / float(bh)
+                    if aspect < 0.10 or aspect > 3.0:
+                        continue
 
             d_entry = {
                 "id": target_id if target_id is not None else 0,
@@ -445,7 +448,8 @@ class SpatialPerceptionEngine:
         if depth_frame is not None and isinstance(depth_frame, np.ndarray):
             dh, dw = depth_frame.shape[:2]
             if dh >= 10 and dw >= 10:
-                h_start, h_end = int(dh * 0.18), int(dh * 0.60)
+                # Giới hạn 10% đến 40% chiều cao để không chạm sàn nhà (JetBot camera thấp 12cm)
+                h_start, h_end = int(dh * 0.10), int(dh * 0.40)
                 w_start, w_end = int(dw * 0.25), int(dw * 0.75)
                 roi = depth_frame[h_start:h_end, w_start:w_end]
 
@@ -457,20 +461,16 @@ class SpatialPerceptionEngine:
                 else:
                     roi_mm = roi.astype(np.float32) * 1000.0
 
-                valid = roi_mm[(roi_mm >= 50.0) & (roi_mm <= 3500.0)]
-                if len(valid) >= 25:
-                    dist_mm = float(np.percentile(valid, 5))
-                    dist_m = round(max(0.05, dist_mm / 1000.0), 2)
+                valid = roi_mm[(roi_mm >= 150.0) & (roi_mm <= 3500.0)]
+                if len(valid) >= 20:
+                    dist_mm = float(np.percentile(valid, 15))
+                    dist_m = round(max(0.18, dist_mm / 1000.0), 2)
                     cls._last_obstacle_dist = dist_m
                     return dist_m
-                elif cls._last_obstacle_dist is not None and cls._last_obstacle_dist <= 0.55:
-                    # Điểm mù stereo (< 18cm): Khi vật cản đang tiến sát rồi rơi vào điểm mù của camera OAK-D
+                elif roi_mm.size > 0 and (np.count_nonzero(roi_mm < 100.0) / float(roi_mm.size)) > 0.45 and (cls._last_obstacle_dist is not None and cls._last_obstacle_dist <= 0.45):
+                    # Điểm mù stereo: vật cản che kín phía trước ở cự ly áp sát
                     cls._last_obstacle_dist = 0.20
                     return 0.20
-                elif roi_mm.size > 0 and (np.count_nonzero(roi_mm <= 60.0) / float(roi_mm.size)) > 0.40 and (cls._last_obstacle_dist is not None and cls._last_obstacle_dist <= 0.60):
-                    # Vật cản che chắn trực tiếp ống kính
-                    cls._last_obstacle_dist = 0.18
-                    return 0.18
 
         # Fallback khi dùng Webcam Laptop hoặc khi ảnh depth chưa kịp hội tụ
         if fallback_detections:

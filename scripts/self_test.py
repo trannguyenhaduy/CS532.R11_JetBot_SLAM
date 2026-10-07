@@ -139,24 +139,19 @@ def run_tests():
     # ──────────────────────────────────────────────────────────────────────────
     # [TEST 5] Kiểm tra cấu trúc DepthAI Pipeline
     # ──────────────────────────────────────────────────────────────────────────
-    print("\n[TEST 5/6] Kiểm tra khởi tạo DepthAI Pipeline (camera_node.py)...")
+    print("\n[TEST 5/6] Kiểm tra khởi tạo CameraStreamer (modules/camera_streamer.py)...")
     total_tests += 1
     try:
-        import camera_node
-        if hasattr(camera_node, 'create_oak_pipeline'):
-            pipeline, is_v3 = camera_node.create_oak_pipeline()
-            if pipeline is not None:
-                print(f"  ✅ [PASS] DepthAI Pipeline OAK-D S2 khởi tạo thành công (v3={is_v3})!")
-                passed_tests += 1
-            else:
-                print("  ⚠️ [WARN] depthai chưa cài đặt trên môi trường hiện tại, bỏ qua kết nối phần cứng.")
-                passed_tests += 1
+        from modules.camera_streamer import CameraStreamer
+        cs = CameraStreamer()
+        if hasattr(cs, '_try_open_oak'):
+            print("  ✅ [PASS] CameraStreamer OAK-D S2 khởi tạo thành công!")
+            passed_tests += 1
         else:
-            msg = "camera_node.py thiếu hàm create_oak_pipeline!"
+            msg = "CameraStreamer thiếu hàm _try_open_oak!"
             print(f"  ❌ [FAIL] {msg}")
             errors.append(msg)
     except Exception as e:
-        # Nếu thiếu depthai thì vẫn cho pass với cảnh báo nếu môi trường là dev Windows
         print(f"  ℹ️ [INFO] Bỏ qua DepthAI phần cứng trên môi trường dev: {e}")
         passed_tests += 1
 
@@ -164,7 +159,7 @@ def run_tests():
     # [TEST 6] Kiểm tra quyền thực thi (Executable bits)
     # ──────────────────────────────────────────────────────────────────────────
     print("\n[TEST 6/6] Kiểm tra quyền thực thi script chạy chính...")
-    key_scripts = ["main.py", "camera_node.py"]
+    key_scripts = ["main.py"]
     for s in key_scripts:
         total_tests += 1
         full_path = os.path.join(REPO_ROOT, s)

@@ -56,9 +56,9 @@ class EmergencyBrake:
             self.last_clearance_m = 99.0
             return 99.0
 
-        # Vùng kiểm soát hành lang cản: 15% đến 60% chiều cao (trên mặt sàn)
-        # Bỏ qua hoàn toàn h > 0.60h để không chạm sàn gạch phản chiếu
-        h_start, h_end = int(h * 0.15), int(h * 0.60)
+        # Vùng kiểm soát hành lang cản: 10% đến 40% chiều cao (trên mặt sàn)
+        # JetBot camera đặt thấp (12cm), giới hạn h <= 0.40h để tránh tuyệt đối quét trúng sàn nhà phẳng
+        h_start, h_end = int(h * 0.10), int(h * 0.40)
         w_start, w_end = int(w * 0.25), int(w * 0.75)
         roi = depth_frame[h_start:h_end, w_start:w_end]
 
@@ -72,24 +72,19 @@ class EmergencyBrake:
         else:
             roi_m = roi.astype(np.float32)
 
-        # Lọc các điểm đo vật lý hợp lệ trong cự ly từ 5cm đến 3.5m (đồng bộ chuẩn test_emergency_brake.py)
-        valid = roi_m[(roi_m >= 0.05) & (roi_m <= 3.5)]
+        # Lọc các điểm đo vật lý hợp lệ trong cự ly từ 15cm đến 3.5m (tránh nhiễu điểm cực sát)
+        valid = roi_m[(roi_m >= 0.15) & (roi_m <= 3.5)]
 
         # Phải có đủ số lượng điểm tối thiểu để tránh nhiễu do điểm ảnh chết hoặc sàn trơn
         if len(valid) >= self.min_pts_threshold:
-            # Lấy phân vị 5% (bắt mép trước của vật cản nhạy hơn min tuyệt đối)
-            clearance = float(np.percentile(valid, 5))
+            # Lấy phân vị 15% để tránh vài hạt nhiễu sàn nhà kích hoạt phanh oan
+            clearance = float(np.percentile(valid, 15))
             self.last_clearance_m = round(clearance, 2)
-        elif self.last_clearance_m < (self.warning_dist_m + 0.05) and len(valid) < self.min_pts_threshold:
-            # HIỆN TƯỢNG ĐIỂM MÙ STEREO (< 18cm):
-            # Nếu trước đó đang thấy vật cản tiến sát (< 55cm), và đột ngột ảnh depth rơi vào vùng mù (điểm đo = 0),
-            # vật cản KHÔNG THỂ bốc hơi mà đang áp sát mũi xe -> Duy trì cự ly khẩn cấp 0.20m để khóa phanh an toàn!
+        elif roi_m.size > 0 and (np.count_nonzero(roi_m < 0.10) / float(roi_m.size)) > 0.45 and self.last_clearance_m <= 0.45:
+            # HIỆN TƯỢNG ĐIỂM MÙ STEREO: Khi vật cản che kín >45% hành lang trước mắt ở cự ly áp sát
             self.last_clearance_m = 0.20
-        elif roi_m.size > 0 and (np.count_nonzero(roi_m <= 0.06) / float(roi_m.size)) > 0.40 and self.last_clearance_m <= 0.60:
-            # Vật cản che sát ống kính camera (< 6cm)
-            self.last_clearance_m = 0.18
         else:
-            # Đường thoáng (hoặc sàn nhà phẳng không có vật cản)
+            # Đường thoáng (không có cản trong hành lang)
             self.last_clearance_m = 99.0
 
         return self.last_clearance_m

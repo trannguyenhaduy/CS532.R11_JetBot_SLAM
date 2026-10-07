@@ -232,12 +232,16 @@ class JetBotMasterSystem:
                     rospy.Subscriber('/spatial_objects', String, self._ros_spatial_objects_cb, queue_size=2)
                     rospy.Subscriber('/stereo_inertial_publisher/color/raw_detections', String, self._ros_spatial_objects_cb, queue_size=2)
                     if HAS_DEPTHAI_MSGS:
-                        rospy.Subscriber('/stereo_inertial_publisher/color/yolov4_Spatial_detections',
-                                         SpatialDetectionArray, self._ros_depthai_detections_cb, queue_size=2)
-                        rospy.Subscriber('/yolov4_publisher/color/yolov4_Spatial_detections',
-                                         SpatialDetectionArray, self._ros_depthai_detections_cb, queue_size=2)
-                        rospy.Subscriber('/mobilenet_publisher/color/mobilenet_spatial_detections',
-                                         SpatialDetectionArray, self._ros_depthai_detections_cb, queue_size=2)
+                        for top in [
+                            '/stereo_inertial_publisher/color/yolov4_Spatial_detections',
+                            '/stereo_inertial_publisher/color/yolov4_spatial_detections',
+                            '/stereo_inertial_publisher/color/spatial_detections',
+                            '/yolov4_publisher/color/yolov4_Spatial_detections',
+                            '/yolov4_publisher/color/yolov4_spatial_detections',
+                            '/yolov4_publisher/color/spatial_detections',
+                            '/mobilenet_publisher/color/mobilenet_spatial_detections',
+                        ]:
+                            rospy.Subscriber(top, SpatialDetectionArray, self._ros_depthai_detections_cb, queue_size=2)
                     print("🔗 [ROS] Đã kết nối thành công với ROS Core (Master URI: http://localhost:11311)!")
                     print("📡 [ROS TOPIC] Đang lắng nghe luồng từ Terminal 1 (camera_ai.launch):")
                     print("   ├─ Ảnh màu RGB : /yolov4_publisher/color/image")
@@ -364,7 +368,25 @@ class JetBotMasterSystem:
                 for res in getattr(det, 'results', []):
                     cid = getattr(res, 'id', getattr(res, 'class_id', 0))
                     label_name = getattr(res, 'label', '')
+                    if not label_name:
+                        from modules.spatial_detector import COCO_CLASSES
+                        label_name = COCO_CLASSES.get(int(cid), f"OBJ_{cid}")
                     score = float(getattr(res, 'score', 0.8))
+
+                    # Nếu cự ly z bị mù (0m) hoặc thiếu depth, trích xuất từ ma trận latest_depth_np
+                    if (z < 0.10 or z > 10.0) and bbox_pixels and self.latest_depth_np is not None:
+                        try:
+                            bx1, by1, bx2, by2 = bbox_pixels
+                            dh, dw = self.latest_depth_np.shape[:2]
+                            du1, du2 = max(0, min(dw - 1, bx1)), max(0, min(dw - 1, bx2))
+                            dv1, dv2 = max(0, min(dh - 1, by1)), max(0, min(dh - 1, by2))
+                            crop = self.latest_depth_np[dv1:dv2, du1:du2]
+                            valid_crop = crop[(crop > 50) & (crop < 4500)]
+                            if len(valid_crop) > 5:
+                                z = round(float(np.median(valid_crop)) / 1000.0, 2)
+                        except Exception: pass
+                    if z < 0.10:
+                        z = 0.25  # Cự ly an toàn mặc định
 
                     item = {
                         "id": int(cid),
