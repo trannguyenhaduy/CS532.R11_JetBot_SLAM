@@ -1,21 +1,32 @@
 <launch>
   <!-- ═════════════════════════════════════════════════════════════════════════ -->
-  <!-- CAMERA AI LAUNCH — OAK-D S2 CAMERA & VPU SPATIAL AI (TINY-YOLOV4)         -->
-  <!-- Khởi động phần cứng OAK-D S2 với Tiny-YOLOv4 trên chip VPU Myriad X       -->
+  <!-- CAMERA AI LAUNCH — OAK-D S2 CAMERA & VPU SPATIAL AI                       -->
+  <!-- Hỗ trợ chuẩn phần cứng OAK-D S2 trên Jetson Nano                          -->
   <!-- ═════════════════════════════════════════════════════════════════════════ -->
-  <arg name="camera_model"   default="OAK-D" />
+  <arg name="camera_model"   default="OAK-D-S2" />
   <arg name="confidence"     default="0.25" />
+  <arg name="use_yolo"       default="false" />
 
   <!-- 1. CÂY TỌA ĐỘ TF2: base_link -> oak-d_frame (camera trước mũi xe) -->
   <node pkg="tf2_ros" type="static_transform_publisher" name="base_to_camera_tf"
         args="0.08 0.0 0.12 0 0 0 base_link oak-d_frame" />
 
-  <!-- 2. NẠP THAM SỐ ĐỘ NHẠY LÊN ROS PARAMETER SERVER CHO NODE YOLO -->
+  <!-- 2. NẠP THAM SỐ ĐỘ NHẠY LÊN ROS PARAMETER SERVER CHO NODE -->
   <param name="/yolov4_publisher/confidence" value="$(arg confidence)" />
   <param name="/stereo_inertial_publisher/confidence" value="$(arg confidence)" />
 
-  <!-- 3. KHỞI CHẠY DRIVER CAMERA OAK-D S2 VỚI MẠNG TINY-YOLOV4 SPATIAL -->
-  <include file="$(find depthai_examples)/launch/yolov4_publisher.launch">
-    <arg name="camera_model"   value="$(arg camera_model)" />
-  </include>
+  <!-- 3. KHỞI CHẠY DRIVER CAMERA CHO OAK-D S2 -->
+  <!-- Mặc định ổn định, mượt mà (30 FPS, Stereo Depth + RGB): stereo_inertial_publisher -->
+  <group unless="$(arg use_yolo)">
+    <include file="$(find depthai_examples)/launch/stereo_inertial_publisher.launch">
+      <arg name="camera_model"   value="$(arg camera_model)" />
+    </include>
+  </group>
+
+  <!-- Nếu truyền use_yolo:=true: Khởi chạy mạng YOLOv4 VPU Spatial -->
+  <group if="$(arg use_yolo)">
+    <include file="$(find depthai_examples)/launch/yolov4_publisher.launch">
+      <arg name="camera_model"   value="$(arg camera_model)" />
+    </include>
+  </group>
 </launch>
