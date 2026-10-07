@@ -250,7 +250,10 @@ class MotorController:
 
     def update_obstacle_distance(self, dist_m: float):
         with self.lock:
-            self.obstacle_distance_m = float(dist_m)
+            if dist_m is None:
+                self.obstacle_distance_m = 99.0
+            else:
+                self.obstacle_distance_m = float(dist_m)
             if self.enable_brake and self.obstacle_distance_m < self.brake_dist and self.target_v > 0.0:
                 print(f"🛑 [EMERGENCY BRAKE] Cản ở {self.obstacle_distance_m*100:.1f}cm (< {self.brake_dist*100:.0f}cm) -> NGẮT ĐỘNG CƠ LẬP TỨC!")
                 self.target_v = 0.0

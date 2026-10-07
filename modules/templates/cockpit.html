@@ -1453,8 +1453,19 @@
         emergencyStop();
         return;
       }
+      const obsDist = (lastStateData && lastStateData.obstacle_distance !== undefined && lastStateData.obstacle_distance !== null) ? lastStateData.obstacle_distance : null;
+      const brakeThreshold = (lastStateData && lastStateData.safety_brake_dist !== undefined) ? lastStateData.safety_brake_dist : 0.25;
+      if (linear > 0 && obsDist !== null && obsDist <= brakeThreshold) {
+        emergencyStop();
+        return;
+      }
       fetch('/api/drive?v=' + linear + '&w=' + angular, { cache: 'no-store' }).catch(() => {});
       driveTimer = setInterval(() => {
+        const curDist = (lastStateData && lastStateData.obstacle_distance !== undefined && lastStateData.obstacle_distance !== null) ? lastStateData.obstacle_distance : null;
+        if (linear > 0 && curDist !== null && curDist <= brakeThreshold) {
+          emergencyStop();
+          return;
+        }
         fetch('/api/drive?v=' + linear + '&w=' + angular, { cache: 'no-store' }).catch(() => {});
       }, 120);
     }

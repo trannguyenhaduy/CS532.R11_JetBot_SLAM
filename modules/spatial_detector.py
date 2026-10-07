@@ -147,9 +147,10 @@ class SpatialPerceptionEngine:
             pass
 
     TARGET_SEMANTIC_CLASSES = {
-        "PERSON", "CHAIR", "COUCH", "TABLE", "BOTTLE", "CUP", "BACKPACK",
+        "PERSON", "OBSTACLE", "CHAIR", "COUCH", "TABLE", "BOTTLE", "CUP", "BACKPACK",
         "LAPTOP", "TV / MONITOR", "CELL PHONE", "BOOK", "KEYBOARD", "MOUSE", "STOP SIGN / DOOR"
     }
+    _last_obstacle_dist = None
 
     @classmethod
     def filter_detections(cls, raw_list):
@@ -212,6 +213,8 @@ class SpatialPerceptionEngine:
                         aspect = bw / float(bh)
                         if aspect < 0.15 or aspect > 2.2:
                             continue
+            elif target_name == "OBSTACLE":
+                if score < 0.30: continue
             else:
                 if score < 0.28: continue
 
@@ -312,7 +315,18 @@ class SpatialPerceptionEngine:
             if self._cached_dnn_boxes:
                 found_boxes = list(self._cached_dnn_boxes)
 
-        # ─── 2. PHƯƠNG ÁN DỰ PHÒNG: PHÂN TÍCH HÌNH THÁI VÀ ĐẶC TRƯNG HÌNH HỌC (ĐA LỚP) ───
+        # ─── 2. BỔ TRỢ KHUÔN MẶT HAAR CASCADE (ĐẶC BIỆT KHI NGỒI GẦN WEBCAM) ───
+        if self.face_cascade is not None and not any(b[4] == 'PERSON' for b in found_boxes):
+            try:
+                faces = self.face_cascade.detectMultiScale(gray, scaleFactor=1.2, minNeighbors=4, minSize=(45, 45))
+                for (fx1, fy1, fw, fh) in faces:
+                    cx_face = fx1 + fw / 2.0
+                    if abs(cx_face - w / 2.0) < (w * 0.42):
+                        found_boxes.append((fx1, fy1, fw, fh, "PERSON", 0.95))
+            except Exception:
+                pass
+
+        # ─── 3. PHƯƠNG ÁN DỰ PHÒNG: PHÂN TÍCH HÌNH THÁI VÀ ĐẶC TRƯNG HÌNH HỌC (ĐA LỚP) ───
         if not found_boxes:
             # Phát hiện Người bằng phân tách sắc độ da YCrCb
             ycrcb = cv2.cvtColor(bgr_img, cv2.COLOR_BGR2YCrCb)
@@ -328,7 +342,7 @@ class SpatialPerceptionEngine:
                     bx, by, bw, bh = cv2.boundingRect(c)
                     aspect = bw / float(bh)
                     box_cx = bx + bw / 2.0
-                    if 0.3 <= aspect <= 1.8 and abs(box_cx - w / 2.0) < (w * 0.42):
+                    if 0.25 <= aspect <= 2.2 and abs(box_cx - w / 2.0) < (w * 0.45):
                         skin_candidates.append((area, bx, by, bw, bh))
 
             if skin_candidates:
@@ -354,18 +368,18 @@ class SpatialPerceptionEngine:
                     cnts, _ = cv2.findContours(t_img, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                     for c in cnts:
                         area = cv2.contourArea(c)
-                        if (w * h * 0.05) < area < (w * h * 0.80):
+                        if area > (w * h * 0.04):
                             bx, by, bw, bh = cv2.boundingRect(c)
                             aspect = bw / float(bh)
                             box_cx = bx + bw / 2.0
                             center_dist = abs(box_cx - w / 2.0)
-                            if 0.20 <= aspect <= 2.5 and center_dist < (w * 0.38):
+                            if 0.15 <= aspect <= 3.0 and center_dist < (w * 0.42):
                                 candidates.append((area, bx, by, bw, bh, aspect))
 
                 if candidates:
                     candidates.sort(key=lambda x: x[0], reverse=True)
                     area, bx, by, bw, bh, aspect = candidates[0]
-                    # Phân loại dựa trên tỷ lệ hình học thực tế (KHÔNG gán bừa PERSON):
+                    # Phân loại dựa trên tỷ lệ hình học thực tế:
                     if aspect < 0.45:
                         obj_type = "BOTTLE"  # Dáng đứng cao thon
                     elif aspect > 1.4:
@@ -373,7 +387,7 @@ class SpatialPerceptionEngine:
                     elif by > int(h * 0.45):
                         obj_type = "CHAIR"   # Vật thể nằm thấp dưới sàn
                     else:
-                        obj_type = "BACKPACK" # Khối trung tâm
+                        obj_type = "OBSTACLE" # Vật cản trung tâm trước mặt xe
                     found_boxes.append((bx, by, bw, bh, obj_type, 0.85))
 
         detections = []
@@ -390,7 +404,7 @@ class SpatialPerceptionEngine:
                     du2 = max(0, min(dw - 1, int((bx + bw) * dw / w)))
                     dv2 = max(0, min(dh - 1, int((by + bh) * dh / h)))
                     roi = depth_frame[dv1:dv2, du1:du2]
-                    valid = roi[(roi > 120) & (roi < 4500)]
+                    valid = roi[(roi > 50) & (roi < 4500)]
                     if len(valid) > 10:
                         z_m = float(np.median(valid)) / 1000.0
                 except Exception: pass
@@ -400,8 +414,8 @@ class SpatialPerceptionEngine:
             # Đưa tay/người sát camera (<25cm): bw ~ 400-500px -> z giảm sát 0.20m (20cm)
             if z_m < 0.15 or z_m > 5.0:
                 d_optical = max(bw, int(bh * 0.65))
-                z_m = round(float(fx * 0.28 / max(d_optical, 1)), 2)
-                z_m = max(0.20, min(3.5, z_m))
+                z_m = round(float(fx * 0.26 / max(d_optical, 1)), 2)
+                z_m = max(0.18, min(3.5, z_m))
 
             x_m = round(float((u_center - cx) * z_m / fx), 2)
             y_m = round(float((v_center - cy) * z_m / fy), 2)
@@ -422,40 +436,52 @@ class SpatialPerceptionEngine:
     def calculate_obstacle_distance(cls, depth_frame, fallback_detections=None):
         """
         Tính cự ly vật cản trung tâm chuẩn xác theo thuật toán test_emergency_brake.py:
-        - Hành lang trung tâm: w từ 30% đến 70%, h từ 20% đến 55%
-        - Lọc các điểm đo vật lý hợp lệ từ 120mm đến 3500mm
+        - Hành lang trung tâm: w từ 25% đến 75%, h từ 18% đến 60%
+        - Lọc các điểm đo vật lý hợp lệ từ 50mm đến 3500mm
         - Lấy phân vị 5% (5th Percentile) để bắt mép cản gần nhất
-        - Tối thiểu 35 điểm cản thực tế; nếu ít hơn -> trả về None (Đường thoáng / > 4.0m)
+        - Chống điểm mù stereo: Khi cản áp sát < 18cm, giữ cự ly phanh khẩn cấp 0.20m thay vì trả về None
+        - Fallback: Trích xuất cự ly Z nhỏ nhất từ các đối tượng 3D trước mặt
         """
         if depth_frame is not None and isinstance(depth_frame, np.ndarray):
             dh, dw = depth_frame.shape[:2]
             if dh >= 10 and dw >= 10:
-                h_start, h_end = int(dh * 0.20), int(dh * 0.55)
-                w_start, w_end = int(dw * 0.30), int(dw * 0.70)
+                h_start, h_end = int(dh * 0.18), int(dh * 0.60)
+                w_start, w_end = int(dw * 0.25), int(dw * 0.75)
                 roi = depth_frame[h_start:h_end, w_start:w_end]
 
                 if np.issubdtype(roi.dtype, np.floating):
                     roi = np.nan_to_num(roi, nan=0.0, posinf=0.0, neginf=0.0)
 
-                if roi.dtype == np.uint16 or roi.max() > 100.0:
+                if roi.dtype == np.uint16 or (roi.size > 0 and roi.max() > 50.0):
                     roi_mm = roi.astype(np.float32)
                 else:
                     roi_mm = roi.astype(np.float32) * 1000.0
 
-                valid = roi_mm[(roi_mm >= 120.0) & (roi_mm <= 3500.0)]
-                if len(valid) >= 35:
+                valid = roi_mm[(roi_mm >= 50.0) & (roi_mm <= 3500.0)]
+                if len(valid) >= 25:
                     dist_mm = float(np.percentile(valid, 5))
-                    return round(max(0.20, dist_mm / 1000.0), 2)
-                else:
-                    return None
+                    dist_m = round(max(0.18, dist_mm / 1000.0), 2)
+                    cls._last_obstacle_dist = dist_m
+                    return dist_m
+                elif cls._last_obstacle_dist is not None and cls._last_obstacle_dist <= 0.55:
+                    # Điểm mù stereo (< 18cm): Khi vật cản đang tiến sát rồi rơi vào điểm mù của camera OAK-D
+                    cls._last_obstacle_dist = 0.20
+                    return 0.20
+                elif roi_mm.size > 0 and (np.count_nonzero(roi_mm <= 60.0) / float(roi_mm.size)) > 0.40 and (cls._last_obstacle_dist is not None and cls._last_obstacle_dist <= 0.60):
+                    # Vật cản che chắn trực tiếp ống kính
+                    cls._last_obstacle_dist = 0.18
+                    return 0.18
 
-        # Fallback khi dùng Webcam Laptop: Lấy cự ly Z nhỏ nhất từ các phát hiện đối tượng trước mặt
+        # Fallback khi dùng Webcam Laptop hoặc khi ảnh depth chưa kịp hội tụ
         if fallback_detections:
-            front_objs = [d for d in fallback_detections if abs(d.get('x', 0.0)) < 0.85 and d.get('z', 99) > 0.10]
+            front_objs = [d for d in fallback_detections if abs(d.get('x', 0.0)) <= 0.65 and d.get('z', 99) > 0.08]
             if front_objs:
                 min_z = min(d['z'] for d in front_objs)
-                return round(max(0.20, min_z), 2)
+                dist_m = round(max(0.18, min_z), 2)
+                cls._last_obstacle_dist = dist_m
+                return dist_m
 
+        cls._last_obstacle_dist = None
         return None
 
     @staticmethod

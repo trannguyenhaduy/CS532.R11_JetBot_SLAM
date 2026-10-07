@@ -226,13 +226,15 @@ def oak_worker():
                     w_start, w_end = int(dw * 0.30), int(dw * 0.70)
                     roi = depth_data[h_start:h_end, w_start:w_end]
 
-                    # Lọc các điểm đo vật lý hợp lệ từ 120mm đến 3500mm
-                    valid_depths = roi[(roi >= 120) & (roi <= 3500)]
+                    # Lọc các điểm đo vật lý hợp lệ từ 50mm đến 3500mm
+                    valid_depths = roi[(roi >= 50) & (roi <= 3500)]
                     valid_count = len(valid_depths)
 
-                    # Phải có tối thiểu 35 điểm cản thực tế để tránh nhiễu hạt
-                    if valid_count >= 35:
+                    if valid_count >= 25:
                         forward_clearance_mm = float(np.percentile(valid_depths, 5))
+                    elif forward_clearance_mm <= 550.0:
+                        # Điểm mù stereo (< 18cm): Đang có vật cản áp sát mũi xe
+                        forward_clearance_mm = 200.0
                     else:
                         forward_clearance_mm = 9999.0  # Đường thoáng, không có cản trước mặt
 

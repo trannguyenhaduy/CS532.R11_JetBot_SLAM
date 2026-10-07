@@ -255,9 +255,14 @@ class JetBotMasterSystem:
         """Hợp nhất cự ly cản gần nhất giữa ma trận Depth quang học và đối tượng 3D AI"""
         with self.lock:
             fused = min(self.last_depth_clearance, self.last_yolo_clearance)
-            self.obstacle_distance = round(float(fused), 2)
+            if fused < 4.0:
+                self.obstacle_distance = round(float(fused), 2)
+            else:
+                self.obstacle_distance = None  # Đường thoáng (> 4.0m)
             if self.motors:
-                self.motors.update_obstacle_distance(self.obstacle_distance)
+                self.motors.update_obstacle_distance(self.obstacle_distance if self.obstacle_distance is not None else 99.0)
+            if self.camera:
+                self.camera.obstacle_distance = self.obstacle_distance
             dets = list(self.detections)
         self._update_semantic_mapper(dets)
 
@@ -382,38 +387,6 @@ class JetBotMasterSystem:
             self._update_fused_obstacle_clearance()
         except Exception: pass
 
-    def _ai_inference_loop(self):
-        """Vòng lặp AI dự phòng: Tự động bổ trợ nhận diện PERSON khi VPU chỉ thấy sàn hoặc chưa bật"""
-        while self.running:
-            now = time.time()
-            has_fresh_ros_frame = (now - self.last_ros_img_time < 1.5)
-            if self.flags.yolo and self.yolo and has_fresh_ros_frame and (self.latest_raw_bgr is not None):
-                with self.lock:
-                    has_person = any(d.get('name') == 'PERSON' for d in self.detections)
-                    vpu_idle = (now - self.last_vpu_det_time > 2.5)
-
-                # Nếu chưa phát hiện thấy PERSON hoặc VPU bị đứng:
-                if (not has_person) or vpu_idle:
-                    try:
-                        img_copy = self.latest_raw_bgr.copy()
-                        depth_copy = self.latest_depth_np
-                        face_dets = self.yolo.detect_fallback(img_copy, depth_copy)
-                        if face_dets:
-                            with self.lock:
-                                non_person = [d for d in self.detections if d.get('name') != 'PERSON']
-                                combined = self.yolo.tracker.update(non_person + face_dets)
-                                self.detections = combined
-                                forward_objs = [d['z'] for d in combined if abs(d.get('x', 0.0)) <= 0.35 and d.get('z', 99.0) > 0.08]
-                                self.last_yolo_clearance = min(forward_objs) if forward_objs else 99.0
-                            self.last_fallback_found_time = now
-                            self._update_fused_obstacle_clearance()
-                        elif vpu_idle and (now - self.last_fallback_found_time > 1.5):
-                            with self.lock:
-                                self.detections = []
-                    except Exception:
-                        pass
-            time.sleep(0.12)
-
     def _ros_image_cb(self, msg):
         if not self.camera: return
         try:
@@ -488,17 +461,21 @@ class JetBotMasterSystem:
         self.last_manual_drive_time = time.time()
         print(f"🎮 [WEB LÁI TAY] Lệnh nhận được: v={v:.2f}, w={w:.2f}")
 
+        brake_thresh = getattr(config, 'SAFETY_BRAKE_DIST_M', 0.25)
+
+        # 1. Đánh giá qua EmergencyBrake nếu có
         if self.safety_brake and self.safety_brake.is_enabled:
             v, w, alert = self.safety_brake.evaluate_velocity(v, w, self.obstacle_distance)
             if alert == "EMERGENCY_STOP":
                 threshold_cm = int(self.safety_brake.brake_dist_m * 100)
-                print(f"🚨 [PHANH KHẨN CẤP] Cản cách {self.obstacle_distance*100:.1f} cm (< {threshold_cm}cm) -> Đã ngắt tiến, chỉ cho phép lùi/quay!")
+                obs_cm = f"{self.obstacle_distance*100:.1f} cm" if self.obstacle_distance is not None else "< 25cm"
+                print(f"🚨 [PHANH KHẨN CẤP] Cản cách {obs_cm} (< {threshold_cm}cm) -> Đã ngắt tiến, chỉ cho phép lùi/quay!")
 
-        # Can thiệp phanh khẩn cấp (chuẩn test_emergency_brake.py):
+        # 2. Can thiệp phanh khẩn cấp cứng:
         # Nếu cản nguy hiểm (<= 25cm) và đang nhấn TIẾN -> Khóa lệnh tiến, chỉ cho phép lùi (v < 0) hoặc quay (w != 0)
-        if (v > 0.02) and (self.obstacle_distance is not None and self.obstacle_distance <= 0.25):
+        if (v > 0.01) and (self.obstacle_distance is not None and self.obstacle_distance <= brake_thresh):
             v = 0.0
-            print(f"🛑 [KHÓA LỆNH TIẾN] Cản cách {self.obstacle_distance*100:.1f} cm (<= 25cm). Cho phép LÙI hoặc QUAY để thoát cản!")
+            print(f"🛑 [KHÓA LỆNH TIẾN] Cản cách {self.obstacle_distance*100:.1f} cm (<= {int(brake_thresh*100)}cm). Cho phép LÙI hoặc QUAY để thoát cản!")
 
         if self.motors:
             if abs(v) < 0.01 and abs(w) < 0.01:
@@ -565,17 +542,23 @@ class JetBotMasterSystem:
                     frame = self.latest_raw_bgr
                     depth = self.latest_depth_np
                     live_dets = self.yolo.detect_fallback(frame, depth)
+                    tracked = self.yolo.tracker.update(live_dets)
                     with self.lock:
-                        self.detections = self.yolo.tracker.update(live_dets)
+                        self.detections = tracked
 
-                    calc_dist = self.yolo.calculate_obstacle_distance(depth, self.detections) if self.yolo else None
+                    calc_dist = self.yolo.calculate_obstacle_distance(depth, tracked)
                     with self.lock:
-                        self.obstacle_distance = calc_dist
-                    if self.camera:
-                        self.camera.obstacle_distance = calc_dist
+                        if calc_dist is not None:
+                            self.last_yolo_clearance = calc_dist
+                            if depth is not None:
+                                self.last_depth_clearance = calc_dist
+                        else:
+                            self.last_yolo_clearance = 99.0
+                            if depth is not None:
+                                self.last_depth_clearance = 99.0
 
-                    # Cập nhật ngữ nghĩa bản đồ 3D
-                    self._update_semantic_mapper(self.detections)
+                    # Hợp nhất cự ly cản an toàn, cập nhật Motor & Camera HUD
+                    self._update_fused_obstacle_clearance()
                 except Exception:
                     pass
             time.sleep(0.04) # Cập nhật AI ~20-25 Hz mượt mà, không chặn luồng video
@@ -610,6 +593,18 @@ class JetBotMasterSystem:
                         self.camera.process_depth_frame(live_depth, rx, ry, rz, yaw)
                         if self.mapper and self.flags.mapper:
                             self.mapper.update_scan(rx, ry, self.camera.points_3d)
+
+                        # Giám sát an toàn tức thời từ ma trận Depth USB
+                        if self.safety_brake:
+                            d_clear = self.safety_brake.calculate_clearance(live_depth)
+                            with self.lock:
+                                self.last_depth_clearance = d_clear
+                            self._update_fused_obstacle_clearance()
+                        elif self.yolo:
+                            d_clear = self.yolo.calculate_obstacle_distance(live_depth)
+                            with self.lock:
+                                self.last_depth_clearance = d_clear if d_clear is not None else 99.0
+                            self._update_fused_obstacle_clearance()
 
                     with self.lock:
                         current_dets = list(self.detections)
