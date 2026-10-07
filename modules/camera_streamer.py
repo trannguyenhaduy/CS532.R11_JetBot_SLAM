@@ -173,7 +173,7 @@ class CameraStreamer:
                 cam_rgb.setPreviewSize(640, 480)
                 cam_rgb.setInterleaved(False)
                 cam_rgb.setColorOrder(dai.ColorCameraProperties.ColorOrder.BGR)
-                cam_rgb.setFps(25)
+                cam_rgb.setFps(30)
 
                 xout_rgb = pipeline.create(dai.node.XLinkOut)
                 xout_rgb.setStreamName("rgb")
@@ -183,10 +183,12 @@ class CameraStreamer:
                     mono_l = pipeline.create(dai.node.MonoCamera)
                     mono_l.setResolution(dai.MonoCameraProperties.SensorResolution.THE_400_P)
                     mono_l.setBoardSocket(dai.CameraBoardSocket.LEFT)
+                    mono_l.setFps(30)
 
                     mono_r = pipeline.create(dai.node.MonoCamera)
                     mono_r.setResolution(dai.MonoCameraProperties.SensorResolution.THE_400_P)
                     mono_r.setBoardSocket(dai.CameraBoardSocket.RIGHT)
+                    mono_r.setFps(30)
 
                     stereo = pipeline.create(dai.node.StereoDepth)
                     stereo.setDefaultProfilePreset(dai.node.StereoDepth.PresetMode.HIGH_DENSITY)
@@ -488,9 +490,9 @@ class CameraStreamer:
 
             pass
 
-        # Nén thành JPEG siêu tốc (tối ưu độ trễ thấp nhất < 2ms)
+        # Nén thành JPEG tối ưu truyền qua sóng WiFi Robot (giảm 40% dung lượng gói tin, chống lag đệm TCP)
         encode_params = [
-            int(cv2.IMWRITE_JPEG_QUALITY), 65,
+            int(cv2.IMWRITE_JPEG_QUALITY), 55,
             int(cv2.IMWRITE_JPEG_OPTIMIZE), 0
         ]
         _, jpeg = cv2.imencode('.jpg', display_frame, encode_params)

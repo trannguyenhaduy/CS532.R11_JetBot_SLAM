@@ -48,6 +48,8 @@ class WebHandler(BaseHTTPRequestHandler):
         import socket
         try:
             self.connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            # Khóa bộ đệm phát 64KB chống ứ đọng khung hình cũ khi WiFi bị giật
+            self.connection.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 65536)
         except Exception:
             pass
 
