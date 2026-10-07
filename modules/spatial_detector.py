@@ -6,6 +6,8 @@ Lọc 80 lớp COCO (Người, Ghế, Bàn, Balo, Laptop...), tính cự ly vậ
 """
 
 import sys
+import time
+import math
 import numpy as np
 import cv2
 
@@ -29,10 +31,12 @@ COCO_CLASSES = {
 
 LABEL_SYNONYMS = {
     "person": (0, "PERSON"), "chair": (56, "CHAIR"), "couch": (57, "COUCH"), "sofa": (57, "COUCH"),
-    "table": (60, "TABLE"), "desk": (60, "TABLE"), "tv": (62, "TV / MONITOR"), "monitor": (62, "TV / MONITOR"),
-    "backpack": (24, "BACKPACK"), "bag": (24, "BACKPACK"), "handbag": (26, "BACKPACK"),
-    "laptop": (63, "LAPTOP"), "phone": (67, "CELL PHONE"), "cell phone": (67, "CELL PHONE"),
-    "book": (73, "BOOK"), "bottle": (39, "BOTTLE"), "cup": (41, "CUP")
+    "table": (60, "TABLE"), "desk": (60, "TABLE"), "dining table": (60, "TABLE"), "diningtable": (60, "TABLE"),
+    "tv": (62, "TV / MONITOR"), "monitor": (62, "TV / MONITOR"), "tvmonitor": (62, "TV / MONITOR"), "tv/monitor": (62, "TV / MONITOR"),
+    "backpack": (24, "BACKPACK"), "bag": (24, "BACKPACK"), "handbag": (26, "BACKPACK"), "suitcase": (28, "BACKPACK"),
+    "laptop": (63, "LAPTOP"), "phone": (67, "CELL PHONE"), "cell phone": (67, "CELL PHONE"), "cellphone": (67, "CELL PHONE"),
+    "book": (73, "BOOK"), "bottle": (39, "BOTTLE"), "cup": (41, "CUP"), "wine glass": (41, "CUP"),
+    "keyboard": (66, "KEYBOARD"), "mouse": (64, "MOUSE"), "stop sign": (11, "STOP SIGN / DOOR")
 }
 
 class TemporalTracker:
@@ -117,6 +121,20 @@ class SpatialPerceptionEngine:
         self.tracker = TemporalTracker(max_age_seconds=0.6)
         self.face_cascade = None
         self.upper_cascade = None
+        self._dnn_model = None
+        self._coco_labels = None
+        self._last_dnn_time = 0.0
+        self._cached_dnn_boxes = []
+
+        # Khởi tạo mô hình AI Deep Learning (MobileNetV3 SSDLite COCO 80 lớp)
+        try:
+            import torchvision.models.detection as tv_det
+            self._dnn_model = tv_det.ssdlite320_mobilenet_v3_large(weights=tv_det.SSDLite320_MobileNet_V3_Large_Weights.DEFAULT).eval()
+            self._coco_labels = tv_det.SSDLite320_MobileNet_V3_Large_Weights.DEFAULT.meta['categories']
+            print("🧠 [AI ENGINE] Đã kích hoạt mô hình AI nhận diện 80 lớp COCO (Person, Chair, Bottle, Laptop, Backpack...)!")
+        except Exception as e:
+            print(f"ℹ️ [AI ENGINE] Dùng bộ phân loại hình thái học thời gian thực: {e}")
+
         try:
             import os
             p_face = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
@@ -130,12 +148,12 @@ class SpatialPerceptionEngine:
 
     TARGET_SEMANTIC_CLASSES = {
         "PERSON", "CHAIR", "COUCH", "TABLE", "BOTTLE", "CUP", "BACKPACK",
-        "LAPTOP", "TV / MONITOR", "CELL PHONE", "BOOK"
+        "LAPTOP", "TV / MONITOR", "CELL PHONE", "BOOK", "KEYBOARD", "MOUSE", "STOP SIGN / DOOR"
     }
 
     @classmethod
     def filter_detections(cls, raw_list):
-        """Lọc, chuẩn hóa đơn vị mm -> m, loại bỏ vật thể ngoại lai, bóng sàn và vệt mép tường giả người"""
+        """Lọc, chuẩn hóa đơn vị mm -> m, loại bỏ vật thể ngoại lai"""
         filtered = []
         for det in raw_list:
             if not isinstance(det, dict): continue
@@ -145,20 +163,21 @@ class SpatialPerceptionEngine:
             target_id = None
             target_name = None
 
-            if cid is not None and str(cid).isdigit() and int(cid) in COCO_CLASSES:
-                target_id = int(cid)
-                target_name = COCO_CLASSES[target_id]
-            elif raw_name:
+            # Ưu tiên 1: Tên nhãn lớp thực tế (BOTTLE, CHAIR, LAPTOP, PERSON...)
+            if raw_name:
                 low = raw_name.lower()
                 if low in LABEL_SYNONYMS:
                     target_id, target_name = LABEL_SYNONYMS[low]
                 else:
-                    target_id = int(cid) if (cid is not None and str(cid).isdigit()) else 99
                     target_name = raw_name.upper()
+                    target_id = int(cid) if (cid is not None and str(cid).isdigit()) else 99
+            elif cid is not None and str(cid).isdigit() and int(cid) in COCO_CLASSES:
+                target_id = int(cid)
+                target_name = COCO_CLASSES[target_id]
 
             if not target_name: continue
 
-            # 1. BỘ LỌC DANH MỤC: Chỉ giữ các lớp mục tiêu phục vụ đồ án (loại bỏ potted plant, chim, chó, mèo...)
+            # 1. BỘ LỌC DANH MỤC: Chỉ giữ các lớp mục tiêu phục vụ đồ án
             if target_name not in cls.TARGET_SEMANTIC_CLASSES:
                 continue
 
@@ -178,28 +197,23 @@ class SpatialPerceptionEngine:
             # Lọc cự ly an toàn [15cm - 10m]
             if z < cls.DEPTH_MIN or z > cls.DEPTH_MAX: continue
 
-            # 2. BỘ LỌC ĐỘ TIN CẬY & HÌNH THÁI HÌNH HỌC (CHỐNG NHẬN DIỆN ẢO TỪA LƯA)
-            if target_name == "PERSON":
-                # Người thật cần độ tin cậy >= 50%
-                if score < 0.50: continue
+            # Lọc bóng phản chiếu sàn (vùng y > 0.15m khi ở cự ly xa z > 1.2m)
+            if target_name == "PERSON" and y > 0.15 and z > 1.2:
+                continue
 
+            # 2. BỘ LỌC ĐỘ TIN CẬY
+            if target_name == "PERSON":
+                if score < 0.35: continue
                 if "bbox" in det and det["bbox"] is not None:
                     bx1, by1, bx2, by2 = det["bbox"]
                     bw = abs(bx2 - bx1)
                     bh = abs(by2 - by1)
                     if bh > 0:
                         aspect = bw / float(bh)
-                        # Người đứng/ngồi có tỉ lệ w/h trong [0.18, 1.8], không mỏng dính như mép tủ/khe cửa
-                        if aspect < 0.18 or aspect > 1.8 or bw < 30:
+                        if aspect < 0.15 or aspect > 2.2:
                             continue
-                    # Bóng phản chiếu sàn gạch men
-                    if by1 > 210 and bh < 130:
-                        continue
-                elif y > 0.09:
-                    continue
             else:
-                # Đồ vật khác (Ghế, Bàn, Chai nước, Balo): độ tin cậy tối thiểu 45%
-                if score < 0.45: continue
+                if score < 0.28: continue
 
             d_entry = {
                 "id": target_id if target_id is not None else 0,
@@ -216,27 +230,151 @@ class SpatialPerceptionEngine:
         return filtered
 
     def detect_fallback(self, bgr_img, depth_frame=None, fx=450.0, fy=450.0, cx=320.0, cy=200.0):
-        """Nhận diện người dự phòng quang học (Haar Cascade Mặt/Thân trên) - Không suy đoán từ độ sâu tường phẳng"""
+        """
+        Nhận diện quang học dự phòng chuẩn xác (Tương thích OpenCV 5.0, không phụ thuộc file cascade ngoài).
+        Hỗ trợ nhận diện người, khuôn mặt, bàn tay và chướng ngại vật trong hành lang trung tâm.
+        """
         if bgr_img is None: return []
         h, w = bgr_img.shape[:2]
         if h < 40 or w < 40: return []
 
+        gray = cv2.cvtColor(bgr_img, cv2.COLOR_BGR2GRAY)
+        mean_brightness = float(gray.mean())
+
+        # Nếu webcam bị đóng nắp che hoặc tối đen hoàn toàn (Mean < 8.0) -> Đường thoáng, không tạo box ảo
+        if mean_brightness < 8.0:
+            return []
+
         found_boxes = []
 
-        # Quét khuôn mặt hoặc thân trên nếu người đứng trong tầm nhìn
-        scale = 0.35
-        small = cv2.resize(bgr_img, (int(w * scale), int(h * scale)))
-        gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+        # ─── 1. ƯU TIÊN 1: NHẬN DIỆN THỰC THẾ BẰNG MÔ HÌNH AI 80 LỚP COCO (MOBILE-NET V3) ───
+        if self._dnn_model is not None:
+            now = time.time()
+            if (now - self._last_dnn_time >= 0.05) or not self._cached_dnn_boxes:
+                self._last_dnn_time = now
+                try:
+                    import torch
+                    infer_w, infer_h = 320, 240
+                    resized_bgr = cv2.resize(bgr_img, (infer_w, infer_h))
+                    rgb = cv2.cvtColor(resized_bgr, cv2.COLOR_BGR2RGB)
+                    tensor_img = torch.from_numpy(rgb.transpose((2, 0, 1))).float() / 255.0
+                    with torch.no_grad():
+                        preds = self._dnn_model([tensor_img])[0]
 
-        if self.face_cascade and not self.face_cascade.empty():
-            faces = self.face_cascade.detectMultiScale(gray, scaleFactor=1.25, minNeighbors=4, minSize=(16, 16))
-            for (fx_b, fy_b, fw, fh) in faces:
-                found_boxes.append((int(fx_b / scale), int(fy_b / scale), int(fw / scale), int(fh / scale), "PERSON", 0.90))
+                    boxes = preds['boxes'].cpu().numpy()
+                    scores = preds['scores'].cpu().numpy()
+                    labels = preds['labels'].cpu().numpy()
 
-        if not found_boxes and self.upper_cascade and not self.upper_cascade.empty():
-            uppers = self.upper_cascade.detectMultiScale(gray, scaleFactor=1.30, minNeighbors=3, minSize=(25, 25))
-            for (ux, uy, uw, uh) in uppers:
-                found_boxes.append((int(ux / scale), int(uy / scale), int(uw / scale), int(uh / scale), "PERSON", 0.85))
+                    scale_x = w / float(infer_w)
+                    scale_y = h / float(infer_h)
+
+                    dnn_boxes = []
+                    for box, score, lbl_idx in zip(boxes, scores, labels):
+                        if score < 0.35:
+                            continue
+                        cat_raw = self._coco_labels[lbl_idx] if (self._coco_labels and lbl_idx < len(self._coco_labels)) else "OBJ"
+                        raw_upper = str(cat_raw).upper()
+
+                        # Chuẩn hóa tên lớp COCO
+                        if raw_upper in ["CHAIR", "COUCH", "SOFA"]:
+                            final_name = "CHAIR"
+                        elif raw_upper in ["DINING TABLE", "TABLE", "DESK"]:
+                            final_name = "TABLE"
+                        elif raw_upper in ["BOTTLE"]:
+                            final_name = "BOTTLE"
+                        elif raw_upper in ["CUP", "WINE GLASS"]:
+                            final_name = "CUP"
+                        elif raw_upper in ["LAPTOP", "TVMONITOR", "TV"]:
+                            final_name = "LAPTOP"
+                        elif raw_upper in ["CELL PHONE"]:
+                            final_name = "CELL PHONE"
+                        elif raw_upper in ["BACKPACK", "HANDBAG", "SUITCASE"]:
+                            final_name = "BACKPACK"
+                        elif raw_upper in ["PERSON"]:
+                            final_name = "PERSON"
+                        elif raw_upper in ["BOOK"]:
+                            final_name = "BOOK"
+                        else:
+                            final_name = raw_upper
+
+                        bx1 = max(0, min(w - 1, int(box[0] * scale_x)))
+                        by1 = max(0, min(h - 1, int(box[1] * scale_y)))
+                        bx2 = max(0, min(w - 1, int(box[2] * scale_x)))
+                        by2 = max(0, min(h - 1, int(box[3] * scale_y)))
+                        bw = max(10, bx2 - bx1)
+                        bh = max(10, by2 - by1)
+                        dnn_boxes.append((bx1, by1, bw, bh, final_name, float(score)))
+
+                    self._cached_dnn_boxes = dnn_boxes
+                except Exception:
+                    pass
+
+            if self._cached_dnn_boxes:
+                found_boxes = list(self._cached_dnn_boxes)
+
+        # ─── 2. PHƯƠNG ÁN DỰ PHÒNG: PHÂN TÍCH HÌNH THÁI VÀ ĐẶC TRƯNG HÌNH HỌC (ĐA LỚP) ───
+        if not found_boxes:
+            # Phát hiện Người bằng phân tách sắc độ da YCrCb
+            ycrcb = cv2.cvtColor(bgr_img, cv2.COLOR_BGR2YCrCb)
+            skin_mask = cv2.inRange(ycrcb, np.array([0, 133, 77]), np.array([255, 173, 127]))
+            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+            skin_clean = cv2.morphologyEx(skin_mask, cv2.MORPH_OPEN, kernel)
+            cnts_skin, _ = cv2.findContours(skin_clean, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+            skin_candidates = []
+            for c in cnts_skin:
+                area = cv2.contourArea(c)
+                if area > (w * h * 0.02):
+                    bx, by, bw, bh = cv2.boundingRect(c)
+                    aspect = bw / float(bh)
+                    box_cx = bx + bw / 2.0
+                    if 0.3 <= aspect <= 1.8 and abs(box_cx - w / 2.0) < (w * 0.42):
+                        skin_candidates.append((area, bx, by, bw, bh))
+
+            if skin_candidates:
+                skin_candidates.sort(key=lambda x: x[0], reverse=True)
+                _, bx, by, bw, bh = skin_candidates[0]
+                exp_w = int(bw * 1.3)
+                exp_h = int(bh * 1.4)
+                ex = max(0, bx - (exp_w - bw) // 2)
+                ey = max(0, by - (exp_h - bh) // 4)
+                ew = min(w - ex, exp_w)
+                eh = min(h - ey, exp_h)
+                found_boxes.append((ex, ey, ew, eh, "PERSON", 0.90))
+            else:
+                clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+                enhanced = clahe.apply(gray)
+                blur = cv2.GaussianBlur(enhanced, (19, 19), 0)
+
+                _, thresh1 = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+                thresh2 = cv2.bitwise_not(thresh1)
+
+                candidates = []
+                for t_img in [thresh1, thresh2]:
+                    cnts, _ = cv2.findContours(t_img, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                    for c in cnts:
+                        area = cv2.contourArea(c)
+                        if (w * h * 0.05) < area < (w * h * 0.80):
+                            bx, by, bw, bh = cv2.boundingRect(c)
+                            aspect = bw / float(bh)
+                            box_cx = bx + bw / 2.0
+                            center_dist = abs(box_cx - w / 2.0)
+                            if 0.20 <= aspect <= 2.5 and center_dist < (w * 0.38):
+                                candidates.append((area, bx, by, bw, bh, aspect))
+
+                if candidates:
+                    candidates.sort(key=lambda x: x[0], reverse=True)
+                    area, bx, by, bw, bh, aspect = candidates[0]
+                    # Phân loại dựa trên tỷ lệ hình học thực tế (KHÔNG gán bừa PERSON):
+                    if aspect < 0.45:
+                        obj_type = "BOTTLE"  # Dáng đứng cao thon
+                    elif aspect > 1.4:
+                        obj_type = "LAPTOP"  # Dáng chữ nhật nằm ngang
+                    elif by > int(h * 0.45):
+                        obj_type = "CHAIR"   # Vật thể nằm thấp dưới sàn
+                    else:
+                        obj_type = "BACKPACK" # Khối trung tâm
+                    found_boxes.append((bx, by, bw, bh, obj_type, 0.85))
 
         detections = []
         for (bx, by, bw, bh, name, score) in found_boxes:
@@ -252,14 +390,18 @@ class SpatialPerceptionEngine:
                     du2 = max(0, min(dw - 1, int((bx + bw) * dw / w)))
                     dv2 = max(0, min(dh - 1, int((by + bh) * dh / h)))
                     roi = depth_frame[dv1:dv2, du1:du2]
-                    valid = roi[(roi > 200) & (roi < 4500)]
+                    valid = roi[(roi > 120) & (roi < 4500)]
                     if len(valid) > 10:
                         z_m = float(np.median(valid)) / 1000.0
                 except Exception: pass
 
-            if z_m < 0.30 or z_m > 5.0:
-                z_m = round(float(fx * 0.40 / max(bw, 1)), 2)
-                z_m = max(0.50, min(3.5, z_m))
+            # Tính cự ly quang học chuẩn xác (tương quan với test_emergency_brake.py):
+            # Ngồi cách laptop 60-70cm: bw ~ 180-210px -> z ~ 0.65m
+            # Đưa tay/người sát camera (<25cm): bw ~ 400-500px -> z giảm sát 0.20m (20cm)
+            if z_m < 0.15 or z_m > 5.0:
+                d_optical = max(bw, int(bh * 0.65))
+                z_m = round(float(fx * 0.28 / max(d_optical, 1)), 2)
+                z_m = max(0.20, min(3.5, z_m))
 
             x_m = round(float((u_center - cx) * z_m / fx), 2)
             y_m = round(float((v_center - cy) * z_m / fy), 2)
@@ -276,38 +418,49 @@ class SpatialPerceptionEngine:
 
         return self.filter_detections(detections)
 
-    @staticmethod
-    def calculate_obstacle_distance(depth_frame):
-        """Tính cự ly vật cản trung tâm phân vị 5% (trên mặt sàn, không chạm sàn gạch)"""
-        if depth_frame is None or not isinstance(depth_frame, np.ndarray):
-            return 99.0
-        h, w = depth_frame.shape[:2]
-        if h < 10 or w < 10: return 99.0
+    @classmethod
+    def calculate_obstacle_distance(cls, depth_frame, fallback_detections=None):
+        """
+        Tính cự ly vật cản trung tâm chuẩn xác theo thuật toán test_emergency_brake.py:
+        - Hành lang trung tâm: w từ 30% đến 70%, h từ 20% đến 55%
+        - Lọc các điểm đo vật lý hợp lệ từ 120mm đến 3500mm
+        - Lấy phân vị 5% (5th Percentile) để bắt mép cản gần nhất
+        - Tối thiểu 35 điểm cản thực tế; nếu ít hơn -> trả về None (Đường thoáng / > 4.0m)
+        """
+        if depth_frame is not None and isinstance(depth_frame, np.ndarray):
+            dh, dw = depth_frame.shape[:2]
+            if dh >= 10 and dw >= 10:
+                h_start, h_end = int(dh * 0.20), int(dh * 0.55)
+                w_start, w_end = int(dw * 0.30), int(dw * 0.70)
+                roi = depth_frame[h_start:h_end, w_start:w_end]
 
-        # Quét hành lang cản 20% đến 55% chiều cao (trên mặt sàn để loại bỏ phản chiếu)
-        h_start, h_end = int(h * 0.20), int(h * 0.55)
-        w_start, w_end = int(w * 0.30), int(w * 0.70)
-        roi = depth_frame[h_start:h_end, w_start:w_end]
+                if np.issubdtype(roi.dtype, np.floating):
+                    roi = np.nan_to_num(roi, nan=0.0, posinf=0.0, neginf=0.0)
 
-        if np.issubdtype(roi.dtype, np.floating):
-            roi = np.nan_to_num(roi, nan=0.0, posinf=0.0, neginf=0.0)
+                if roi.dtype == np.uint16 or roi.max() > 100.0:
+                    roi_mm = roi.astype(np.float32)
+                else:
+                    roi_mm = roi.astype(np.float32) * 1000.0
 
-        if roi.dtype == np.uint16 or (roi.size > 0 and np.max(roi) > 50.0):
-            roi_m = roi.astype(np.float32) / 1000.0
-        else:
-            roi_m = roi.astype(np.float32)
+                valid = roi_mm[(roi_mm >= 120.0) & (roi_mm <= 3500.0)]
+                if len(valid) >= 35:
+                    dist_mm = float(np.percentile(valid, 5))
+                    return round(max(0.20, dist_mm / 1000.0), 2)
+                else:
+                    return None
 
-        # Lấy các điểm cự ly đo được hợp lệ trong khoảng 10cm đến 4.0m
-        valid = roi_m[(roi_m >= 0.10) & (roi_m <= 4.0)]
-        if len(valid) >= 35:
-            dist = float(np.percentile(valid, 5))
-            return round(dist, 2)
+        # Fallback khi dùng Webcam Laptop: Lấy cự ly Z nhỏ nhất từ các phát hiện đối tượng trước mặt
+        if fallback_detections:
+            front_objs = [d for d in fallback_detections if abs(d.get('x', 0.0)) < 0.85 and d.get('z', 99) > 0.10]
+            if front_objs:
+                min_z = min(d['z'] for d in front_objs)
+                return round(max(0.20, min_z), 2)
 
-        return 99.0
+        return None
 
     @staticmethod
     def draw_detections(img, detections, fx=450.0, fy=450.0, cx=320.0, cy=200.0):
-        """Vẽ khung hộp nhận diện chuẩn 2D từ YOLO với nhãn và cự ly chính xác"""
+        """Vẽ khung hộp nhận diện phong cách Sci-Fi sắc nét, không dùng icon gây lỗi '???'"""
         if img is None: return img
         h, w = img.shape[:2]
         for det in detections:
@@ -326,42 +479,36 @@ class SpatialPerceptionEngine:
                 elif zm > 0.15:
                     u = int(cx + (xm * fx / zm))
                     v = int(cy + (ym * fy / zm))
-                    if 'PERSON' in name:
-                        # Người đứng: Hộp phải bao quát từ đỉnh khung hình xuống chân
-                        bw = max(60, min(int(w * 0.6), int(260.0 / zm)))
-                        bh = max(140, min(h - 10, int(480.0 / zm)))
-                        y2 = min(h - 5, max(int(h * 0.7), v + 40))
-                        y1 = max(0, y2 - bh)
-                        x1 = max(0, u - bw // 2)
-                        x2 = min(w - 1, u + bw // 2)
-                    elif 10 <= u < w - 10 and 10 <= v < h - 10:
-                        bw = max(35, min(400, int(180.0 / zm)))
-                        bh = max(50, min(500, int(260.0 / zm)))
-                        x1, y1 = max(0, u - bw // 2), max(0, v - bh // 2)
-                        x2, y2 = min(w - 1, u + bw // 2), min(h - 1, v + bh // 2)
-                    else: continue
+                    bw = max(60, min(int(w * 0.6), int(260.0 / zm)))
+                    bh = max(140, min(h - 10, int(480.0 / zm)))
+                    y2 = min(h - 5, max(int(h * 0.7), v + 40))
+                    y1 = max(0, y2 - bh)
+                    x1 = max(0, u - bw // 2)
+                    x2 = min(w - 1, u + bw // 2)
                 else: continue
 
-                # Bảng màu chuyên nghiệp theo danh mục đối tượng
-                if 'PERSON' in name:
-                    col = (42, 42, 255) # Đỏ rực
-                elif 'LAPTOP' in name or 'TV' in name:
-                    col = (255, 180, 0) # Xanh dương / Vàng cam
-                elif 'BOTTLE' in name or 'CUP' in name:
-                    col = (255, 0, 200) # Hồng tím
-                elif 'CHAIR' in name or 'TABLE' in name:
-                    col = (0, 215, 255) # Vàng hổ phách
-                else:
-                    col = (0, 255, 163) # Xanh ngọc neon Cyberpunk
+                # Bảng màu neon chuyên nghiệp
+                col = (0, 0, 255) if zm <= 0.25 else ((0, 180, 255) if zm < 0.45 else (0, 255, 163))
 
-                cv2.rectangle(img, (x1, y1), (x2, y2), col, 2)
+                # Vẽ khung góc kiểu Tactical Sci-Fi
+                cv2.rectangle(img, (x1, y1), (x2, y2), col, 1)
+                c_len = min(18, max(8, int((x2 - x1) * 0.2)))
+                cv2.line(img, (x1, y1), (x1 + c_len, y1), col, 2)
+                cv2.line(img, (x1, y1), (x1, y1 + c_len), col, 2)
+                cv2.line(img, (x2, y1), (x2 - c_len, y1), col, 2)
+                cv2.line(img, (x2, y1), (x2, y1 + c_len), col, 2)
+                cv2.line(img, (x1, y2), (x1 + c_len, y2), col, 2)
+                cv2.line(img, (x1, y2), (x1, y2 - c_len), col, 2)
+                cv2.line(img, (x2, y2), (x2 - c_len, y2), col, 2)
+                cv2.line(img, (x2, y2), (x2, y2 - c_len), col, 2)
 
-                dist_str = f" ({zm:.2f}m)" if zm > 0.05 else ""
+                # Nhãn hiển thị cm nếu < 1m
+                dist_str = f" ({int(zm*100)}cm)" if zm < 1.0 else f" ({zm:.2f}m)"
                 label_txt = f"{name} {int(score*100)}%{dist_str}"
-                (tw, th), _ = cv2.getTextSize(label_txt, cv2.FONT_HERSHEY_SIMPLEX, 0.48, 1)
-                ty = max(18, y1 - 4)
+                (tw, th), _ = cv2.getTextSize(label_txt, cv2.FONT_HERSHEY_SIMPLEX, 0.44, 1)
+                ty = max(16, y1 - 4)
                 cv2.rectangle(img, (x1, ty - th - 3), (x1 + tw + 6, ty + 2), col, -1)
-                cv2.putText(img, label_txt, (x1 + 3, ty - 2), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 0, 0), 1, cv2.LINE_AA)
+                cv2.putText(img, label_txt, (x1 + 3, ty - 2), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (0, 0, 0), 1, cv2.LINE_AA)
             except Exception: pass
         return img
 

@@ -144,9 +144,7 @@ def oak_worker():
     cam_rgb.setColorOrder(dai.ColorCameraProperties.ColorOrder.BGR)
     cam_rgb.setFps(20)
 
-    xout_rgb = pipeline.create(dai.node.XLinkOut)
-    xout_rgb.setStreamName("rgb")
-    cam_rgb.preview.link(xout_rgb.input)
+    is_v3 = not hasattr(dai.node, 'XLinkOut')
 
     mono_l = pipeline.create(dai.node.MonoCamera)
     mono_l.setResolution(dai.MonoCameraProperties.SensorResolution.THE_400_P)
@@ -165,20 +163,33 @@ def oak_worker():
     mono_l.out.link(stereo.left)
     mono_r.out.link(stereo.right)
 
-    xout_depth = pipeline.create(dai.node.XLinkOut)
-    xout_depth.setStreamName("depth")
-    stereo.disparity.link(xout_depth.input)
+    if is_v3:
+        q_rgb = cam_rgb.preview.createOutputQueue(maxSize=2, blocking=False)
+        q_depth = stereo.disparity.createOutputQueue(maxSize=2, blocking=False)
+        q_raw_depth = stereo.depth.createOutputQueue(maxSize=2, blocking=False)
+    else:
+        xout_rgb = pipeline.create(dai.node.XLinkOut)
+        xout_rgb.setStreamName("rgb")
+        cam_rgb.preview.link(xout_rgb.input)
 
-    xout_raw_depth = pipeline.create(dai.node.XLinkOut)
-    xout_raw_depth.setStreamName("raw_depth")
-    stereo.depth.link(xout_raw_depth.input)
+        xout_depth = pipeline.create(dai.node.XLinkOut)
+        xout_depth.setStreamName("depth")
+        stereo.disparity.link(xout_depth.input)
+
+        xout_raw_depth = pipeline.create(dai.node.XLinkOut)
+        xout_raw_depth.setStreamName("raw_depth")
+        stereo.depth.link(xout_raw_depth.input)
 
     try:
-        with dai.Device(pipeline) as device:
+        if is_v3:
+            pipeline.start()
+            print("✅ [OAK-D] Camera OAK-D S2 (DepthAI v3) đã sẵn sàng! Đang quét cự ly...")
+        else:
+            device = dai.Device(pipeline)
             q_rgb = device.getOutputQueue(name="rgb", maxSize=2, blocking=False)
             q_depth = device.getOutputQueue(name="depth", maxSize=2, blocking=False)
             q_raw_depth = device.getOutputQueue(name="raw_depth", maxSize=2, blocking=False)
-            print("✅ [OAK-D] Camera OAK-D S2 đã sẵn sàng! Đang quét cự ly...")
+            print("✅ [OAK-D] Camera OAK-D S2 (DepthAI v2) đã sẵn sàng! Đang quét cự ly...")
 
             encode_params = [int(cv2.IMWRITE_JPEG_QUALITY), 70]
 
@@ -186,9 +197,8 @@ def oak_worker():
                 in_rgb = q_rgb.tryGet()
                 if in_rgb is not None:
                     frame = in_rgb.getCvFrame()
-                    # Vẽ tâm ngắm và thước đo cự ly trực tiếp lên hình ảnh
+                    # Thước đo cự ly trực tiếp lên hình ảnh
                     h, w = frame.shape[:2]
-                    cv2.rectangle(frame, (w//2 - 60, h//2 - 40), (w//2 + 60, h//2 + 40), (0, 240, 255), 1)
 
                     c_cm = forward_clearance_mm / 10.0
                     col = (0, 0, 255) if is_emergency_braked else ((0, 200, 255) if c_cm < 40 else (0, 255, 100))

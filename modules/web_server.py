@@ -43,6 +43,14 @@ HTML_PAGE = get_cockpit_html()
 class WebHandler(BaseHTTPRequestHandler):
     server_instance = None
 
+    def setup(self):
+        super().setup()
+        import socket
+        try:
+            self.connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        except Exception:
+            pass
+
     def log_message(self, format, *args):
         pass  # Tắt log spam HTTP request
 
@@ -57,17 +65,29 @@ class WebHandler(BaseHTTPRequestHandler):
         elif self.path.startswith('/stream.mjpg'):
             self.send_response(200)
             self.send_header('Content-Type', 'multipart/x-mixed-replace; boundary=frame')
-            self.send_header('Cache-Control', 'no-cache, private')
+            self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+            self.send_header('Pragma', 'no-cache')
+            self.send_header('Expires', '0')
+            self.send_header('Connection', 'close')
             self.end_headers()
-            while inst and inst.is_running:
-                jpeg = inst.get_latest_jpeg() if inst else None
-                if jpeg:
+            last_id = -1
+            while inst and getattr(inst, 'is_running', True):
+                frame_evt = getattr(inst, 'new_frame_event', None)
+                if frame_evt:
+                    frame_evt.wait(timeout=0.035)
+                    frame_evt.clear()
+
+                frame_id, jpeg = inst.get_latest_jpeg_with_id()
+                if jpeg and (frame_id != last_id or frame_id == 0):
+                    last_id = frame_id
                     try:
                         self.wfile.write(b'--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ' +
                                          str(len(jpeg)).encode() + b'\r\n\r\n' + jpeg + b'\r\n')
+                        self.wfile.flush()
                     except Exception:
                         break
-                time.sleep(0.05)
+                elif not frame_evt:
+                    time.sleep(0.008)
         elif self.path == '/api/state':
             state_data = inst.get_state_dict() if inst else {}
             self.send_response(200)
@@ -93,6 +113,23 @@ class WebHandler(BaseHTTPRequestHandler):
             self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
             self.end_headers()
             self.wfile.write(b'OK')
+        elif self.path.startswith('/api/camera_mode'):
+            mode = 'ai'
+            if '?' in self.path:
+                for p in self.path.split('?')[1].split('&'):
+                    if p.startswith('mode='): mode = p.split('=')[1].lower()
+            res_mode = mode
+            if inst:
+                if hasattr(inst, 'camera') and inst.camera:
+                    res_mode = inst.camera.set_view_mode(mode)
+                elif hasattr(inst, 'toggle_feature'):
+                    inst.toggle_feature(f"cam_mode_{mode}")
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps({"status": "OK", "mode": res_mode}).encode())
+            return
         elif self.path.startswith('/api/toggle'):
             flag_name = None
             if '?' in self.path:
@@ -151,6 +188,14 @@ class WebHandler(BaseHTTPRequestHandler):
 class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
     daemon_threads = True
 
+    def server_bind(self):
+        super().server_bind()
+        import socket
+        try:
+            self.socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        except Exception:
+            pass
+
 
 class WebCockpitServer:
     def __init__(self, host='0.0.0.0', port=8080):
@@ -163,6 +208,8 @@ class WebCockpitServer:
         # Callbacks nối vào hệ thống
         self.state_provider_cb = None
         self.jpeg_provider_cb = None
+        self.jpeg_id_provider_cb = None
+        self.new_frame_event = None
         self.drive_cmd_cb = None
         self.feature_toggle_cb = None
 
@@ -184,6 +231,13 @@ class WebCockpitServer:
         if self.jpeg_provider_cb:
             return self.jpeg_provider_cb()
         return None
+
+    def get_latest_jpeg_with_id(self):
+        if self.jpeg_id_provider_cb:
+            return self.jpeg_id_provider_cb()
+        if self.jpeg_provider_cb:
+            return 0, self.jpeg_provider_cb()
+        return 0, None
 
     def get_state_dict(self):
         if self.state_provider_cb:

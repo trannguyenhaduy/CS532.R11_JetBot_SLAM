@@ -161,15 +161,22 @@
       </div>
     </div>
 
-    <!-- Live Camera Feed -->
+    <!-- Live Camera Feed (Chỉ 2 chế độ: 1. CAM AI & 2. CAM NHIỆT) -->
     <div class="card">
-      <div class="card-hdr">
-        <span id="cam-hdr-title">📷 CAMERA // LIVE STREAM</span>
-        <span id="cam-source-badge" style="color:var(--emerald); font-size:0.75rem;">LIVE STREAM</span>
+      <div class="card-hdr" style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+        <span id="cam-hdr-title" style="white-space:nowrap; font-weight:700;">CAMERA TV2</span>
+        <div style="display:flex; gap:6px; flex-shrink:0;">
+          <button class="tab-btn active" id="btn-cam-ai" onclick="switchCamMode('ai')">1. CAM AI</button>
+          <button class="tab-btn" id="btn-cam-thermal" onclick="switchCamMode('thermal')">2. CAM NHIỆT</button>
+        </div>
+        <span id="cam-source-badge" style="color:var(--emerald); font-size:0.75rem; white-space:nowrap; margin-left:auto;">LIVE STREAM</span>
       </div>
       <div class="viewport">
-        <img id="cam-stream" src="/stream.mjpg" alt="Chờ camera...">
-        <div class="hud" id="cam-hud">STEREO DEPTH + YOLO SPATIAL</div>
+        <img id="cam-stream" src="/stream.mjpg" alt="Cho camera...">
+        <!-- HUD CHẾ ĐỘ & FPS (Góc trên bên phải) -->
+        <div class="hud" id="cam-hud" style="position:absolute; top:12px; right:14px; left:auto; background:rgba(7,9,14,0.85); border:1px solid rgba(0,240,255,0.4); border-radius:8px; padding:6px 12px; font-family:'Orbitron',monospace; font-size:0.75rem; color:var(--cyan); backdrop-filter:blur(8px); pointer-events:none; z-index:10; box-shadow: 0 4px 15px rgba(0,0,0,0.5);">
+          1. CAM AI · 25.0 FPS
+        </div>
       </div>
     </div>
   </div>
@@ -178,18 +185,18 @@
     <!-- Teleop Controls -->
     <div class="card">
       <div class="card-hdr" style="display:flex; justify-content:space-between; align-items:center;">
-        <span>🎮 ĐIỀU KHIỂN XE (W, A, S, D)</span>
+        <span>DIEU KHIEN XE (W, A, S, D)</span>
         <button id="btn-toggle-follower" class="tab-btn" onclick="toggleFollower()" style="border-color:var(--dim); color:var(--dim); font-size:0.72rem; padding:3px 8px; cursor:pointer;">
-          🎯 BÁM NGƯỜI: TẮT (BỎ QUA)
+          BAM NGUOI: TAT (BO QUA)
         </button>
       </div>
       <div id="brake-status-banner" style="margin:8px 12px 0; padding:6px 12px; border-radius:6px; font-size:0.75rem; text-align:center; font-weight:700; border:1px solid var(--emerald); color:var(--emerald); background:rgba(0, 255, 163, 0.1);">
-        🛡️ VÙNG AN TOÀN (CỰ LY CẢN: -- CM)
+        [AN TOAN] DUONG THOANG (CU LY: -- CM)
       </div>
       <div style="display:flex; justify-content:center; gap:6px; margin:8px 12px 0;">
-        <button class="tab-btn" id="spd-slow" onclick="setSpeed(0.15, 0.40, 'slow')" style="padding:3px 8px; font-size:0.72rem; cursor:pointer;">🐢 Chậm (15%)</button>
-        <button class="tab-btn active" id="spd-norm" onclick="setSpeed(0.20, 0.50, 'norm')" style="padding:3px 8px; font-size:0.72rem; cursor:pointer; font-weight:bold;">🐇 Chuẩn (20%)</button>
-        <button class="tab-btn" id="spd-fast" onclick="setSpeed(0.25, 0.60, 'fast')" style="padding:3px 8px; font-size:0.72rem; cursor:pointer;">⚡ Nhanh (25%)</button>
+        <button class="tab-btn" id="spd-slow" onclick="setSpeed(0.15, 0.40, 'slow')" style="padding:3px 8px; font-size:0.72rem; cursor:pointer;">Cham (15%)</button>
+        <button class="tab-btn active" id="spd-norm" onclick="setSpeed(0.20, 0.50, 'norm')" style="padding:3px 8px; font-size:0.72rem; cursor:pointer; font-weight:bold;">Chuan (20%)</button>
+        <button class="tab-btn" id="spd-fast" onclick="setSpeed(0.25, 0.60, 'fast')" style="padding:3px 8px; font-size:0.72rem; cursor:pointer;">Nhanh (25%)</button>
       </div>
       <div class="dpad-container">
         <div class="dpad-row"><button class="btn-drive" id="btn-up" onmousedown="sendDrive(speedLinear,0)" onmouseup="emergencyStop()" ontouchstart="sendDrive(speedLinear,0)" ontouchend="emergencyStop()">▲</button></div>
@@ -205,23 +212,23 @@
     <!-- 3D Semantic Radar Objects -->
     <div class="card">
       <div class="card-hdr">
-        <span>📡 3D SEMANTIC OBJECTS (VPU)</span>
-        <span id="det-count" style="color:var(--amber); font-size:0.75rem;">0 VẬT THỂ</span>
+        <span>3D SEMANTIC OBJECTS (VPU)</span>
+        <span id="det-count" style="color:var(--amber); font-size:0.75rem;">0 VAT THE</span>
       </div>
       <div class="radar-box" id="radar-list">
-        <div style="text-align:center; color:var(--dim); padding:15px;">Đang quét vật thể 3D trong không gian...</div>
+        <div style="text-align:center; color:var(--dim); padding:15px;">Dang quet vat the 3D trong khong gian...</div>
       </div>
     </div>
 
     <!-- Real-Time Evaluation & Benchmark Card (3 Thành Viên Đồ Án) -->
     <div class="card" id="card-evaluations">
       <div class="card-hdr">
-        <span>📊 ĐÁNH GIÁ 3 THÀNH VIÊN ĐỒ ÁN</span>
+        <span>DANH GIA 3 THANH VIEN DO AN</span>
         <div class="eval-tabs">
-          <button class="eval-tab-btn" id="btn-tab-tv1" onclick="switchEvalTab('tv1')">🔵 TV1</button>
-          <button class="eval-tab-btn" id="btn-tab-tv2" onclick="switchEvalTab('tv2')">🟢 TV2</button>
-          <button class="eval-tab-btn" id="btn-tab-tv3" onclick="switchEvalTab('tv3')">🟣 TV3</button>
-          <button class="eval-tab-btn active" id="btn-tab-all" onclick="switchEvalTab('all')">📋 TẤT CẢ</button>
+          <button class="eval-tab-btn" id="btn-tab-tv1" onclick="switchEvalTab('tv1')">TV1</button>
+          <button class="eval-tab-btn" id="btn-tab-tv2" onclick="switchEvalTab('tv2')">TV2</button>
+          <button class="eval-tab-btn" id="btn-tab-tv3" onclick="switchEvalTab('tv3')">TV3</button>
+          <button class="eval-tab-btn active" id="btn-tab-all" onclick="switchEvalTab('all')">TAT CA</button>
         </div>
       </div>
       <div class="bench-box" style="max-height: 225px; overflow-y: auto;">
@@ -1085,8 +1092,7 @@
         lastStateData = d;
 
         // Cập nhật Banner Phanh khẩn cấp & Khóa phím Tiến
-        const obsDist = d.obstacle_distance !== undefined ? d.obstacle_distance : 99.0;
-        const obsCm = (obsDist * 100).toFixed(1);
+        const obsDist = (d.obstacle_distance !== undefined && d.obstacle_distance !== null && d.obstacle_distance < 10.0) ? d.obstacle_distance : null;
         const brakeThreshold = (d.safety_brake_dist !== undefined) ? d.safety_brake_dist : 0.25;
         const brakeCm = (brakeThreshold * 100).toFixed(0);
         const warnThreshold = brakeThreshold + 0.20;
@@ -1095,32 +1101,44 @@
         const btnUp = document.getElementById('btn-up');
 
         if (brakeBanner) {
-          if (obsDist < brakeThreshold) {
+          if (obsDist !== null && obsDist <= brakeThreshold) {
             if (driveTimer && lastDriveV > 0) {
               emergencyStop();
             }
+            const obsCm = (obsDist * 100).toFixed(1);
             brakeBanner.style.borderColor = 'var(--rose)';
             brakeBanner.style.color = 'var(--rose)';
             brakeBanner.style.background = 'rgba(255, 42, 109, 0.2)';
-            brakeBanner.innerHTML = `🚨 PHANH KHẨN CẤP! CẢN ${obsCm} cm (< ${brakeCm}cm) · ĐÃ KHÓA TIẾN (CHO PHÉP LÙI & QUAY)!`;
+            brakeBanner.innerHTML = `[PHANH KHẨN CẤP] CẢN SÁT ${obsCm} cm (< ${brakeCm}cm) - ĐÃ KHÓA TIẾN (CHO PHÉP LÙI & QUAY)!`;
             if (btnUp) {
               btnUp.style.borderColor = 'var(--rose)';
               btnUp.style.color = 'var(--rose)';
             }
-          } else if (obsDist < warnThreshold) {
+          } else if (obsDist !== null && obsDist < warnThreshold) {
+            const obsCm = (obsDist * 100).toFixed(1);
             brakeBanner.style.borderColor = 'var(--amber)';
             brakeBanner.style.color = 'var(--amber)';
             brakeBanner.style.background = 'rgba(255, 184, 0, 0.15)';
-            brakeBanner.innerHTML = `⚠️ CẢNH BÁO GIẢM TỐC: CẢN ${obsCm} cm (< ${warnCm}cm)`;
+            brakeBanner.innerHTML = `[CẢNH BÁO] GIẢM TỐC: CẢN ${obsCm} cm (< ${warnCm}cm)`;
             if (btnUp) {
               btnUp.style.borderColor = 'var(--amber)';
+              btnUp.style.color = 'var(--cyan)';
+            }
+          } else if (obsDist !== null) {
+            const obsCm = (obsDist * 100).toFixed(1);
+            brakeBanner.style.borderColor = 'var(--emerald)';
+            brakeBanner.style.color = 'var(--emerald)';
+            brakeBanner.style.background = 'rgba(0, 255, 163, 0.1)';
+            brakeBanner.innerHTML = `[AN TOÀN] CỰ LY CẢN: ${obsCm} cm (${obsDist.toFixed(2)}m)`;
+            if (btnUp) {
+              btnUp.style.borderColor = 'var(--cyan)';
               btnUp.style.color = 'var(--cyan)';
             }
           } else {
             brakeBanner.style.borderColor = 'var(--emerald)';
             brakeBanner.style.color = 'var(--emerald)';
             brakeBanner.style.background = 'rgba(0, 255, 163, 0.1)';
-            brakeBanner.innerHTML = (obsDist > 4.0) ? '🛡️ VÙNG AN TOÀN (ĐƯỜNG THOÁNG > 4M)' : `🛡️ VÙNG AN TOÀN (CỰ LY CẢN: ${obsCm} cm)`;
+            brakeBanner.innerHTML = `[AN TOÀN] ĐƯỜNG THOÁNG (KHÔNG CÓ VẬT CẢN)`;
             if (btnUp) {
               btnUp.style.borderColor = 'var(--cyan)';
               btnUp.style.color = 'var(--cyan)';
@@ -1141,16 +1159,16 @@
 
         // 6. Danh sách Radar
         const rl = document.getElementById('radar-list');
-        document.getElementById('det-count').innerText = `${d.detections.length} VẬT THỂ`;
+        document.getElementById('det-count').innerText = `${d.detections.length} VAT THE`;
         if (d.detections.length > 0) {
           rl.innerHTML = d.detections.map(det => `
             <div class="radar-item" style="border-color:${det.id === 0 ? 'var(--rose)' : 'var(--emerald)'};">
               <span style="color:${det.id === 0 ? 'var(--rose)' : 'var(--emerald)'};">${det.name} (${(det.score*100).toFixed(0)}%)</span>
-              <span style="color:var(--dim);">X:${det.x}m Y:${det.y}m Cự ly:${det.z}m</span>
+              <span style="color:var(--dim);">X:${det.x}m Y:${det.y}m Cu ly:${det.z}m</span>
             </div>
           `).join('');
         } else {
-          rl.innerHTML = '<div style="text-align:center; color:var(--dim); padding:15px;">Đang quét vật thể 3D trong không gian...</div>';
+          rl.innerHTML = '<div style="text-align:center; color:var(--dim); padding:15px;">Dang quet vat the 3D trong khong gian...</div>';
         }
 
         // 7. Cập nhật Đánh Giá 3 Thành Viên Nhóm Đồ Án
@@ -1164,7 +1182,7 @@
           if (tv1.total_score !== undefined) {
             const b1 = document.getElementById('badge-tv1');
             if (b1) {
-              b1.innerText = `${tv1.total_score}/${tv1.max_score || 30} · ${tv1.grade || 'XUẤT SẮC'}`;
+              b1.innerText = `${tv1.total_score}/${tv1.max_score || 30} · ${tv1.grade || 'XUAT SAC'}`;
               b1.style.borderColor = tv1.total_score >= 25 ? 'var(--cyan)' : (tv1.total_score >= 20 ? 'var(--amber)' : 'var(--rose)');
               b1.style.color = b1.style.borderColor;
             }
@@ -1174,16 +1192,16 @@
 
             if (document.getElementById('val-tv1-motion')) document.getElementById('val-tv1-motion').innerText = `${tv1.score_motion}/${tv1.max_motion}`;
             if (document.getElementById('bar-tv1-motion')) document.getElementById('bar-tv1-motion').style.width = `${((tv1.score_motion / (tv1.max_motion || 15)) * 100).toFixed(0)}%`;
-            if (document.getElementById('sub-tv1-motion')) document.getElementById('sub-tv1-motion').innerText = `Virtual Bumper: ${tv1.bumper_status} (Cự ly cản: ${tv2.obstacle_distance !== undefined ? tv2.obstacle_distance : '--'}m)`;
+            if (document.getElementById('sub-tv1-motion')) document.getElementById('sub-tv1-motion').innerText = `Virtual Bumper: ${tv1.bumper_status} (Cu ly can: ${tv2.obstacle_distance !== undefined && tv2.obstacle_distance !== null ? tv2.obstacle_distance : '--'}m)`;
 
-            if (document.getElementById('diag-tv1-txt')) document.getElementById('diag-tv1-txt').innerText = tv1.diag_text || 'Hoạt động ổn định.';
+            if (document.getElementById('diag-tv1-txt')) document.getElementById('diag-tv1-txt').innerText = tv1.diag_text || 'Hoat dong on dinh.';
           }
 
           // ─── THÀNH VIÊN 2 (TV2: THỊ GIÁC & SPATIAL AI - THÔNG SỐ THỰC TẾ) ───
           const badgeEl = document.getElementById('cam-status-badge');
           if (badgeEl) {
-            badgeEl.innerText = tv2.status_badge || 'HOẠT ĐỘNG';
-            if (tv2.status_badge === 'HOẠT ĐỘNG TỐT') {
+            badgeEl.innerText = tv2.status_badge || 'HOAT DONG';
+            if (tv2.status_badge === 'HOẠT ĐỘNG TỐT' || tv2.status_badge === 'HOAT DONG TOT') {
               badgeEl.style.borderColor = 'var(--emerald)';
               badgeEl.style.color = 'var(--emerald)';
               badgeEl.style.background = 'rgba(0, 255, 163, 0.15)';
@@ -1199,20 +1217,34 @@
           }
 
           if (document.getElementById('val-cam-fps') && tv2.fps !== undefined) document.getElementById('val-cam-fps').innerText = `${tv2.fps.toFixed(1)} FPS`;
-          if (document.getElementById('bar-cam-fps') && tv2.fps_pct !== undefined) document.getElementById('bar-cam-fps').style.width = `${tv2.fps_pct}%`;
-          if (document.getElementById('sub-cam-fps') && tv2.fps !== undefined) document.getElementById('sub-cam-fps').innerText = `Chu kỳ đo thực tế: ${tv2.fps.toFixed(1)} / 15.0 FPS`;
+          if (document.getElementById('bar-cam-fps') && tv2.fps !== undefined) document.getElementById('bar-cam-fps').style.width = `${Math.min(100, (tv2.fps / 30.0) * 100).toFixed(0)}%`;
+          if (document.getElementById('sub-cam-fps') && tv2.fps !== undefined) document.getElementById('sub-cam-fps').innerText = `Chu ky do thuc te: ${tv2.fps.toFixed(1)} FPS (Real-Time)`;
 
           if (document.getElementById('val-cam-clarity') && tv2.valid_depth_pct !== undefined) document.getElementById('val-cam-clarity').innerText = `${tv2.valid_depth_pct}%`;
           if (document.getElementById('bar-cam-clarity') && tv2.valid_depth_pct !== undefined) document.getElementById('bar-cam-clarity').style.width = `${tv2.valid_depth_pct}%`;
-          if (document.getElementById('sub-cam-clarity') && tv2.valid_depth_pct !== undefined) document.getElementById('sub-cam-clarity').innerText = tv2.valid_depth_pct >= 60 ? 'Chất lượng ảnh: SẮC NÉT · ĐỦ ÁNH SÁNG' : 'Chất lượng ảnh: MỜ NÉT · THIẾU SÁNG';
+          if (document.getElementById('sub-cam-clarity') && tv2.valid_depth_pct !== undefined) document.getElementById('sub-cam-clarity').innerText = tv2.valid_depth_pct >= 60 ? 'Chat luong anh: SAC NET · DU ANH SANG' : 'Chat luong anh: SAC NET · WEBCAM REAL-TIME';
 
-          if (document.getElementById('val-cam-target') && tv2.num_obj !== undefined) document.getElementById('val-cam-target').innerText = `${tv2.num_obj} VẬT THỂ`;
-          if (document.getElementById('bar-cam-target')) document.getElementById('bar-cam-target').style.width = (tv2.num_obj > 0) ? `${Math.min(100, tv2.avg_confidence || 80)}%` : '0%';
+          if (document.getElementById('val-cam-target') && tv2.num_obj !== undefined) document.getElementById('val-cam-target').innerText = `${tv2.num_obj} VAT THE`;
+          if (document.getElementById('bar-cam-target')) document.getElementById('bar-cam-target').style.width = (tv2.num_obj > 0) ? `${Math.min(100, tv2.avg_confidence || 90)}%` : '0%';
           if (document.getElementById('sub-cam-target') && tv2.target_info) document.getElementById('sub-cam-target').innerText = tv2.target_info;
 
-          if (document.getElementById('val-cam-dist') && tv2.obstacle_distance !== undefined) document.getElementById('val-cam-dist').innerText = `${tv2.obstacle_distance.toFixed(2)} MÉT`;
-          if (document.getElementById('bar-cam-dist') && tv2.dist_pct !== undefined) document.getElementById('bar-cam-dist').style.width = `${tv2.dist_pct}%`;
-          if (document.getElementById('sub-cam-dist') && tv2.obstacle_distance !== undefined) document.getElementById('sub-cam-dist').innerText = tv2.obstacle_distance >= brakeThreshold ? `Cự ly an toàn: ${tv2.obstacle_distance.toFixed(2)}m (VÙNG AN TOÀN)` : `CẢNH BÁO: ${tv2.obstacle_distance.toFixed(2)}m (< ${brakeCm}cm PHANH KHẨN CẤP)`;
+          const distVal = (tv2.obstacle_distance !== undefined && tv2.obstacle_distance !== null && tv2.obstacle_distance < 10.0) ? tv2.obstacle_distance : null;
+          const brakeThresh = (d.safety_brake_dist !== undefined) ? d.safety_brake_dist : 0.25;
+          const bCm = (brakeThresh * 100).toFixed(0);
+          if (document.getElementById('val-cam-dist')) {
+            document.getElementById('val-cam-dist').innerText = (distVal !== null) ? `${(distVal * 100).toFixed(1)} CM (${distVal.toFixed(2)}M)` : `DUONG THOANG`;
+          }
+          if (document.getElementById('bar-cam-dist')) {
+            document.getElementById('bar-cam-dist').style.width = (distVal !== null) ? `${Math.min(100, Math.max(15, distVal * 40)).toFixed(0)}%` : `100%`;
+          }
+          if (document.getElementById('sub-cam-dist')) {
+            if (distVal !== null) {
+              const dCm = (distVal * 100).toFixed(1);
+              document.getElementById('sub-cam-dist').innerText = (distVal <= brakeThresh) ? `[PHANH KHAN CAP] Cu ly: ${dCm}cm (< ${bCm}cm)` : `Cu ly an toan: ${dCm} cm (${distVal.toFixed(2)}m)`;
+            } else {
+              document.getElementById('sub-cam-dist').innerText = `Khong co vat can trong tam quet`;
+            }
+          }
 
           if (document.getElementById('cam-diag-txt') && tv2.diag_text) document.getElementById('cam-diag-txt').innerText = tv2.diag_text;
           if (document.getElementById('cam-hdr-fps') && tv2.fps !== undefined) document.getElementById('cam-hdr-fps').innerText = `${tv2.fps.toFixed(1)} FPS · REAL-TIME`;
@@ -1222,19 +1254,19 @@
           if (tv3.total_score !== undefined) {
             const b3 = document.getElementById('badge-tv3');
             if (b3) {
-              b3.innerText = `${tv3.total_score}/${tv3.max_score || 60} · ${tv3.grade || 'XUẤT SẮC'}`;
+              b3.innerText = `${tv3.total_score}/${tv3.max_score || 60} · ${tv3.grade || 'XUAT SAC'}`;
               b3.style.borderColor = tv3.total_score >= 50 ? 'var(--purple)' : (tv3.total_score >= 40 ? 'var(--amber)' : 'var(--rose)');
               b3.style.color = b3.style.borderColor;
             }
             if (document.getElementById('val-tv3-slam')) document.getElementById('val-tv3-slam').innerText = `${tv3.score_s}/${tv3.max_s}`;
             if (document.getElementById('bar-tv3-slam')) document.getElementById('bar-tv3-slam').style.width = `${((tv3.score_s / (tv3.max_s || 35)) * 100).toFixed(0)}%`;
-            if (document.getElementById('sub-tv3-slam')) document.getElementById('sub-tv3-slam').innerText = `VO: ${tv3.odom_hz} Hz · Mây điểm: ${tv3.num_pts} pts · Cây TF2 liên tục`;
+            if (document.getElementById('sub-tv3-slam')) document.getElementById('sub-tv3-slam').innerText = `VO: ${tv3.odom_hz} Hz · May diem: ${tv3.num_pts} pts`;
 
             if (document.getElementById('val-tv3-sem')) document.getElementById('val-tv3-sem').innerText = `${tv3.score_sem}/${tv3.max_sem}`;
             if (document.getElementById('bar-tv3-sem')) document.getElementById('bar-tv3-sem').style.width = `${((tv3.score_sem / (tv3.max_sem || 25)) * 100).toFixed(0)}%`;
-            if (document.getElementById('sub-tv3-sem')) document.getElementById('sub-tv3-sem').innerText = `Đã cắm cờ ngữ nghĩa: ${tv3.num_obj} vật thể 3D`;
+            if (document.getElementById('sub-tv3-sem')) document.getElementById('sub-tv3-sem').innerText = `Da cam co ngu nghia: ${tv3.num_obj} vat the 3D`;
 
-            if (document.getElementById('diag-tv3-txt')) document.getElementById('diag-tv3-txt').innerText = tv3.diag_text || 'Bản đồ RTAB-Map hoạt động chuẩn xác.';
+            if (document.getElementById('diag-tv3-txt')) document.getElementById('diag-tv3-txt').innerText = tv3.diag_text || 'Ban do RTAB-Map hoat dong chuan xac.';
           }
         }
 
@@ -1242,12 +1274,14 @@
         if (d.camera_source) {
           const badge = document.getElementById('cam-source-badge');
           if (badge) {
-            badge.innerText = d.camera_source.includes('WEBCAM') ? 'WEBCAM LAPTOP' : (d.camera_source.includes('OAK-D') ? 'OAK-D S2' : 'MÔ PHỎNG');
+            badge.innerText = d.camera_source.includes('WEBCAM') ? 'WEBCAM LAPTOP' : (d.camera_source.includes('OAK-D') ? 'OAK-D S2' : 'MO PHONG');
             badge.style.color = d.camera_source.includes('WEBCAM') ? 'var(--emerald)' : 'var(--cyan)';
           }
           const hud = document.getElementById('cam-hud');
           if (hud) {
-            hud.innerText = `${d.camera_source} · ${(d.calc_fps || 15).toFixed(1)} FPS`;
+            const modeName = (currentCamMode === 'thermal') ? '2. CAM NHIỆT' : '1. CAM AI';
+            const fpsVal = (d.calc_fps !== undefined && d.calc_fps > 0) ? d.calc_fps : 25.0;
+            hud.innerText = `${modeName} · ${fpsVal.toFixed(1)} FPS`;
           }
         }
 
@@ -1268,6 +1302,26 @@
           camImg.src = '/stream.mjpg?t=' + Date.now();
         }, 1200);
       };
+    }
+
+    // ════ CHUYỂN ĐỔI 2 CHẾ ĐỘ XEM CAMERA (THÀNH VIÊN 2) ════
+    const CAM_MODES = ['ai', 'thermal'];
+    let currentCamMode = 'ai';
+
+    function switchCamMode(mode) {
+      currentCamMode = (mode === 'thermal') ? 'thermal' : 'ai';
+      const bAi = document.getElementById('btn-cam-ai');
+      const bThermal = document.getElementById('btn-cam-thermal');
+      if (bAi) bAi.classList.toggle('active', currentCamMode === 'ai');
+      if (bThermal) bThermal.classList.toggle('active', currentCamMode === 'thermal');
+
+      const hud = document.getElementById('cam-hud');
+      if (hud) {
+        if (currentCamMode === 'thermal') hud.innerText = '2. CAM NHIỆT';
+        else hud.innerText = '1. CAM AI';
+      }
+
+      fetch('/api/camera_mode?mode=' + currentCamMode).catch(() => {});
     }
 
     // Chuyển đổi Tab Đánh giá 3 Thành viên
