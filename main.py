@@ -208,19 +208,18 @@ class JetBotMasterSystem:
                     self.ros_batt_pub = rospy.Publisher('/battery_telemetry', Float32MultiArray, queue_size=1)
                     self.ros_obj_pub = rospy.Publisher('/spatial_objects', String, queue_size=2)
 
-                    # Subscribers nhận hình ảnh RGB từ nhiều loại node DepthAI
-                    rospy.Subscriber('/stereo_inertial_publisher/color/image', Image, self._ros_image_cb, queue_size=1)
-                    rospy.Subscriber('/yolov4_publisher/color/image', Image, self._ros_image_cb, queue_size=1)
-                    rospy.Subscriber('/mobilenet_publisher/color/image', Image, self._ros_image_cb, queue_size=1)
+                    # Subscribers nhận hình ảnh RGB từ DepthAI (buffer 16MB chống nghẽn gói tin lớn)
+                    img_buf = 2**24
+                    rospy.Subscriber('/stereo_inertial_publisher/color/image', Image, self._ros_image_cb, queue_size=1, buff_size=img_buf)
+                    rospy.Subscriber('/yolov4_publisher/color/image', Image, self._ros_image_cb, queue_size=1, buff_size=img_buf)
+                    rospy.Subscriber('/mobilenet_publisher/color/image', Image, self._ros_image_cb, queue_size=1, buff_size=img_buf)
 
                     # Subscribers nhận bản đồ độ sâu Depth
-                    rospy.Subscriber('/stereo_inertial_publisher/stereo/depth', Image, self._ros_depth_cb, queue_size=1)
-                    rospy.Subscriber('/yolov4_publisher/stereo/depth', Image, self._ros_depth_cb, queue_size=1)
-                    rospy.Subscriber('/mobilenet_publisher/stereo/depth', Image, self._ros_depth_cb, queue_size=1)
-                    rospy.Subscriber('/stereo/depth', Image, self._ros_depth_cb, queue_size=1)
-                    rospy.Subscriber('/yolov4_publisher/depth', Image, self._ros_depth_cb, queue_size=1)
-                    rospy.Subscriber('/yolov4_publisher/depth/image_raw', Image, self._ros_depth_cb, queue_size=1)
-                    rospy.Subscriber('/camera/depth/image_raw', Image, self._ros_depth_cb, queue_size=1)
+                    rospy.Subscriber('/stereo_inertial_publisher/stereo/depth', Image, self._ros_depth_cb, queue_size=1, buff_size=img_buf)
+                    rospy.Subscriber('/yolov4_publisher/stereo/depth', Image, self._ros_depth_cb, queue_size=1, buff_size=img_buf)
+                    rospy.Subscriber('/mobilenet_publisher/stereo/depth', Image, self._ros_depth_cb, queue_size=1, buff_size=img_buf)
+                    rospy.Subscriber('/stereo/depth', Image, self._ros_depth_cb, queue_size=1, buff_size=img_buf)
+                    rospy.Subscriber('/camera/depth/image_raw', Image, self._ros_depth_cb, queue_size=1, buff_size=img_buf)
                     rospy.Subscriber('/obstacle_distance', Float32, self._ros_obstacle_dist_cb, queue_size=1)
 
                     rospy.Subscriber('/rtabmap/odom', Odometry, self._ros_odom_cb, queue_size=1)
@@ -395,13 +394,17 @@ class JetBotMasterSystem:
 
     def _ros_image_cb(self, msg):
         if not self.camera: return
+        now = time.time()
+        # Khử trùng lặp khung hình khi nhiều topic alias cùng phát (giới hạn nhịp ~35 FPS)
+        if (now - self.last_ros_img_time) < 0.025:
+            return
+        self.last_ros_img_time = now
         try:
             w, h = msg.width, msg.height
             raw = np.frombuffer(msg.data, dtype=np.uint8)
             img = raw.reshape((h, w, 3)) if msg.encoding in ['bgr8', 'rgb8'] else raw.reshape((h, w, -1))
             if msg.encoding == 'rgb8': img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
 
-            self.last_ros_img_time = time.time()
             self.latest_raw_bgr = img
             if not getattr(self, '_ros_first_img_logged', False):
                 self._ros_first_img_logged = True
@@ -418,6 +421,11 @@ class JetBotMasterSystem:
 
     def _ros_depth_cb(self, msg):
         if not self.camera: return
+        now = time.time()
+        # Khử trùng lặp bản đồ độ sâu (giới hạn nhịp ~35 FPS)
+        if (now - getattr(self, 'last_ros_depth_time', 0.0)) < 0.025:
+            return
+        self.last_ros_depth_time = now
         try:
             w, h = msg.width, msg.height
             if getattr(msg, 'encoding', '') in ['32FC1'] or len(msg.data) == w * h * 4:

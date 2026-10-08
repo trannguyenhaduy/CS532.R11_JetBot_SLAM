@@ -412,10 +412,8 @@ class CameraStreamer:
             if not rospy.core.is_initialized():
                 return
             if not getattr(self, '_ros_pubs_initialized', False):
-                self._ros_pub_rgb = rospy.Publisher('/camera/color/image_raw', ROSImage, queue_size=1)
-                self._ros_pub_rgb_alias = rospy.Publisher('/stereo_inertial_publisher/color/image', ROSImage, queue_size=1)
-                self._ros_pub_depth = rospy.Publisher('/camera/depth/image_raw', ROSImage, queue_size=1)
-                self._ros_pub_depth_alias = rospy.Publisher('/stereo_inertial_publisher/stereo/depth', ROSImage, queue_size=1)
+                self._ros_pub_rgb = rospy.Publisher('/stereo_inertial_publisher/color/image', ROSImage, queue_size=1)
+                self._ros_pub_depth = rospy.Publisher('/stereo_inertial_publisher/stereo/depth', ROSImage, queue_size=1)
                 self._ros_pub_dist = rospy.Publisher('/obstacle_distance', ROSFloat32, queue_size=1)
                 self._ros_pubs_initialized = True
 
@@ -423,12 +421,10 @@ class CameraStreamer:
             if rgb_frame is not None and hasattr(self, '_ros_pub_rgb'):
                 msg_rgb = self._build_image_msg(rgb_frame, "bgr8", "oak-d_frame", now_ros)
                 self._ros_pub_rgb.publish(msg_rgb)
-                self._ros_pub_rgb_alias.publish(msg_rgb)
 
             if depth_frame is not None and hasattr(self, '_ros_pub_depth'):
                 msg_depth = self._build_image_msg(depth_frame, "16UC1", "oak-d_frame", now_ros)
                 self._ros_pub_depth.publish(msg_depth)
-                self._ros_pub_depth_alias.publish(msg_depth)
 
             if obstacle_dist is not None and hasattr(self, '_ros_pub_dist'):
                 self._ros_pub_dist.publish(ROSFloat32(data=float(obstacle_dist)))
@@ -759,12 +755,6 @@ def run_ros_camera_node():
 
     rospy.init_node('oak_camera_publisher', anonymous=False)
 
-    pub_rgb_stereo = rospy.Publisher('/stereo_inertial_publisher/color/image', Image, queue_size=1)
-    pub_depth_stereo = rospy.Publisher('/stereo_inertial_publisher/stereo/depth', Image, queue_size=1)
-    pub_rgb_yolo = rospy.Publisher('/yolov4_publisher/color/image', Image, queue_size=1)
-    pub_depth_yolo = rospy.Publisher('/yolov4_publisher/stereo/depth', Image, queue_size=1)
-    pub_obs_dist = rospy.Publisher('/obstacle_distance', Float32, queue_size=1)
-
     streamer = CameraStreamer()
     if not streamer._try_open_oak():
         rospy.logerr("❌ [OAK-D] Không thể mở kết nối OAK-D S2 qua USB!")
@@ -773,47 +763,9 @@ def run_ros_camera_node():
     print("✅ [OAK-D] CameraStreamer đã kết nối OAK-D S2 thành công! Bắt đầu phát ROS topics 30 FPS...")
 
     rate = rospy.Rate(35)
-    last_clearance_m = 99.0
-
-    def build_img_msg(img_np, encoding, frame_id="oak-d_frame"):
-        msg = Image()
-        msg.header.stamp = rospy.Time.now()
-        msg.header.frame_id = frame_id
-        msg.height, msg.width = img_np.shape[:2]
-        msg.encoding = encoding
-        msg.is_bigendian = 0
-        if len(img_np.shape) == 3:
-            msg.step = int(msg.width * img_np.shape[2] * img_np.itemsize)
-        else:
-            msg.step = int(msg.width * img_np.itemsize)
-        msg.data = img_np.tobytes()
-        return msg
-
     while not rospy.is_shutdown():
         frame, depth = streamer.read_oak_frame()
-        if frame is not None:
-            msg_rgb = build_img_msg(frame, "bgr8")
-            pub_rgb_stereo.publish(msg_rgb)
-            pub_rgb_yolo.publish(msg_rgb)
-
-        if depth is not None:
-            msg_depth = build_img_msg(depth, "16UC1")
-            pub_depth_stereo.publish(msg_depth)
-            pub_depth_yolo.publish(msg_depth)
-
-            # Tính cự ly an toàn chuẩn, tránh mặt sàn JetBot (10% đến 40% chiều cao)
-            h, w = depth.shape[:2]
-            roi = depth[int(h * 0.10):int(h * 0.40), int(w * 0.25):int(w * 0.75)]
-            valid = roi[(roi >= 150) & (roi <= 3500)]
-            if len(valid) >= 20:
-                last_clearance_m = round(float(np.percentile(valid, 15)) / 1000.0, 2)
-            elif roi.size > 0 and (np.count_nonzero(roi < 100) / float(roi.size)) > 0.45 and last_clearance_m <= 0.45:
-                last_clearance_m = 0.20
-            else:
-                last_clearance_m = 99.0
-
-            pub_obs_dist.publish(Float32(data=last_clearance_m))
-
+        # streamer.read_oak_frame() đã tự động xuất bản các topic chuẩn qua _publish_ros_frames()
         rate.sleep()
 
 
