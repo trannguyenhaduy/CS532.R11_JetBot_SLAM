@@ -149,10 +149,9 @@
           <button class="tab-btn" id="btn-view-3d" onclick="switchView('3d')">3D VIEW</button>
           <button class="tab-btn" id="btn-auto-scan" style="border-color:var(--cyan); color:var(--cyan);" onclick="toggleAutoScan()" title="JetBot tự xoay 360 độ để quét toàn cảnh phòng">🔄 QUÉT 360° (8 BƯỚC AI)</button>
           <select id="sel-scan-duration" onchange="changeScanMode(this.value)" style="background:#0b1326; color:var(--cyan); border:1px solid var(--cyan); border-radius:4px; font-size:11px; padding:3px 5px; cursor:pointer; font-weight:600;" title="Chọn chế độ và tốc độ quét 360 độ">
-            <option value="step" selected>🎯 8 Góc Dừng Tĩnh (YOLO Cực Nét)</option>
-            <option value="18.0">🐢 Quay Chậm Đều (18.0s ~ 20°/s)</option>
-            <option value="14.0">🚶 Quay Vừa (14.0s ~ 25°/s)</option>
-            <option value="10.0">⚡ Quay Nhanh (10.0s ~ 36°/s)</option>
+            <option value="step" selected>🎯 8 Bước Dừng Tĩnh (Chuẩn 1 Vòng 360°)</option>
+            <option value="4.2">🔄 Quay Đều Chuẩn (4.2s = Đúng 1 Vòng 360°)</option>
+            <option value="8.0">🐢 Quay Chậm 2 Vòng (8.0s)</option>
           </select>
           <select id="sel-scan-pwm" onchange="changeScanPwm(this.value)" style="background:#0b1326; color:var(--amber); border:1px solid var(--amber); border-radius:4px; font-size:11px; padding:3px 4px; cursor:pointer; font-weight:600;" title="Lực xung PWM quay xe (11% - 16%)">
             <option value="0.11">Lực 11% (Rất nhẹ)</option>
@@ -213,9 +212,9 @@
         [AN TOAN] DUONG THOANG (CU LY: -- CM)
       </div>
       <div style="display:flex; justify-content:center; gap:6px; margin:8px 12px 0; flex-wrap:wrap;">
-        <button class="tab-btn" id="spd-slow" onclick="setSpeed(0.15, 0.40, 'slow')" style="padding:3px 8px; font-size:0.72rem; cursor:pointer;">Cham (15%)</button>
-        <button class="tab-btn active" id="spd-norm" onclick="setSpeed(0.20, 0.50, 'norm')" style="padding:3px 8px; font-size:0.72rem; cursor:pointer; font-weight:bold;">Chuan (20%)</button>
-        <button class="tab-btn" id="spd-fast" onclick="setSpeed(0.25, 0.60, 'fast')" style="padding:3px 8px; font-size:0.72rem; cursor:pointer;">Nhanh (25%)</button>
+        <button class="tab-btn" id="spd-slow" onclick="setSpeed(0.15, 1.20, 'slow')" style="padding:3px 8px; font-size:0.72rem; cursor:pointer;">Cham (15%)</button>
+        <button class="tab-btn active" id="spd-norm" onclick="setSpeed(0.20, 1.58, 'norm')" style="padding:3px 8px; font-size:0.72rem; cursor:pointer; font-weight:bold;">Chuan (20%)</button>
+        <button class="tab-btn" id="spd-fast" onclick="setSpeed(0.25, 1.90, 'fast')" style="padding:3px 8px; font-size:0.72rem; cursor:pointer;">Nhanh (25%)</button>
         <button class="tab-btn" id="btn-teleop-auto-scan" onclick="toggleAutoScan()" style="padding:3px 10px; font-size:0.72rem; cursor:pointer; border-color:var(--cyan); color:var(--cyan); font-weight:bold; background:rgba(0,240,255,0.12);" title="JetBot tự xoay 8 cung dừng tĩnh để quét toàn cảnh phòng">🔄 QUÉT 360° (8 BƯỚC AI)</button>
       </div>
       <div class="dpad-container">
@@ -1482,7 +1481,7 @@
     // 🔄 TỰ ĐỘNG XOAY 360 ĐỘ QUÉT BẢN ĐỒ TOÀN CẢNH (AUTO 360° MAPPING SPIN)
     // 🔄 TỰ ĐỘNG XOAY 360 ĐỘ QUÉT BẢN ĐỒ TOÀN CẢNH (AUTO 360° MAPPING SPIN)
     let currentScanMode = 'step';
-    let currentScanDuration = 16.0;
+    let currentScanDuration = 4.2;
     let currentScanPwm = 0.13;
 
     function changeScanMode(val) {
@@ -1490,7 +1489,7 @@
         currentScanMode = 'step';
       } else {
         currentScanMode = 'smooth';
-        currentScanDuration = parseFloat(val) || 16.0;
+        currentScanDuration = parseFloat(val) || 4.2;
       }
       updateAutoScanBtn(false);
     }
@@ -1583,7 +1582,7 @@
     // Điều khiển động cơ với phản hồi trực quan (Visual Teleop Feedback)
     let driveTimer = null;
     let speedLinear = 0.20;
-    let speedAngular = 0.50;
+    let speedAngular = 1.58;
     let lastDriveV = 0.0;
 
     function emergencyStop() {

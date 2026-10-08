@@ -156,7 +156,7 @@ class SpatialPerceptionEngine:
         self._cached_hog_boxes = []
 
     TARGET_SEMANTIC_CLASSES = {
-        "PERSON", "OBSTACLE", "CHAIR", "COUCH", "TABLE", "BOTTLE", "CUP", "BACKPACK",
+        "PERSON", "OBSTACLE", "UNKNOWN", "CHAIR", "COUCH", "TABLE", "BOTTLE", "CUP", "BACKPACK",
         "LAPTOP", "TV / MONITOR", "CELL PHONE", "BOOK", "KEYBOARD", "MOUSE", "STOP SIGN / DOOR"
     }
     _last_obstacle_dist = None
@@ -370,14 +370,8 @@ class SpatialPerceptionEngine:
                                 for fb in found_boxes
                             )
                             if not has_overlap:
-                                aspect = real_bw / float(max(1, real_bh))
-                                if aspect < 0.45:
-                                    name_d = "BOTTLE"
-                                elif aspect > 1.35:
-                                    name_d = "CHAIR"
-                                else:
-                                    name_d = "OBSTACLE"
-                                found_boxes.append((real_bx, real_by, real_bw, real_bh, name_d, 0.88))
+                                name_d = "UNKNOWN"
+                                found_boxes.append((real_bx, real_by, real_bw, real_bh, name_d, 0.85))
             except Exception:
                 pass
 

@@ -783,6 +783,32 @@ class JetBotMasterSystem:
                     with self.lock:
                         current_dets = list(self.detections)
                         obs_dist = self.obstacle_distance
+                        rx, ry, rz, yaw = self.robot_x, self.robot_y, self.robot_z, self.robot_yaw
+
+                    # Bổ sung các vật cản UNKNOWN từ OccupancySLAM vào HUD camera nếu chưa có trong detections
+                    if self.mapper and self.flags.mapper:
+                        for lm in self.mapper.get_confirmed_landmarks():
+                            if lm.get('name') in ['UNKNOWN', 'OBSTACLE']:
+                                lx, ly, lz = float(lm['x']), float(lm['y']), float(lm.get('z', 0.2))
+                                dx = lx - rx
+                                dy = ly - ry
+                                cos_y = math.cos(yaw)
+                                sin_y = math.sin(yaw)
+                                x_rob = dx * cos_y + dy * sin_y
+                                y_rob = -dx * sin_y + dy * cos_y
+                                if 0.15 <= x_rob <= 3.0 and abs(y_rob) <= (x_rob * 0.75):
+                                    x_cam = -y_rob
+                                    y_cam = -(lz - rz - 0.12)
+                                    z_cam = x_rob
+                                    if not any(math.hypot(d.get('x', 0) - x_cam, d.get('z', 99) - z_cam) < 0.35 for d in current_dets):
+                                        current_dets.append({
+                                            "id": int(lm.get('id', 99)),
+                                            "name": "UNKNOWN",
+                                            "score": float(lm.get('score', 0.85)),
+                                            "x": round(x_cam, 2),
+                                            "y": round(y_cam, 2),
+                                            "z": round(z_cam, 2)
+                                        })
 
                     annotator = (lambda im: self.yolo.draw_detections(im, current_dets)) if self.yolo else None
                     self.camera.process_color_frame(live_frame, annotator, detections=current_dets, obstacle_dist=obs_dist)
@@ -974,14 +1000,14 @@ class JetBotMasterSystem:
                 scan_mode = mode if mode in ["step", "smooth"] else getattr(config, 'AUTO_SCAN_MODE', 'step')
                 self.auto_scan_mode = scan_mode
                 scan_pwm = float(pwm) if pwm and 0.08 <= float(pwm) <= 0.30 else float(getattr(config, 'AUTO_SCAN_SPEED_PWM', 0.13))
-                scan_dur = float(duration) if duration and float(duration) > 0 else float(getattr(config, 'AUTO_SCAN_DURATION_S', 16.0))
+                scan_dur = float(duration) if duration and float(duration) > 0 else float(getattr(config, 'AUTO_SCAN_DURATION_S', 4.2))
                 self.auto_scan_duration = scan_dur
                 self.auto_scan_remaining = scan_dur
                 threading.Thread(target=self._auto_scan_worker, args=(scan_dur, scan_mode, scan_pwm), daemon=True).start()
                 print(f"🔄 [AUTO SCAN 360°] Bắt đầu quét 360 độ [Chế độ: {scan_mode.upper()} - PWM: {scan_pwm*100:.0f}%]...")
                 return True
 
-    def _auto_scan_worker(self, scan_duration=16.0, scan_mode='step', scan_pwm=0.13):
+    def _auto_scan_worker(self, scan_duration=4.2, scan_mode='step', scan_pwm=0.13):
         """Luồng tự động xoay 360 độ khép kín (Closed-Loop Visual Keyframe Tracking):
         1. Khóa ảnh mốc xuất phát (Start Anchor Keyframe) & góc ban đầu start_yaw.
         2. Chế độ 'step' (8 cung x 45°):

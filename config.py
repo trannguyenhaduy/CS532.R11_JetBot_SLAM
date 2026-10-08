@@ -33,7 +33,7 @@ INA219_ADDR  = 0x41
 
 WHEEL_SEPARATION_M = 0.12  # Khoảng cách 2 bánh vi sai (mét)
 MAX_LINEAR_SPEED   = 0.20  # Vận tốc tiến tối đa (m/s) - Giảm xuống 0.20 m/s để phanh kịp thời
-MAX_ANGULAR_SPEED  = 0.35  # Vận tốc quay tối đa (rad/s) ~ 20 deg/s - Giúp xe quay êm dịu, chống nhòe Camera AI
+MAX_ANGULAR_SPEED  = 1.60  # Vận tốc quay tối đa (rad/s) ~ 91.7 deg/s - Đồng bộ 1:1 với mô-men động cơ JetBot
 
 # ─── CẤU HÌNH ĐẢO KÊNH ĐỘNG CƠ (MOTOR ORIENTATION) ────────────────────────────
 SWAP_MOTORS        = False  # False: Khắc phục lỗi xoay trái/phải bị ngược (chuẩn theo lệnh phím A/D)
@@ -53,10 +53,10 @@ IMAGE_SKIP_FRAMES = 2       # Bỏ qua 1/2 frame video để nhẹ CPU encode JP
 
 # ─── THÔNG SỐ TỰ QUÉT 360 ĐỘ & DETECT VẬT THỂ (PANORAMA SCAN & PERCEPTION) ────
 AUTO_SCAN_MODE        = "step"  # "step" (Quét từng bước 8 góc dừng tĩnh - Cực nét cho YOLO) hoặc "smooth" (Quay chậm đều)
-AUTO_SCAN_SPEED_PWM   = 0.13    # Mức xung PWM quay cực êm (13% PWM), chống quay tít
+AUTO_SCAN_SPEED_PWM   = 0.13    # Mức xung PWM quay cực êm (13% PWM), tương đương 1.50 rad/s
 AUTO_SCAN_STEPS       = 8       # 8 cung góc x 45° = 360° (tương thích FOV camera OAK-D S2 ~69°)
-AUTO_SCAN_STEP_TIME_S = 0.52    # Thời gian nhích mỗi góc (~45 độ ở mức 13% PWM)
+AUTO_SCAN_STEP_TIME_S = 0.48    # Thời gian nhích mỗi góc (~45 độ ở mức 13% PWM: 0.48s x 1.50 rad/s = 0.72 rad ~ 42-45°)
 AUTO_SCAN_PAUSE_S     = 0.70    # Thời gian dừng tĩnh mỗi góc để YOLO & 3D Depth chốt vật thể không vệt mờ
-AUTO_SCAN_DURATION_S  = 16.0    # Thời gian cho chế độ quay chậm đều (smooth): 16.0s ~ 22.5 deg/s
+AUTO_SCAN_DURATION_S  = 4.2     # Thời gian cho chế độ quay chậm đều (smooth): 4.2s tương ứng chuẩn 1 vòng 360° (2pi rad)
 
 

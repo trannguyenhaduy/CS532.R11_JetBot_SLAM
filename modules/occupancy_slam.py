@@ -28,8 +28,8 @@ if hasattr(sys.stdout, 'reconfigure'):
 
 
 class PinnedLandmark:
-    """Vật thể ngữ nghĩa được ghim cố định trên bản đồ toàn cục (Map Frame)"""
-    def __init__(self, obj_id, name, x, y, z=0.2, score=0.8):
+    """Vật thể ngữ nghĩa hoặc chướng ngại vật được ghim cố định trên bản đồ toàn cục (Map Frame)"""
+    def __init__(self, obj_id, name, x, y, z=0.2, score=0.8, width_m=None, depth_m=None):
         self.obj_id = int(obj_id)
         self.name = str(name).upper()
         self.x = float(x)
@@ -54,14 +54,23 @@ class PinnedLandmark:
             "LAPTOP": (0.35, 0.25),
             "TVMONITOR": (0.80, 0.20),
             "SOFA": (1.40, 0.80),
-            "BED": (1.60, 1.20)
+            "BED": (1.60, 1.20),
+            "UNKNOWN": (0.35, 0.35),
+            "OBSTACLE": (0.35, 0.35)
         }
-        self.width_m, self.depth_m = dim_map.get(self.name, (0.40, 0.40))
+        def_w, def_d = dim_map.get(self.name, (0.40, 0.40))
+        self.width_m = float(width_m) if width_m is not None else def_w
+        self.depth_m = float(depth_m) if depth_m is not None else def_d
 
-    def update(self, x, y, z, score):
+    def update(self, x, y, z, score, width_m=None, depth_m=None):
         self.last_seen = time.time()
         self.seen_count += 1
         self.score = max(self.score, score)
+
+        if width_m is not None:
+            self.width_m = round(0.70 * self.width_m + 0.30 * float(width_m), 2)
+        if depth_m is not None:
+            self.depth_m = round(0.70 * self.depth_m + 0.30 * float(depth_m), 2)
 
         # Cập nhật trung bình vị trí:
         if not self.is_pinned:
@@ -87,8 +96,8 @@ class PinnedLandmark:
             "score": round(self.score, 2),
             "seen": self.seen_count,
             "pinned": self.is_pinned,
-            "width": self.width_m,
-            "depth": self.depth_m
+            "width": round(self.width_m, 2),
+            "depth": round(self.depth_m, 2)
         }
 
 
@@ -221,17 +230,106 @@ class OccupancySLAM:
             self.grid[free_indices] = 128
             self.miss_counts[free_indices] += 1
 
+        # 4. Tự động gom cụm các điểm cản thành Bounding Box (UNKNOWN / OBSTACLE)
+        self._cluster_obstacle_points(rx, ry, points_3d)
+
         if has_new_obstacle or (self.total_scans_processed % 3 == 0):
             self.version += 1
 
-    def add_semantic_landmark(self, name, x_world, y_world, z_world=0.2, score=0.8):
+    def _cluster_obstacle_points(self, rx, ry, points_3d):
         """
-        Gán và ghim vật thể ngữ nghĩa cố định trên bản đồ:
-        - Gom cụm không gian (Spatial Clustering 85cm): Ghép nối với vật thể cùng loại.
-        - Khóa tọa độ (Spatial Pinning): Khi thấy >= 10 lần, tọa độ đứng yên 100%, không nhảy nhót.
+        Phân cụm không gian 3D (3D Depth Spatial Clustering) cho các điểm cản:
+        - Gom các điểm cản thực sự (0.05m <= wz <= 0.85m, cự ly 0.18m - 3.2m) thành từng khối độc lập.
+        - Tính toán tâm (cx, cy), chiều rộng (width_m) và chiều sâu (depth_m) của từng cụm.
+        - Nếu cụm trùng với Landmark đã có (ví dụ PERSON, CHAIR) -> Cập nhật kích thước thực tế.
+        - Nếu cụm không trùng với bất kỳ vật thể nào -> Tự động tạo mốc [UNKNOWN] với Bounding Box chuẩn xác!
+        """
+        if not points_3d or len(points_3d) < 3:
+            return []
+
+        # 1. Lọc điểm cản hợp lệ (không phải sàn nhà và nằm trong tầm quan sát)
+        valid_obs = []
+        for pt in points_3d:
+            try:
+                wx, wy = float(pt[0]), float(pt[1])
+                wz = float(pt[2]) if len(pt) > 2 else 0.2
+                if 0.05 <= wz <= 0.85:
+                    d = math.hypot(wx - rx, wy - ry)
+                    if 0.18 <= d <= 3.2:
+                        valid_obs.append((wx, wy, wz, d))
+            except Exception:
+                pass
+
+        if len(valid_obs) < 3:
+            return []
+
+        # 2. Sắp xếp theo góc cực so với Robot để quét gom cụm liên tục
+        valid_obs.sort(key=lambda p: math.atan2(p[1] - ry, p[0] - rx))
+
+        # 3. Phân cụm Euclidean: 2 điểm liên tiếp cách nhau <= 28cm thuộc về cùng 1 vật thể
+        clusters = []
+        current_cluster = [valid_obs[0]]
+
+        for i in range(1, len(valid_obs)):
+            pt = valid_obs[i]
+            prev = current_cluster[-1]
+            dist_pts = math.hypot(pt[0] - prev[0], pt[1] - prev[1])
+            if dist_pts <= 0.28:
+                current_cluster.append(pt)
+            else:
+                if len(current_cluster) >= 3:
+                    clusters.append(current_cluster)
+                current_cluster = [pt]
+
+        if len(current_cluster) >= 3:
+            clusters.append(current_cluster)
+
+        detected_clusters = []
+        # 4. Tính toán hình học bounding box và gắn nhãn cho từng cụm
+        for cl in clusters:
+            xs = [p[0] for p in cl]
+            ys = [p[1] for p in cl]
+            zs = [p[2] for p in cl]
+
+            cx = float(np.mean(xs))
+            cy = float(np.mean(ys))
+            cz = float(np.mean(zs))
+
+            span_x = max(xs) - min(xs)
+            span_y = max(ys) - min(ys)
+            diag = math.hypot(span_x, span_y)
+            w_m = max(0.25, min(1.30, round(diag, 2)))
+            d_m = max(0.20, min(0.90, round(max(span_x, span_y) * 0.75, 2)))
+
+            detected_clusters.append({
+                "cx": cx, "cy": cy, "cz": cz,
+                "width_m": w_m, "depth_m": d_m,
+                "num_pts": len(cl)
+            })
+
+            # Kiểm tra xem cụm này có trùng với Landmark đã có nhãn AI không (< 0.45m)
+            matched_named = False
+            for lm in self.landmarks:
+                if lm.name not in ["UNKNOWN", "OBSTACLE"]:
+                    if math.hypot(lm.x - cx, lm.y - cy) < 0.45:
+                        lm.update(cx, cy, cz, lm.score, width_m=w_m, depth_m=d_m)
+                        matched_named = True
+                        break
+
+            # Nếu không có tên AI nhận diện -> Đánh dấu là UNKNOWN
+            if not matched_named:
+                self.add_semantic_landmark("UNKNOWN", cx, cy, cz, score=0.85, width_m=w_m, depth_m=d_m)
+
+        return detected_clusters
+
+    def add_semantic_landmark(self, name, x_world, y_world, z_world=0.2, score=0.8, width_m=None, depth_m=None):
+        """
+        Gán và ghim vật thể ngữ nghĩa hoặc chướng ngại vật cố định trên bản đồ:
+        - Gom cụm không gian: Ghép nối với vật thể cùng loại (UNKNOWN: 40cm, khác: 85cm).
+        - Khóa tọa độ (Spatial Pinning): Khi thấy >= 3 lần, tọa độ đóng dấu cố định!
         """
         name_clean = str(name).upper()
-        threshold_dist = 0.85  # Bán kính gom cụm 85cm
+        threshold_dist = 0.40 if name_clean in ["UNKNOWN", "OBSTACLE"] else 0.85
 
         best_match = None
         min_d = 999.0
@@ -243,10 +341,10 @@ class OccupancySLAM:
                     best_match = lm
 
         if best_match is not None:
-            best_match.update(x_world, y_world, z_world, score)
+            best_match.update(x_world, y_world, z_world, score, width_m=width_m, depth_m=depth_m)
             return True
 
-        new_lm = PinnedLandmark(self._next_landmark_id, name_clean, x_world, y_world, z_world, score)
+        new_lm = PinnedLandmark(self._next_landmark_id, name_clean, x_world, y_world, z_world, score, width_m=width_m, depth_m=depth_m)
         self._next_landmark_id += 1
         self.landmarks.append(new_lm)
         return False
@@ -343,14 +441,26 @@ class OccupancySLAM:
             cluster_lms = [lm]
             for j in range(i + 1, len(sorted_candidates)):
                 if j not in used:
-                    dist = math.hypot(lm.x - sorted_candidates[j].x, lm.y - sorted_candidates[j].y)
-                    # Cùng tên trong bán kính 0.85m HOẶC khác tên nhưng cùng 1 tọa độ vật lý (< 0.45m)
-                    if (sorted_candidates[j].name == lm.name and dist <= 0.85) or (dist <= 0.45):
-                        used.add(j)
-                        cluster_lms.append(sorted_candidates[j])
+                    other = sorted_candidates[j]
+                    dist = math.hypot(lm.x - other.x, lm.y - other.y)
+                    # Cùng loại UNKNOWN: chỉ gom khi rất gần nhau (<= 0.35m) để tách biệt 2 vật cản đặt cạnh nhau
+                    if lm.name in ["UNKNOWN", "OBSTACLE"] and other.name in ["UNKNOWN", "OBSTACLE"]:
+                        should_merge = (dist <= 0.35)
+                    elif lm.name == other.name:
+                        should_merge = (dist <= 0.85)
+                    else:
+                        should_merge = (dist <= 0.40)
 
-            # Chọn vật thể có số lần thấy cao nhất và độ tin cậy lớn nhất trong cụm
-            best = max(cluster_lms, key=lambda o: (o.seen_count, getattr(o, 'score', 0.0)))
+                    if should_merge:
+                        used.add(j)
+                        cluster_lms.append(other)
+
+            # Ưu tiên vật thể có tên cụ thể từ AI trước (nếu có), sau đó mới tới số lần nhìn thấy
+            def _prio(o):
+                is_named = 1 if o.name not in ["UNKNOWN", "OBSTACLE"] else 0
+                return (is_named, o.seen_count, getattr(o, 'score', 0.0))
+
+            best = max(cluster_lms, key=_prio)
             merged.append(best.to_dict())
 
         return merged
@@ -554,8 +664,11 @@ if __name__ == '__main__':
     slam.add_semantic_landmark("CHAIR", 1.19, 0.49, 0.2, 0.95)
 
     lms = slam.get_confirmed_landmarks()
-    print(f"  ├─ Số vật thể đã ghim: {len(lms)} (Tọa độ: {lms[0]['x']}, {lms[0]['y']} - Pinned: {lms[0]['pinned']})")
-    assert len(lms) == 1 and lms[0]['pinned'] is True, "Lỗi: Cái ghế chưa được ghim cố định!"
+    print(f"  ├─ Số vật thể đã ghim: {len(lms)} (Gồm: {[o['name'] for o in lms]})")
+    chair_lm = next((o for o in lms if o['name'] == 'CHAIR'), None)
+    unknown_lm = next((o for o in lms if o['name'] == 'UNKNOWN'), None)
+    assert chair_lm is not None and chair_lm['pinned'] is True, "Lỗi: Cái ghế chưa được ghim cố định!"
+    assert unknown_lm is not None, "Lỗi: Cụm cản UNKNOWN chưa được quét và ghim!"
 
     payload = slam.get_payload_for_web()
     print(f"  ├─ Ô tự do (Free): {payload['free_cells']}, Ô tường (Occ): {payload['occ_cells']}")

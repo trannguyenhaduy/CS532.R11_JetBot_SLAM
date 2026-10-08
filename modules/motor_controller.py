@@ -287,8 +287,11 @@ class MotorController:
 
             if abs(actual_v) < 0.01 and abs(actual_w) > 0.01:
                 # ── QUAY TẠI CHỖ (PURE SPIN IN PLACE) ──
-                # Mức xung 12% - 15% PWM giúp JetBot quay chậm rãi, êm dịu, tối ưu cho Camera AI OAK-D S2
-                turn_duty = max(0.12, min(0.15, abs(actual_w) * 0.35))
+                # Chuẩn hóa vận tốc góc w với mô-men động cơ thực tế:
+                # w = 1.58 rad/s (~90.5 deg/s) tương ứng mức xung chuẩn 13% PWM (0.13).
+                # Nhờ đồng bộ 1:1, xe quay 360 độ ngoài đời thực thì bản đồ cũng quay đúng 360 độ!
+                norm_w = abs(actual_w)
+                turn_duty = max(0.10, min(0.20, (norm_w / 1.58) * 0.13))
                 p_l = -turn_duty if actual_w > 0 else turn_duty
                 p_r = turn_duty if actual_w > 0 else -turn_duty
             else:
