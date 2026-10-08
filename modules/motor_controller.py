@@ -287,8 +287,8 @@ class MotorController:
 
             if abs(actual_v) < 0.01 and abs(actual_w) > 0.01:
                 # ── QUAY TẠI CHỖ (PURE SPIN IN PLACE) ──
-                # Mức xung 18% - 21% PWM giúp JetBot quay chậm rãi, êm ái, chống quay tít làm nhòe camera
-                turn_duty = max(0.18, min(0.22, abs(actual_w) * 0.45))
+                # Mức xung 12% - 15% PWM giúp JetBot quay chậm rãi, êm dịu, tối ưu cho Camera AI OAK-D S2
+                turn_duty = max(0.12, min(0.15, abs(actual_w) * 0.35))
                 p_l = -turn_duty if actual_w > 0 else turn_duty
                 p_r = turn_duty if actual_w > 0 else -turn_duty
             else:
@@ -341,11 +341,11 @@ class MotorController:
             if self.is_connected and self.driver:
                 self.driver.set_motors(left, right)
 
-    def spin_in_place(self, duty: float = 0.19, direction: int = 1):
+    def spin_in_place(self, duty: float = 0.13, direction: int = 1):
         """Quay tròn tại chỗ với mức xung PWM chỉ định và kiểm soát hướng (direction: 1=trái CCW, -1=phải CW).
-        Tự động áp dụng các thiết lập đảo chiều cực tính và đổi kênh motor.
+        Mặc định 13% PWM giúp JetBot xoay từ tốn, không làm nhòe camera AI.
         """
-        turn_duty = max(0.12, min(0.35, float(duty)))
+        turn_duty = max(0.09, min(0.25, float(duty)))
         # Quay trái CCW: bánh trái lùi (-), bánh phải tiến (+)
         p_l = -turn_duty if direction > 0 else turn_duty
         p_r = turn_duty if direction > 0 else -turn_duty

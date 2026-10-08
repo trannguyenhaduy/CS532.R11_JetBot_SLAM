@@ -158,14 +158,21 @@ class WebHandler(BaseHTTPRequestHandler):
             return
         elif self.path.startswith('/api/auto_scan'):
             duration = None
+            mode = None
+            pwm = None
             if '?' in self.path:
                 for p in self.path.split('?')[1].split('&'):
                     if p.startswith('duration='):
                         try: duration = float(p.split('=')[1])
                         except Exception: duration = None
+                    elif p.startswith('mode='):
+                        mode = p.split('=')[1]
+                    elif p.startswith('pwm='):
+                        try: pwm = float(p.split('=')[1])
+                        except Exception: pwm = None
             active = False
             if inst and hasattr(inst, 'toggle_auto_scan'):
-                active = inst.toggle_auto_scan(duration=duration)
+                active = inst.toggle_auto_scan(duration=duration, mode=mode, pwm=pwm)
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
             self.send_header('Access-Control-Allow-Origin', '*')
@@ -238,14 +245,21 @@ class WebHandler(BaseHTTPRequestHandler):
             return
         elif self.path.startswith('/api/auto_scan'):
             duration = None
+            mode = None
+            pwm = None
             if '?' in self.path:
                 for p in self.path.split('?')[1].split('&'):
                     if p.startswith('duration='):
                         try: duration = float(p.split('=')[1])
                         except Exception: duration = None
+                    elif p.startswith('mode='):
+                        mode = p.split('=')[1]
+                    elif p.startswith('pwm='):
+                        try: pwm = float(p.split('=')[1])
+                        except Exception: pwm = None
             active = False
             if inst and hasattr(inst, 'toggle_auto_scan'):
-                active = inst.toggle_auto_scan(duration=duration)
+                active = inst.toggle_auto_scan(duration=duration, mode=mode, pwm=pwm)
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
             self.send_header('Access-Control-Allow-Origin', '*')
@@ -349,12 +363,15 @@ class WebCockpitServer:
             return self.map_reset_cb()
         return False
 
-    def toggle_auto_scan(self, duration=None):
+    def toggle_auto_scan(self, duration=None, mode=None, pwm=None):
         if self.auto_scan_cb:
             try:
-                return self.auto_scan_cb(duration=duration)
+                return self.auto_scan_cb(duration=duration, mode=mode, pwm=pwm)
             except TypeError:
-                return self.auto_scan_cb()
+                try:
+                    return self.auto_scan_cb(duration=duration)
+                except TypeError:
+                    return self.auto_scan_cb()
         return False
 
 

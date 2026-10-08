@@ -147,12 +147,17 @@
         <div style="display:flex; gap:5px; align-items:center;">
           <button class="tab-btn active" id="btn-view-2d" onclick="switchView('2d')">2D GRID</button>
           <button class="tab-btn" id="btn-view-3d" onclick="switchView('3d')">3D VIEW</button>
-          <button class="tab-btn" id="btn-auto-scan" style="border-color:var(--cyan); color:var(--cyan);" onclick="toggleAutoScan()" title="JetBot tự xoay đều 360 độ để quét toàn cảnh phòng">🔄 TỰ QUÉT 360° (5.0s)</button>
-          <select id="sel-scan-duration" onchange="changeScanDuration(this.value)" style="background:#0b1326; color:var(--cyan); border:1px solid var(--cyan); border-radius:4px; font-size:11px; padding:3px 5px; cursor:pointer; font-weight:600;" title="Điều chỉnh thời gian xoay 360 độ tùy theo độ trơn của mặt sàn">
-            <option value="4.0">4.0s (Sàn trơn)</option>
-            <option value="5.0" selected>5.0s (Chuẩn)</option>
-            <option value="6.0">6.0s (Sàn gỗ)</option>
-            <option value="7.5">7.5s (Thảm/Chậm)</option>
+          <button class="tab-btn" id="btn-auto-scan" style="border-color:var(--cyan); color:var(--cyan);" onclick="toggleAutoScan()" title="JetBot tự xoay 360 độ để quét toàn cảnh phòng">🔄 QUÉT 360° (8 BƯỚC AI)</button>
+          <select id="sel-scan-duration" onchange="changeScanMode(this.value)" style="background:#0b1326; color:var(--cyan); border:1px solid var(--cyan); border-radius:4px; font-size:11px; padding:3px 5px; cursor:pointer; font-weight:600;" title="Chọn chế độ và tốc độ quét 360 độ">
+            <option value="step" selected>🎯 8 Góc Dừng Tĩnh (YOLO Cực Nét)</option>
+            <option value="18.0">🐢 Quay Chậm Đều (18.0s ~ 20°/s)</option>
+            <option value="14.0">🚶 Quay Vừa (14.0s ~ 25°/s)</option>
+            <option value="10.0">⚡ Quay Nhanh (10.0s ~ 36°/s)</option>
+          </select>
+          <select id="sel-scan-pwm" onchange="changeScanPwm(this.value)" style="background:#0b1326; color:var(--amber); border:1px solid var(--amber); border-radius:4px; font-size:11px; padding:3px 4px; cursor:pointer; font-weight:600;" title="Lực xung PWM quay xe (11% - 16%)">
+            <option value="0.11">Lực 11% (Rất nhẹ)</option>
+            <option value="0.13" selected>Lực 13% (Chuẩn)</option>
+            <option value="0.15">Lực 15% (Mạnh hơn)</option>
           </select>
           <button class="tab-btn" style="border-color:var(--amber); color:var(--amber);" onclick="resetMapCamera()" title="Căn giữa góc nhìn">🎯 CĂN GIỮA</button>
           <button class="tab-btn" style="border-color:var(--emerald); color:var(--emerald);" onclick="saveMap()" title="Lưu bản đồ hiện tại">💾 LƯU BẢN ĐỒ</button>
@@ -169,7 +174,7 @@
         <div id="map-overlay-controls" style="position:absolute; right:12px; bottom:30px; display:flex; flex-direction:column; gap:5px; z-index:15;">
           <button class="tab-btn" onclick="zoom2D(1.2)" style="padding:4px 8px; font-weight:bold; font-size:12px; background:rgba(10,14,23,0.85);" title="Phóng to">➕</button>
           <button class="tab-btn" onclick="zoom2D(0.83)" style="padding:4px 8px; font-weight:bold; font-size:12px; background:rgba(10,14,23,0.85);" title="Thu nhỏ">➖</button>
-          <button class="tab-btn" id="btn-map-auto-scan" onclick="toggleAutoScan()" style="padding:4px 8px; font-size:11px; background:rgba(10,14,23,0.85); color:var(--cyan); border-color:var(--cyan); font-weight:bold;" title="JetBot tự xoay 360° để quét bản đồ">🔄 QUÉT (5.0s)</button>
+          <button class="tab-btn" id="btn-map-auto-scan" onclick="toggleAutoScan()" style="padding:4px 8px; font-size:11px; background:rgba(10,14,23,0.85); color:var(--cyan); border-color:var(--cyan); font-weight:bold;" title="JetBot tự xoay 360° để quét bản đồ">🔄 QUÉT (8 BƯỚC)</button>
           <button class="tab-btn" id="btn-follow-toggle" onclick="toggleFollowRobot()" style="padding:4px 8px; font-size:11px; background:rgba(10,14,23,0.85); color:var(--cyan); border-color:var(--cyan);" title="Khóa tâm bám theo Robot">🎯 BÁM XE: BẬT</button>
         </div>
       </div>
@@ -211,7 +216,7 @@
         <button class="tab-btn" id="spd-slow" onclick="setSpeed(0.15, 0.40, 'slow')" style="padding:3px 8px; font-size:0.72rem; cursor:pointer;">Cham (15%)</button>
         <button class="tab-btn active" id="spd-norm" onclick="setSpeed(0.20, 0.50, 'norm')" style="padding:3px 8px; font-size:0.72rem; cursor:pointer; font-weight:bold;">Chuan (20%)</button>
         <button class="tab-btn" id="spd-fast" onclick="setSpeed(0.25, 0.60, 'fast')" style="padding:3px 8px; font-size:0.72rem; cursor:pointer;">Nhanh (25%)</button>
-        <button class="tab-btn" id="btn-teleop-auto-scan" onclick="toggleAutoScan()" style="padding:3px 10px; font-size:0.72rem; cursor:pointer; border-color:var(--cyan); color:var(--cyan); font-weight:bold; background:rgba(0,240,255,0.12);" title="JetBot tự xoay chậm 360° để quét toàn cảnh phòng">🔄 TỰ QUÉT 360° (5.0s)</button>
+        <button class="tab-btn" id="btn-teleop-auto-scan" onclick="toggleAutoScan()" style="padding:3px 10px; font-size:0.72rem; cursor:pointer; border-color:var(--cyan); color:var(--cyan); font-weight:bold; background:rgba(0,240,255,0.12);" title="JetBot tự xoay 8 cung dừng tĩnh để quét toàn cảnh phòng">🔄 QUÉT 360° (8 BƯỚC AI)</button>
       </div>
       <div class="dpad-container">
         <div class="dpad-row"><button class="btn-drive" id="btn-up" onmousedown="sendDrive(speedLinear,0)" onmouseup="emergencyStop()" ontouchstart="sendDrive(speedLinear,0)" ontouchend="emergencyStop()">▲</button></div>
@@ -1412,20 +1417,38 @@
     }
 
     // 🔄 TỰ ĐỘNG XOAY 360 ĐỘ QUÉT BẢN ĐỒ TOÀN CẢNH (AUTO 360° MAPPING SPIN)
-    let currentScanDuration = 5.0;
+    // 🔄 TỰ ĐỘNG XOAY 360 ĐỘ QUÉT BẢN ĐỒ TOÀN CẢNH (AUTO 360° MAPPING SPIN)
+    let currentScanMode = 'step';
+    let currentScanDuration = 16.0;
+    let currentScanPwm = 0.13;
 
-    function changeScanDuration(val) {
-      currentScanDuration = parseFloat(val) || 5.0;
+    function changeScanMode(val) {
+      if (val === 'step') {
+        currentScanMode = 'step';
+      } else {
+        currentScanMode = 'smooth';
+        currentScanDuration = parseFloat(val) || 16.0;
+      }
       updateAutoScanBtn(false);
+    }
+
+    function changeScanPwm(val) {
+      currentScanPwm = parseFloat(val) || 0.13;
     }
 
     function toggleAutoScan() {
       const mainBtn = document.getElementById('btn-teleop-auto-scan') || document.getElementById('btn-auto-scan');
       const willStart = !mainBtn || (!mainBtn.innerText.includes('ĐANG') && !mainBtn.innerText.includes('DỪNG'));
-      updateAutoScanBtn(willStart, currentScanDuration);
+      updateAutoScanBtn(willStart);
 
-      const durParam = currentScanDuration ? `&duration=${currentScanDuration}` : '';
-      fetch('/api/auto_scan?t=' + Date.now() + durParam, { cache: 'no-store' })
+      const params = new URLSearchParams({
+        t: Date.now(),
+        mode: currentScanMode,
+        duration: currentScanDuration,
+        pwm: currentScanPwm
+      });
+
+      fetch('/api/auto_scan?' + params.toString(), { cache: 'no-store' })
         .then(r => r.json())
         .then(data => {
           updateAutoScanBtn(Boolean(data.auto_scanning));
@@ -1451,8 +1474,8 @@
           btn.style.boxShadow = '0 0 12px var(--rose)';
         } else {
           btn.classList.remove('active');
-          const durStr = `${currentScanDuration.toFixed(1)}s`;
-          btn.innerText = (id === 'btn-map-auto-scan') ? `🔄 QUÉT (${durStr})` : `🔄 TỰ QUÉT 360° (${durStr})`;
+          const tag = (currentScanMode === 'step') ? '8 BƯỚC AI' : `${currentScanDuration.toFixed(0)}s`;
+          btn.innerText = (id === 'btn-map-auto-scan') ? `🔄 QUÉT (${tag})` : `🔄 QUÉT 360° (${tag})`;
           btn.style.borderColor = 'var(--cyan)';
           btn.style.color = 'var(--cyan)';
           btn.style.background = (id === 'btn-map-auto-scan') ? 'rgba(10,14,23,0.85)' : 'rgba(0, 240, 255, 0.12)';
