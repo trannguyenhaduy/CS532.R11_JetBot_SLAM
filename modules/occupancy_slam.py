@@ -317,32 +317,33 @@ class OccupancySLAM:
             if lm.is_pinned or (now - lm.last_seen < 8.0)
         ]
 
-        # Lọc danh sách ứng viên (đã thấy ít nhất 3 lần)
-        candidates = [lm for lm in self.landmarks if lm.seen_count >= 3]
+        # Lọc danh sách ứng viên (đã thấy ít nhất 3 lần và score >= 0.40 để loại bỏ rác/nhiễu AI)
+        candidates = [lm for lm in self.landmarks if lm.seen_count >= 3 and getattr(lm, 'score', 1.0) >= 0.40]
         if not candidates:
             return []
 
-        # Nhóm các landmark cùng tên nằm trong bán kính 0.85m vào 1 điểm đại diện duy nhất
+        # Gom cụm không gian vật lý (Spatial Physical Clustering):
+        # Hai vật thể không thể chiếm cùng 1 tọa độ không gian (< 0.45m).
+        # Nếu AI nhận diện chập chờn (lúc DiningTable, lúc Cat/Bird/Plant) -> Chỉ giữ lại 1 vật thể uy tín nhất!
         merged = []
         used = set()
-        # Sắp xếp theo số lần thấy giảm dần (ưu tiên vật thể quan sát nhiều nhất)
-        sorted_candidates = sorted(candidates, key=lambda o: o.seen_count, reverse=True)
+        sorted_candidates = sorted(candidates, key=lambda o: (o.seen_count, getattr(o, 'score', 0.0)), reverse=True)
 
         for i, lm in enumerate(sorted_candidates):
             if i in used:
                 continue
             used.add(i)
-            # Tìm tất cả các landmark cùng tên quá gần (< 0.85m)
             cluster_lms = [lm]
             for j in range(i + 1, len(sorted_candidates)):
-                if j not in used and sorted_candidates[j].name == lm.name:
+                if j not in used:
                     dist = math.hypot(lm.x - sorted_candidates[j].x, lm.y - sorted_candidates[j].y)
-                    if dist <= 0.85:
+                    # Cùng tên trong bán kính 0.85m HOẶC khác tên nhưng cùng 1 tọa độ vật lý (< 0.45m)
+                    if (sorted_candidates[j].name == lm.name and dist <= 0.85) or (dist <= 0.45):
                         used.add(j)
                         cluster_lms.append(sorted_candidates[j])
 
-            # Chọn landmark có số lần thấy cao nhất trong cụm
-            best = max(cluster_lms, key=lambda o: o.seen_count)
+            # Chọn vật thể có số lần thấy cao nhất và độ tin cậy lớn nhất trong cụm
+            best = max(cluster_lms, key=lambda o: (o.seen_count, getattr(o, 'score', 0.0)))
             merged.append(best.to_dict())
 
         return merged

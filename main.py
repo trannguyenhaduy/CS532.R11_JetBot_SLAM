@@ -941,18 +941,22 @@ class JetBotMasterSystem:
                 return False
             else:
                 self.is_auto_scanning = True
+                self.current_v = 0.0
+                self.current_w = 0.0
+                self.last_manual_drive_time = 0.0
                 threading.Thread(target=self._auto_scan_worker, daemon=True).start()
                 print("🔄 [AUTO SCAN 360°] Bắt đầu xoay chậm 360 độ để quét toàn cảnh phòng...")
                 return True
 
     def _auto_scan_worker(self):
-        """Luồng tự động xoay chậm đều 360 độ (w = 0.35 rad/s, ~20 độ/s, 1 vòng trong ~18 giây)
+        """Luồng tự động xoay chậm đều 360 độ (w = 0.45 rad/s, ~25 độ/s, 1 vòng trong ~15-18 giây)
         Đảm bảo không bị nhòe hình ảnh camera, quét trọn vẹn LaserScan và vật thể xung quanh.
         """
-        target_angular_speed = 0.35  # rad/s (~20 deg/s chuẩn robot công nghiệp)
+        target_angular_speed = 0.45  # rad/s (~25 deg/s đủ mô-men xoắn xoay bi cầu)
         total_turned = 0.0
         with self.lock:
             last_yaw = self.robot_yaw
+            self.last_manual_drive_time = 0.0
         start_time = time.time()
         last_t = start_time
 
@@ -962,17 +966,17 @@ class JetBotMasterSystem:
             dt = now - last_t
             last_t = now
 
-            # Dừng ngay nếu phát hiện cản khẩn cấp phía trước <= 20cm
-            if self.obstacle_distance is not None and self.obstacle_distance <= 0.20:
-                print("🛑 [AUTO SCAN 360°] Phát hiện vật cản sát mũi xe <= 20cm -> Tự động dừng quay an toàn!")
+            # Dừng ngay nếu phát hiện cản khẩn cấp phía trước sát mũi xe <= 15cm
+            if self.obstacle_distance is not None and self.obstacle_distance <= 0.15:
+                print("🛑 [AUTO SCAN 360°] Phát hiện vật cản sát mũi xe <= 15cm -> Tự động dừng quay an toàn!")
                 break
 
-            # Dừng nếu người dùng bấm phím lái tay khác trong 0.5s gần nhất
-            if (now - self.last_manual_drive_time < 0.50) and abs(self.current_v) > 0.01:
+            # Dừng nếu người dùng chủ động bấm phím lái tay khác (v > 0.05)
+            if (now - self.last_manual_drive_time < 0.50) and abs(self.current_v) > 0.05:
                 print("🛑 [AUTO SCAN 360°] Người dùng can thiệp lái tay -> Tự động dừng quay.")
                 break
 
-            # Phát lệnh quay vi sai
+            # Phát lệnh quay vi sai với xung đủ thắng ma sát bánh bi
             if self.motors:
                 self.motors.set_cmd_vel(0.0, target_angular_speed)
 
@@ -984,11 +988,11 @@ class JetBotMasterSystem:
 
             # Tính góc đã quay
             d_angle = abs(math.atan2(math.sin(cur_yaw - last_yaw), math.cos(cur_yaw - last_yaw)))
-            total_turned += max(d_angle, target_angular_speed * dt * 0.8)
+            total_turned += max(d_angle, target_angular_speed * dt * 0.85)
             last_yaw = cur_yaw
 
-            # Khi quay đủ ~360 độ (2*pi ~ 6.28 rad) hoặc quá thời gian bảo vệ 22s -> Dừng
-            if total_turned >= (2.0 * math.pi) or (now - start_time >= 22.0):
+            # Khi quay đủ ~360 độ (2*pi ~ 6.28 rad) hoặc quá thời gian bảo vệ 25s -> Dừng
+            if total_turned >= (2.0 * math.pi) or (now - start_time >= 25.0):
                 print(f"🎉 [AUTO SCAN 360°] Đã hoàn thành xuất sắc quét toàn cảnh 360 độ phòng (quay {math.degrees(total_turned):.1f}° trong {now - start_time:.1f}s)!")
                 break
 

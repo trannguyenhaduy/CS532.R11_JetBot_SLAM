@@ -163,6 +163,7 @@
         <div id="map-overlay-controls" style="position:absolute; right:12px; bottom:30px; display:flex; flex-direction:column; gap:5px; z-index:15;">
           <button class="tab-btn" onclick="zoom2D(1.2)" style="padding:4px 8px; font-weight:bold; font-size:12px; background:rgba(10,14,23,0.85);" title="Phóng to">➕</button>
           <button class="tab-btn" onclick="zoom2D(0.83)" style="padding:4px 8px; font-weight:bold; font-size:12px; background:rgba(10,14,23,0.85);" title="Thu nhỏ">➖</button>
+          <button class="tab-btn" id="btn-map-auto-scan" onclick="toggleAutoScan()" style="padding:4px 8px; font-size:11px; background:rgba(10,14,23,0.85); color:var(--cyan); border-color:var(--cyan); font-weight:bold;" title="JetBot tự xoay 360° để quét bản đồ">🔄 QUÉT 360°</button>
           <button class="tab-btn" id="btn-follow-toggle" onclick="toggleFollowRobot()" style="padding:4px 8px; font-size:11px; background:rgba(10,14,23,0.85); color:var(--cyan); border-color:var(--cyan);" title="Khóa tâm bám theo Robot">🎯 BÁM XE: BẬT</button>
         </div>
       </div>
@@ -200,10 +201,11 @@
       <div id="brake-status-banner" style="margin:8px 12px 0; padding:6px 12px; border-radius:6px; font-size:0.75rem; text-align:center; font-weight:700; border:1px solid var(--emerald); color:var(--emerald); background:rgba(0, 255, 163, 0.1);">
         [AN TOAN] DUONG THOANG (CU LY: -- CM)
       </div>
-      <div style="display:flex; justify-content:center; gap:6px; margin:8px 12px 0;">
+      <div style="display:flex; justify-content:center; gap:6px; margin:8px 12px 0; flex-wrap:wrap;">
         <button class="tab-btn" id="spd-slow" onclick="setSpeed(0.15, 0.40, 'slow')" style="padding:3px 8px; font-size:0.72rem; cursor:pointer;">Cham (15%)</button>
         <button class="tab-btn active" id="spd-norm" onclick="setSpeed(0.20, 0.50, 'norm')" style="padding:3px 8px; font-size:0.72rem; cursor:pointer; font-weight:bold;">Chuan (20%)</button>
         <button class="tab-btn" id="spd-fast" onclick="setSpeed(0.25, 0.60, 'fast')" style="padding:3px 8px; font-size:0.72rem; cursor:pointer;">Nhanh (25%)</button>
+        <button class="tab-btn" id="btn-teleop-auto-scan" onclick="toggleAutoScan()" style="padding:3px 10px; font-size:0.72rem; cursor:pointer; border-color:var(--cyan); color:var(--cyan); font-weight:bold; background:rgba(0,240,255,0.12);" title="JetBot tự xoay chậm 360° để quét toàn cảnh phòng">🔄 TỰ QUÉT 360°</button>
       </div>
       <div class="dpad-container">
         <div class="dpad-row"><button class="btn-drive" id="btn-up" onmousedown="sendDrive(speedLinear,0)" onmouseup="emergencyStop()" ontouchstart="sendDrive(speedLinear,0)" ontouchend="emergencyStop()">▲</button></div>
@@ -979,10 +981,10 @@
       mapCtx.fillStyle = '#00f0ff';
       mapCtx.fillText('1.0 MÉT', sbX + 4, sbY - 6);
 
-      // 8. Chú giải Bản đồ (HUD Legend Chuẩn RViz)
+      // 8. Chú giải Bản đồ (HUD Legend Chuẩn RViz & Phân loại Màu Sắc Ngữ Nghĩa)
       mapCtx.font = '10px "Space Grotesk", sans-serif';
       mapCtx.fillStyle = 'rgba(255,255,255,0.85)';
-      mapCtx.fillText('⬜ Mặt Sàn (Floor)  |  ⬛ Tường Vật Cản  |  🔴 LaserScan OAK-D  |  🔷 Bounding Box 2D  |  🔺 JetBot', W - 490, H - 14);
+      mapCtx.fillText('⬜ Mặt Sàn (Floor)  |  ⬛ Tường Vật Cản  |  🔴 Người (Vật Cản Động)  |  🔷 Đồ Vật Tĩnh (Bàn, Ghế...)  |  🔺 JetBot', W - 540, H - 14);
 
       // 9. Telemetry mini box ở góc trên bản đồ
       mapCtx.font = '9px Orbitron, monospace';
@@ -1416,23 +1418,26 @@
     }
 
     function updateAutoScanBtn(isScanning) {
-      const btn = document.getElementById('btn-auto-scan');
-      if (!btn) return;
-      if (isScanning) {
-        btn.classList.add('active');
-        btn.innerText = '⏹ ĐANG QUÉT 360°...';
-        btn.style.borderColor = 'var(--rose)';
-        btn.style.color = '#fff';
-        btn.style.background = 'var(--rose)';
-        btn.style.boxShadow = '0 0 12px var(--rose)';
-      } else {
-        btn.classList.remove('active');
-        btn.innerText = '🔄 TỰ QUÉT 360°';
-        btn.style.borderColor = 'var(--cyan)';
-        btn.style.color = 'var(--cyan)';
-        btn.style.background = 'rgba(0, 240, 255, 0.1)';
-        btn.style.boxShadow = 'none';
-      }
+      const btnIds = ['btn-auto-scan', 'btn-map-auto-scan', 'btn-teleop-auto-scan'];
+      btnIds.forEach(id => {
+        const btn = document.getElementById(id);
+        if (!btn) return;
+        if (isScanning) {
+          btn.classList.add('active');
+          btn.innerText = (id === 'btn-map-auto-scan') ? '⏹ ĐANG QUÉT...' : '⏹ ĐANG QUÉT 360°...';
+          btn.style.borderColor = 'var(--rose)';
+          btn.style.color = '#fff';
+          btn.style.background = 'var(--rose)';
+          btn.style.boxShadow = '0 0 12px var(--rose)';
+        } else {
+          btn.classList.remove('active');
+          btn.innerText = (id === 'btn-map-auto-scan') ? '🔄 QUÉT 360°' : '🔄 TỰ QUÉT 360°';
+          btn.style.borderColor = 'var(--cyan)';
+          btn.style.color = 'var(--cyan)';
+          btn.style.background = (id === 'btn-map-auto-scan') ? 'rgba(10,14,23,0.85)' : 'rgba(0, 240, 255, 0.12)';
+          btn.style.boxShadow = 'none';
+        }
+      });
     }
 
     // Chuyển đổi trạng thái Tự hành Bám người HRI

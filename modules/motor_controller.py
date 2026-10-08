@@ -285,25 +285,33 @@ class MotorController:
             actual_v = -v if self.invert_linear else v
             actual_w = w
 
-            # Giải động học vi sai (Differential Drive Kinematics)
-            v_l = actual_v - (actual_w * self.wheel_sep / 2.0)
-            v_r = actual_v + (actual_w * self.wheel_sep / 2.0)
+            if abs(actual_v) < 0.01 and abs(actual_w) > 0.01:
+                # ── QUAY TẠI CHỖ (PURE SPIN IN PLACE) ──
+                # JetBot có bánh bi cầu (caster ball) ở đuôi, tạo ma sát trượt lớn khi quay tròn tại chỗ.
+                # Cần mức xung PWM tối thiểu 24% - 28% để động cơ đủ mô-men xoắn thắng ma sát.
+                turn_duty = max(0.24, min(0.35, abs(actual_w) * 0.55))
+                p_l = -turn_duty if actual_w > 0 else turn_duty
+                p_r = turn_duty if actual_w > 0 else -turn_duty
+            else:
+                # ── DI CHUYỂN TIẾN/LÙI HOẶC VỪA ĐI VỪA BẺ LÁI (CURVED DRIVE) ──
+                v_l = actual_v - (actual_w * self.wheel_sep / 2.0)
+                v_r = actual_v + (actual_w * self.wheel_sep / 2.0)
 
-            # Quy đổi từ vận tốc m/s sang tỉ lệ PWM [-1.0, 1.0] (Tốc độ tối đa JetBot ~0.55 m/s)
-            HW_MAX_V = 0.55
-            p_l = v_l / HW_MAX_V
-            p_r = v_r / HW_MAX_V
+                # Quy đổi từ vận tốc m/s sang tỉ lệ PWM [-1.0, 1.0] (Tốc độ tối đa JetBot ~0.55 m/s)
+                HW_MAX_V = 0.55
+                p_l = v_l / HW_MAX_V
+                p_r = v_r / HW_MAX_V
 
-            # Giới hạn trần tốc độ tối đa 35% PWM để xe chạy đầm, phanh kịp thời và quay không văng
-            MAX_DUTY = 0.35
-            p_l = max(-MAX_DUTY, min(MAX_DUTY, p_l))
-            p_r = max(-MAX_DUTY, min(MAX_DUTY, p_r))
+                # Giới hạn trần tốc độ tối đa 35% PWM để xe chạy đầm, phanh kịp thời và quay không văng
+                MAX_DUTY = 0.35
+                p_l = max(-MAX_DUTY, min(MAX_DUTY, p_l))
+                p_r = max(-MAX_DUTY, min(MAX_DUTY, p_r))
 
-            # Bù lực ma sát tối thiểu (Deadband boost nhẹ) để bánh xe lăn êm
-            if abs(p_l) > 0.03 and abs(p_l) < 0.18:
-                p_l = 0.18 if p_l > 0 else -0.18
-            if abs(p_r) > 0.03 and abs(p_r) < 0.18:
-                p_r = 0.18 if p_r > 0 else -0.18
+                # Bù lực ma sát tối thiểu (Deadband boost nhẹ) để bánh xe lăn êm
+                if abs(p_l) > 0.03 and abs(p_l) < 0.18:
+                    p_l = 0.18 if p_l > 0 else -0.18
+                if abs(p_r) > 0.03 and abs(p_r) < 0.18:
+                    p_r = 0.18 if p_r > 0 else -0.18
 
             # Đảo cực tính động cơ nếu cần
             if self.invert_left: p_l = -p_l
