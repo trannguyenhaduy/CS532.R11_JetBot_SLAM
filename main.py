@@ -116,6 +116,12 @@ class JetBotMasterSystem:
         self.battery_metrics = (11.1, 50, 0.85, 9.4, 120)
         self.last_manual_drive_time = 0.0
 
+        # Vận tốc tức thời phục vụ Dead-Reckoning Odometry
+        self.current_v = 0.0
+        self.current_w = 0.0
+        self.last_cmd_vel_time = 0.0
+        self.last_real_ros_odom_time = 0.0
+
         # 1. Khởi tạo Module Động cơ
         self.motors = None
         if self.flags.motors:
@@ -196,6 +202,7 @@ class JetBotMasterSystem:
 
         # Khởi chạy các luồng hậu đài (luôn hoạt động, độc lập với ROS)
         threading.Thread(target=self._battery_loop, daemon=True).start()
+        threading.Thread(target=self._odometry_loop, daemon=True).start()
         threading.Thread(target=self._control_loop, daemon=True).start()
         threading.Thread(target=self._camera_provider_loop, daemon=True).start()
         threading.Thread(target=self._ai_inference_loop, daemon=True).start()
@@ -226,9 +233,16 @@ class JetBotMasterSystem:
                     rospy.Subscriber('/obstacle_distance', Float32, self._ros_obstacle_dist_cb, queue_size=1)
 
                     rospy.Subscriber('/rtabmap/odom', Odometry, self._ros_odom_cb, queue_size=1)
+                    rospy.Subscriber('/odom', Odometry, self._ros_odom_cb, queue_size=1)
                     rospy.Subscriber('/cmd_vel', Twist, self._ros_cmd_cb, queue_size=1)
                     rospy.Subscriber('/rtabmap/grid_map', OccupancyGrid, self._ros_grid_map_cb, queue_size=1)
                     rospy.Subscriber('/map', OccupancyGrid, self._ros_grid_map_cb, queue_size=1)
+                    try:
+                        from sensor_msgs.msg import Imu
+                        rospy.Subscriber('/stereo_inertial_publisher/imu', Imu, self._ros_imu_cb, queue_size=2)
+                        rospy.Subscriber('/imu/data', Imu, self._ros_imu_cb, queue_size=2)
+                    except Exception:
+                        pass
 
                     # Subscribers nhận danh sách nhận diện 3D từ OAK-D S2 VPU
                     rospy.Subscriber('/spatial_objects', String, self._ros_spatial_objects_cb, queue_size=2)
@@ -468,7 +482,21 @@ class JetBotMasterSystem:
                 self._update_fused_obstacle_clearance()
         except Exception: pass
 
+    def _ros_imu_cb(self, msg):
+        """Nhận góc quay trực tiếp từ cảm biến quán tính IMU (OAK-D hoặc BNO055/MPU6050)"""
+        try:
+            q = msg.orientation
+            siny = 2.0 * (q.w * q.z + q.x * q.y)
+            cosy = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
+            yaw = math.atan2(siny, cosy)
+            with self.lock:
+                self.robot_yaw = yaw
+                self.last_real_ros_odom_time = time.time()
+        except Exception:
+            pass
+
     def _ros_odom_cb(self, msg):
+        self.last_real_ros_odom_time = time.time()
         p = msg.pose.pose.position
         q = msg.pose.pose.orientation
         siny = 2.0 * (q.w * q.z + q.x * q.y)
@@ -485,6 +513,10 @@ class JetBotMasterSystem:
         if time.time() - self.last_manual_drive_time < 0.30:
             return
         v, w = float(msg.linear.x), float(msg.angular.z)
+        with self.lock:
+            self.current_v = v
+            self.current_w = w
+            self.last_cmd_vel_time = time.time()
         if self.safety_brake and self.safety_brake.is_enabled:
             v, w, alert = self.safety_brake.evaluate_velocity(v, w, self.obstacle_distance)
         if self.motors:
@@ -514,6 +546,12 @@ class JetBotMasterSystem:
             v = 0.0
             print(f"🛑 [KHÓA LỆNH TIẾN] Cản cách {self.obstacle_distance*100:.1f} cm (<= {int(brake_thresh*100)}cm). Cho phép LÙI hoặc QUAY để thoát cản!")
 
+        # 3. Cập nhật vận tốc tức thời cho vòng lặp Dead-Reckoning
+        with self.lock:
+            self.current_v = v
+            self.current_w = w
+            self.last_cmd_vel_time = time.time()
+
         if self.motors:
             if abs(v) < 0.01 and abs(w) < 0.01:
                 self.motors.stop()
@@ -524,14 +562,6 @@ class JetBotMasterSystem:
             t = Twist()
             t.linear.x, t.angular.z = v, w
             self.ros_cmd_pub.publish(t)
-        # Giả lập chuyển động nếu offline
-        if not HAS_ROS and (not self.motors or not self.motors.is_connected):
-            with self.lock:
-                self.robot_yaw += w * 0.15
-                self.robot_x += v * 0.15 * math.cos(self.robot_yaw)
-                self.robot_y += v * 0.15 * math.sin(self.robot_yaw)
-                self.path_history.append([round(self.robot_x, 3), round(self.robot_y, 3), 0.02])
-                if len(self.path_history) > 300: self.path_history.pop(0)
 
     def _battery_loop(self):
         """Vòng lặp đo pin định kỳ 1 Hz"""
@@ -549,6 +579,50 @@ class JetBotMasterSystem:
                     pass
             time.sleep(1.0)
 
+    def _odometry_loop(self):
+        """Luồng tính toán Dead-Reckoning Odometry vi sai thời gian thực (20 Hz):
+        Nếu không có nguồn ROS Odometry từ cảm biến ngoài (/rtabmap/odom hoặc IMU),
+        hệ thống tự động tích phân động học vi sai (Differential Drive Kinematics)
+        từ vận tốc v (m/s) và w (rad/s) để cập nhật liên tục tọa độ (X, Y) và góc quay Yaw (θ).
+        """
+        last_t = time.time()
+        while self.running:
+            time.sleep(0.05)
+            now = time.time()
+            dt = min(0.2, max(0.01, now - last_t))
+            last_t = now
+
+            # Nếu có ROS Odom/IMU thực từ phần cứng trong 1.0s gần nhất thì ưu tiên ROS
+            if (now - getattr(self, 'last_real_ros_odom_time', 0.0)) < 1.0:
+                continue
+
+            with self.lock:
+                # Nếu không nhận thêm lệnh lái trong 0.35s -> coi như đã dừng xe (v=0, w=0)
+                if (now - getattr(self, 'last_cmd_vel_time', 0.0)) > 0.35:
+                    self.current_v = 0.0
+                    self.current_w = 0.0
+
+                v = getattr(self, 'current_v', 0.0)
+                w = getattr(self, 'current_w', 0.0)
+
+                if abs(v) > 0.005 or abs(w) > 0.005:
+                    # Tích phân góc quay (Yaw) chuẩn vi phân:
+                    self.robot_yaw += w * dt
+                    # Chuẩn hóa góc quay về [-pi, +pi]
+                    self.robot_yaw = math.atan2(math.sin(self.robot_yaw), math.cos(self.robot_yaw))
+
+                    # Tích phân tọa độ không gian (X, Y):
+                    self.robot_x += v * dt * math.cos(self.robot_yaw)
+                    self.robot_y += v * dt * math.sin(self.robot_yaw)
+
+                    # Cập nhật vết lịch sử đường đi (path history) khi di chuyển đủ 2cm
+                    if not self.path_history or (
+                        (self.robot_x - self.path_history[-1][0])**2 + (self.robot_y - self.path_history[-1][1])**2 > 0.0004
+                    ):
+                        self.path_history.append([round(self.robot_x, 3), round(self.robot_y, 3), 0.02])
+                        if len(self.path_history) > 400:
+                            self.path_history.pop(0)
+
     def _control_loop(self):
         """Vòng lặp bám người HRI (10 Hz) với cơ chế nhường quyền lái tay"""
         last_log = 0.0
@@ -559,6 +633,10 @@ class JetBotMasterSystem:
                     with self.lock: dets = list(self.detections)
                     v, w = self.follower.compute_command(dets)
                     if v is not None and w is not None:
+                        with self.lock:
+                            self.current_v = v
+                            self.current_w = w
+                            self.last_cmd_vel_time = time.time()
                         if (abs(v) > 0.01 or abs(w) > 0.01) and (time.time() - last_log > 0.6):
                             last_log = time.time()
                             print(f"🎯 [HRI BÁM NGƯỜI] Điều khiển theo mục tiêu: v={v:.2f} m/s, w={w:.2f} rad/s")
@@ -819,10 +897,17 @@ class JetBotMasterSystem:
         return False, "Module Mapper chưa bật"
 
     def reset_map(self):
-        """Xóa trắng bản đồ 2D để xây dựng lại từ đầu"""
+        """Xóa trắng bản đồ 2D để xây dựng lại từ đầu và đặt lại gốc tọa độ"""
+        with self.lock:
+            self.robot_x = 0.0
+            self.robot_y = 0.0
+            self.robot_yaw = 0.0
+            self.path_history = []
+            self.current_v = 0.0
+            self.current_w = 0.0
         if self.mapper:
             return self.mapper.reset_map()
-        return False
+        return True
 
 
     def shutdown(self):

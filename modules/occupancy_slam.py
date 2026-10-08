@@ -39,21 +39,26 @@ class PinnedLandmark:
         self.seen_count = 1
         self.first_seen = time.time()
         self.last_seen = self.first_seen
-        self.is_pinned = False  # Khi seen_count >= 3 -> Khóa cứng tọa độ không đổi!
+        self.is_pinned = False  # Khi seen_count >= 10 -> Khóa cứng tọa độ không đổi!
 
     def update(self, x, y, z, score):
         self.last_seen = time.time()
         self.seen_count += 1
         self.score = max(self.score, score)
 
-        # Nếu chưa ghim cứng: Cập nhật trung bình vị trí với trọng số lọc Kalman/EMA dịu nhẹ (alpha=0.10)
+        # Cập nhật trung bình vị trí:
         if not self.is_pinned:
-            alpha = 0.10
+            alpha = 0.35
             self.x = (1.0 - alpha) * self.x + alpha * float(x)
             self.y = (1.0 - alpha) * self.y + alpha * float(y)
             self.z = (1.0 - alpha) * self.z + alpha * float(z)
             if self.seen_count >= 3:
-                self.is_pinned = True  # ĐÓNG DẤU GHIM CỐ ĐỊNH VĨNH VIỄN!
+                self.is_pinned = True  # ĐÓNG DẤU GHIM CỐ ĐỊNH!
+        else:
+            # Khi đã ghim: Tinh chỉnh rất êm dịu (alpha=0.04) để triệt tiêu sai số trôi dạt
+            alpha = 0.04
+            self.x = (1.0 - alpha) * self.x + alpha * float(x)
+            self.y = (1.0 - alpha) * self.y + alpha * float(y)
 
     def to_dict(self):
         return {
@@ -122,8 +127,9 @@ class OccupancySLAM:
     def update_scan(self, rx, ry, points_3d, max_dist=3.8):
         """
         Cập nhật mây điểm quét tia LaserScan / Depth từ OAK-D S2 vào bản đồ.
-        - Không gian thoáng: Dọn sạch vệt tia giữa xe và vật cản.
-        - Vật cản: Tích lũy hit_count >= 2 thì chốt cứng ô vật cản (255) vĩnh viễn.
+        - Phân biệt triệt để sàn nhà (wz < 0.06m) và vật cản thực sự (0.06m <= wz <= 0.85m).
+        - Tuyệt đối KHÔNG đánh dấu sàn nhà thành vật cản (tránh hiện tượng hình nón dày đặc trước xe).
+        - Vật cản thực sự tích lũy hit_count >= 3 mới chốt cứng thành tường (255).
         """
         r_col, r_row = self.world_to_grid(rx, ry)
         if r_col is None:
@@ -146,32 +152,40 @@ class OccupancySLAM:
                 wx, wy = float(pt[0]), float(pt[1])
                 wz = float(pt[2]) if len(pt) > 2 else 0.2
 
-                # Lọc độ cao: Chỉ lấy các điểm trong tầm cao thân xe và mắt camera (-0.08m đến 0.85m)
-                if not (-0.08 <= wz <= 0.85):
+                # Bỏ qua các điểm quá cao (trên trần nhà / tầm camera > 0.85m)
+                if wz > 0.85:
                     continue
 
                 dist = math.hypot(wx - rx, wy - ry)
-                if 0.15 <= dist <= max_dist:
-                    o_col, o_row = self.world_to_grid(wx, wy)
-                    if o_col is None:
-                        continue
+                if not (0.15 <= dist <= max_dist):
+                    continue
 
-                    # Vẽ tia quan sát quang học: Đánh dấu vùng trống giữa Robot và Vật cản
-                    # Chú ý: Không xóa đè các ô vật cản đã được xác nhận (hit_counts >= 3)
-                    ray_mask = np.zeros((self.height, self.width), dtype=np.uint8)
-                    cv2.line(ray_mask, (r_col, r_row), (o_col, o_row), 1, 1)
+                o_col, o_row = self.world_to_grid(wx, wy)
+                if o_col is None:
+                    continue
 
-                    # Ô trống (Free space): Chỉ cập nhật nếu ô đó chưa bị chốt là vật cản kiên cố
-                    free_indices = (ray_mask == 1) & (self.hit_counts < 3)
-                    self.grid[free_indices] = 128
-                    self.miss_counts[free_indices] += 1
+                # Vẽ tia quan sát quang học: Vùng giữa Robot và Điểm đo là KHÔNG GIAN THOÁNG
+                ray_mask = np.zeros((self.height, self.width), dtype=np.uint8)
+                cv2.line(ray_mask, (r_col, r_row), (o_col, o_row), 1, 1)
 
-                    # Ô vật cản đích (Hit): Tích lũy số lần quét trúng
-                    self.hit_counts[o_row, o_col] += 1
-                    # Khi quét trúng >= 2 lần -> Ghim chặt thành vật cản cố định (255)
-                    if self.hit_counts[o_row, o_col] >= 2:
-                        self.grid[o_row, o_col] = 255
-                        has_new_obstacle = True
+                # Ô trống (Free space): Chỉ cập nhật nếu ô đó chưa bị chốt là vật cản kiên cố
+                free_indices = (ray_mask == 1) & (self.hit_counts < 3)
+                self.grid[free_indices] = 128
+                self.miss_counts[free_indices] += 1
+
+                # ─── PHÂN LOẠI SÀN NHÀ VÀ VẬT CẢN THỰC SỰ ───
+                # Sàn nhà (wz < 0.06m / 6cm): Không phải vật cản! Xe có thể đi qua!
+                if wz < 0.06:
+                    if self.hit_counts[o_row, o_col] < 3:
+                        self.grid[o_row, o_col] = 128
+                    continue
+
+                # Vật cản thực sự (wz >= 0.06m: chân ghế, tường, chân người, thùng carton...)
+                self.hit_counts[o_row, o_col] += 1
+                # Khi quét trúng >= 3 lần -> Ghim chặt thành vật cản cố định (255)
+                if self.hit_counts[o_row, o_col] >= 3:
+                    self.grid[o_row, o_col] = 255
+                    has_new_obstacle = True
 
             except Exception:
                 pass
@@ -182,26 +196,29 @@ class OccupancySLAM:
     def add_semantic_landmark(self, name, x_world, y_world, z_world=0.2, score=0.8):
         """
         Gán và ghim vật thể ngữ nghĩa cố định trên bản đồ:
-        - Gom cụm không gian: Nếu vật thể gần vật thể cũ (< 0.45m), liên kết với vật thể cũ.
-        - Khóa tọa độ (Spatial Pinning): Khi thấy >= 3 lần, tọa độ đứng yên 100%, không nhảy nhót.
+        - Gom cụm không gian (Spatial Clustering 85cm): Ghép nối với vật thể cùng loại.
+        - Khóa tọa độ (Spatial Pinning): Khi thấy >= 10 lần, tọa độ đứng yên 100%, không nhảy nhót.
         """
-        match_found = False
-        threshold_dist = 0.45  # Bán kính gom cụm 45cm
+        name_clean = str(name).upper()
+        threshold_dist = 0.85  # Bán kính gom cụm 85cm
 
+        best_match = None
+        min_d = 999.0
         for lm in self.landmarks:
-            if lm.name == str(name).upper():
-                dist = math.hypot(lm.x - x_world, lm.y - y_world)
-                if dist <= threshold_dist:
-                    lm.update(x_world, y_world, z_world, score)
-                    match_found = True
-                    break
+            if lm.name == name_clean:
+                d = math.hypot(lm.x - x_world, lm.y - y_world)
+                if d < threshold_dist and d < min_d:
+                    min_d = d
+                    best_match = lm
 
-        if not match_found:
-            new_lm = PinnedLandmark(self._next_landmark_id, name, x_world, y_world, z_world, score)
-            self._next_landmark_id += 1
-            self.landmarks.append(new_lm)
+        if best_match is not None:
+            best_match.update(x_world, y_world, z_world, score)
+            return True
 
-        return match_found
+        new_lm = PinnedLandmark(self._next_landmark_id, name_clean, x_world, y_world, z_world, score)
+        self._next_landmark_id += 1
+        self.landmarks.append(new_lm)
+        return False
 
     def transform_cam_to_world(self, xc, yc, zc, rx, ry, rz, yaw):
         """
@@ -264,8 +281,47 @@ class OccupancySLAM:
         return self.get_payload_for_web()
 
     def get_confirmed_landmarks(self):
-        """Trả về danh sách các vật thể đã được xác nhận và ghim cứng trên bản đồ"""
-        return [lm.to_dict() for lm in self.landmarks if lm.seen_count >= 2]
+        """
+        Trả về danh sách các vật thể đã được xác nhận (seen >= 3)
+        và đã khử trùng lặp không gian (Spatial De-duplication 0.85m)
+        để không bị đè nhiều icon cùng một vị trí.
+        """
+        now = time.time()
+        # Loại bỏ các vật thể rác chưa ghim và không thấy lại trong 8 giây
+        self.landmarks = [
+            lm for lm in self.landmarks
+            if lm.is_pinned or (now - lm.last_seen < 8.0)
+        ]
+
+        # Lọc danh sách ứng viên (đã thấy ít nhất 3 lần)
+        candidates = [lm for lm in self.landmarks if lm.seen_count >= 3]
+        if not candidates:
+            return []
+
+        # Nhóm các landmark cùng tên nằm trong bán kính 0.85m vào 1 điểm đại diện duy nhất
+        merged = []
+        used = set()
+        # Sắp xếp theo số lần thấy giảm dần (ưu tiên vật thể quan sát nhiều nhất)
+        sorted_candidates = sorted(candidates, key=lambda o: o.seen_count, reverse=True)
+
+        for i, lm in enumerate(sorted_candidates):
+            if i in used:
+                continue
+            used.add(i)
+            # Tìm tất cả các landmark cùng tên quá gần (< 0.85m)
+            cluster_lms = [lm]
+            for j in range(i + 1, len(sorted_candidates)):
+                if j not in used and sorted_candidates[j].name == lm.name:
+                    dist = math.hypot(lm.x - sorted_candidates[j].x, lm.y - sorted_candidates[j].y)
+                    if dist <= 0.85:
+                        used.add(j)
+                        cluster_lms.append(sorted_candidates[j])
+
+            # Chọn landmark có số lần thấy cao nhất trong cụm
+            best = max(cluster_lms, key=lambda o: o.seen_count)
+            merged.append(best.to_dict())
+
+        return merged
 
     def reset_map(self):
         """Xóa trắng bản đồ để bắt đầu xây dựng lại từ đầu"""

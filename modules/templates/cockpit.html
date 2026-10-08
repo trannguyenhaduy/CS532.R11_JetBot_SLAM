@@ -753,8 +753,8 @@
           const pt = d.points_3d[i];
           const px = pt[0], py = pt[1], pz = pt[2] || 0.2;
           
-          // Lọc điểm vật cản ở tầm độ cao thân xe và mắt quét (-0.08m đến 0.90m)
-          if (pz < -0.08 || pz > 0.90) continue;
+          // Lọc điểm vật cản thực sự ở tầm độ cao thân xe (0.05m đến 0.85m), bỏ qua mặt sàn
+          if (pz < 0.05 || pz > 0.85) continue;
 
           const dist = Math.hypot(px - robX, py - robY);
           const cp = worldToCanvas(px, py);
@@ -762,19 +762,13 @@
           // Bỏ qua nếu điểm nằm ngoài vùng hiển thị canvas
           if (cp.x < -10 || cp.x > W + 10 || cp.y < -10 || cp.y > H + 10) continue;
 
-          // Phân loại màu sắc phát sáng theo cự ly vật cản
+          // Phân loại màu sắc theo cự ly vật cản
           if (dist < brakeDist) {
-            mapCtx.fillStyle = '#ff2a6d'; // Đỏ Neon - Cực kỳ nguy hiểm
-            mapCtx.shadowColor = '#ff2a6d';
-            mapCtx.shadowBlur = 6;
+            mapCtx.fillStyle = '#ff2a6d'; // Đỏ Neon - Nguy hiểm
           } else if (dist < warnDist) {
-            mapCtx.fillStyle = '#ffb800'; // Vàng Hổ Phách - Cảnh báo giảm tốc
-            mapCtx.shadowColor = '#ffb800';
-            mapCtx.shadowBlur = 4;
+            mapCtx.fillStyle = '#ffb800'; // Vàng Hổ Phách - Cảnh báo
           } else {
-            mapCtx.fillStyle = '#00f0ff'; // Xanh Cyan - Bề mặt tường/vật cản thoáng
-            mapCtx.shadowColor = '#00f0ff';
-            mapCtx.shadowBlur = 2;
+            mapCtx.fillStyle = '#00f0ff'; // Xanh Cyan - Thoáng
           }
 
           mapCtx.fillRect(cp.x - 1.5, cp.y - 1.5, 3, 3);

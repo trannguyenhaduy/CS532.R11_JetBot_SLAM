@@ -711,10 +711,14 @@ class CameraStreamer:
             return self.points_3d
 
         h, w = depth_uint16_mm.shape[:2]
-        u_grid, v_grid = np.meshgrid(np.arange(0, w, self.depth_step), np.arange(0, h, self.depth_step))
+        # Giới hạn dải quét từ 10% đến 45% chiều cao ảnh (vùng quét vật cản trên mặt sàn)
+        # Loại trừ 100% sàn nhà phẳng ở nửa dưới ảnh (v > 0.45h) giúp bản đồ sạch sẽ, chống lag
+        v_start = int(h * 0.10)
+        v_end = int(h * 0.45)
+        u_grid, v_grid = np.meshgrid(np.arange(0, w, self.depth_step), np.arange(v_start, v_end, self.depth_step))
         z_sample = depth_uint16_mm[v_grid, u_grid].astype(np.float32) / 1000.0
 
-        valid = (z_sample > 0.3) & (z_sample < 3.2)
+        valid = (z_sample > 0.20) & (z_sample < 3.5)
         self.valid_depth_pct = round(float(np.count_nonzero(valid)) / max(1.0, float(valid.size)) * 100.0, 1)
 
         z_val = z_sample[valid]
@@ -726,7 +730,7 @@ class CameraStreamer:
 
         x_rob = z_val
         y_rob = -x_cam
-        z_rob = -y_cam + 0.08
+        z_rob = -y_cam + 0.12
 
         cos_y = math.cos(yaw)
         sin_y = math.sin(yaw)
@@ -735,13 +739,13 @@ class CameraStreamer:
         z_world = z_rob
 
         new_pts = []
-        for i in range(min(len(x_world), 300)):
-            new_pts.append([round(float(x_world[i]), 2), round(float(y_world[i]), 2), round(float(z_world[i]), 2)])
+        for i in range(min(len(x_world), 250)):
+            # Lọc điểm cản: Chỉ lấy điểm cao hơn sàn nhà (z_world >= 0.05m)
+            if z_world[i] >= 0.05:
+                new_pts.append([round(float(x_world[i]), 3), round(float(y_world[i]), 3), round(float(z_world[i]), 3)])
 
-        self.points_3d.extend(new_pts)
-        if len(self.points_3d) > 2500:
-            self.points_3d = self.points_3d[-2500:]
-
+        # Giữ luồng điểm quét của lượt quét hiện tại (~100-200 điểm), không tích lũy chồng chéo gây lag browser
+        self.points_3d = new_pts
         return self.points_3d
 
 
