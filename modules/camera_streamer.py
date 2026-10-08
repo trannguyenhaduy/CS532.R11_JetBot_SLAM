@@ -637,7 +637,7 @@ class CameraStreamer:
             forward_clearance_mm = 9999.0  # Đường thoáng (> 4.0m)
 
         c_cm = forward_clearance_mm / 10.0
-        self.is_emergency_braked = bool(self.obstacle_distance is not None and forward_clearance_mm <= 250.0)
+        self.is_emergency_braked = bool(self.obstacle_distance is not None and forward_clearance_mm <= 200.0)
 
         # ─── 1. CHẾ ĐỘ CAMERA NHIỆT (THERMAL HEATMAP) ───
         if self.view_mode == 'thermal':

@@ -1238,7 +1238,7 @@
           if (document.getElementById('sub-cam-target') && tv2.target_info) document.getElementById('sub-cam-target').innerText = tv2.target_info;
 
           const distVal = (tv2.obstacle_distance !== undefined && tv2.obstacle_distance !== null && tv2.obstacle_distance < 10.0) ? tv2.obstacle_distance : null;
-          const brakeThresh = (d.safety_brake_dist !== undefined) ? d.safety_brake_dist : 0.25;
+          const brakeThresh = (d.safety_brake_dist !== undefined) ? d.safety_brake_dist : 0.20;
           const bCm = (brakeThresh * 100).toFixed(0);
           if (document.getElementById('val-cam-dist')) {
             document.getElementById('val-cam-dist').innerText = (distVal !== null) ? `${(distVal * 100).toFixed(1)} CM (${distVal.toFixed(2)}M)` : `DUONG THOANG`;

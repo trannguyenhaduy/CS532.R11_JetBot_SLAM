@@ -158,8 +158,8 @@ class JetBotMasterSystem:
 
         # 6. Khởi tạo Module Phanh khẩn cấp & Cản ảo 3D (Độc lập, dễ kiểm thử)
         self.safety_brake = EmergencyBrake(
-            brake_dist_m=config.SAFETY_BRAKE_DIST_M,
-            warning_dist_m=0.55,
+            brake_dist_m=getattr(config, 'SAFETY_BRAKE_DIST_M', 0.20),
+            warning_dist_m=getattr(config, 'SAFETY_WARNING_DIST_M', 0.40),
             is_enabled=getattr(config, 'ENABLE_SAFETY_BRAKE', True)
         )
 
@@ -495,18 +495,18 @@ class JetBotMasterSystem:
         self.last_manual_drive_time = time.time()
         print(f"🎮 [WEB LÁI TAY] Lệnh nhận được: v={v:.2f}, w={w:.2f}")
 
-        brake_thresh = getattr(config, 'SAFETY_BRAKE_DIST_M', 0.25)
+        brake_thresh = getattr(config, 'SAFETY_BRAKE_DIST_M', 0.20)
 
         # 1. Đánh giá qua EmergencyBrake nếu có
         if self.safety_brake and self.safety_brake.is_enabled:
             v, w, alert = self.safety_brake.evaluate_velocity(v, w, self.obstacle_distance)
             if alert == "EMERGENCY_STOP":
                 threshold_cm = int(self.safety_brake.brake_dist_m * 100)
-                obs_cm = f"{self.obstacle_distance*100:.1f} cm" if self.obstacle_distance is not None else "< 25cm"
+                obs_cm = f"{self.obstacle_distance*100:.1f} cm" if self.obstacle_distance is not None else "< 20cm"
                 print(f"🚨 [PHANH KHẨN CẤP] Cản cách {obs_cm} (< {threshold_cm}cm) -> Đã ngắt tiến, chỉ cho phép lùi/quay!")
 
         # 2. Can thiệp phanh khẩn cấp cứng:
-        # Nếu cản nguy hiểm (<= 25cm) và đang nhấn TIẾN -> Khóa lệnh tiến, chỉ cho phép lùi (v < 0) hoặc quay (w != 0)
+        # Nếu cản nguy hiểm (<= 20cm) và đang nhấn TIẾN -> Khóa lệnh tiến, chỉ cho phép lùi (v < 0) hoặc quay (w != 0)
         if (v > 0.01) and (self.obstacle_distance is not None and self.obstacle_distance <= brake_thresh):
             v = 0.0
             print(f"🛑 [KHÓA LỆNH TIẾN] Cản cách {self.obstacle_distance*100:.1f} cm (<= {int(brake_thresh*100)}cm). Cho phép LÙI hoặc QUAY để thoát cản!")
@@ -705,7 +705,7 @@ class JetBotMasterSystem:
             has_person = any(d.get('name') == 'PERSON' for d in self.detections)
             confirmed_objs = self.mapper.get_confirmed_objects() if (self.flags.mapper and self.mapper) else []
             map_payload = self.mapper.get_map_payload() if (self.flags.mapper and self.mapper) else {}
-            brake_dist = getattr(config, 'SAFETY_BRAKE_DIST_M', 0.25)
+            brake_dist = getattr(config, 'SAFETY_BRAKE_DIST_M', 0.20)
             cam_fps = float(self.camera.calc_fps) if (self.camera and hasattr(self.camera, 'calc_fps') and self.camera.calc_fps > 0) else 15.0
             
             if time.time() - self.last_ros_img_time < 2.0:

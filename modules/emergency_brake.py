@@ -23,10 +23,10 @@ if hasattr(sys.stdout, 'reconfigure'):
 class EmergencyBrake:
     """Bộ giám sát an toàn và Phanh khẩn cấp Virtual Bumper cho JetBot"""
 
-    def __init__(self, brake_dist_m=0.35, warning_dist_m=0.55, min_pts_threshold=20, is_enabled=False):
+    def __init__(self, brake_dist_m=0.20, warning_dist_m=0.40, min_pts_threshold=20, is_enabled=False):
         """
-        :param brake_dist_m: Ngưỡng cự ly phanh cứng khẩn cấp (mặc định 35cm = 350mm để bao quát điểm mù OAK-D S2)
-        :param warning_dist_m: Ngưỡng cảnh báo giảm tốc (mặc định 55cm = 550mm)
+        :param brake_dist_m: Ngưỡng cự ly phanh cứng khẩn cấp (mặc định 20cm = 200mm)
+        :param warning_dist_m: Ngưỡng cảnh báo giảm tốc (mặc định 40cm = 400mm)
         :param min_pts_threshold: Số điểm ảnh cản tối thiểu để xác nhận (chống nhiễu hạt)
         :param is_enabled: Bật/Tắt can thiệp phanh (Mặc định False để lái tự do)
         """
