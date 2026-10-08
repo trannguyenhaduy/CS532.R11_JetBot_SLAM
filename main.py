@@ -56,6 +56,7 @@ from modules.camera_streamer import CameraStreamer
 from modules.spatial_detector import SpatialPerceptionEngine
 from modules.person_tracker import PersonTracker
 from modules.emergency_brake import EmergencyBrake
+from modules.occupancy_slam import OccupancySLAM
 from modules.semantic_mapper import SemanticMapper
 from modules.web_server import WebCockpitServer
 
@@ -163,8 +164,8 @@ class JetBotMasterSystem:
             is_enabled=getattr(config, 'ENABLE_SAFETY_BRAKE', True)
         )
 
-        # 7. Khởi tạo Module Bản đồ Ngữ nghĩa 3D
-        self.mapper = SemanticMapper() if self.flags.mapper else None
+        # 7. Khởi tạo Module Bản đồ Chiếm dụng 2D Tích Lũy Tĩnh & Ghim Vật Thể (Occupancy SLAM)
+        self.mapper = OccupancySLAM(size_m=10.0, resolution=0.05) if self.flags.mapper else None
 
         # 8. Khởi tạo Trạm điều khiển Web Cockpit
         self.web = None
@@ -176,6 +177,8 @@ class JetBotMasterSystem:
             self.web.new_frame_event = getattr(self.camera, 'new_frame_event', None)
             self.web.drive_cmd_cb = self.on_drive_command
             self.web.feature_toggle_cb = self.toggle_feature
+            self.web.map_save_cb = self.save_map
+            self.web.map_reset_cb = self.reset_map
             self.web.start()
 
         # Kết nối ROS trong nền nếu có roscore
@@ -703,8 +706,8 @@ class JetBotMasterSystem:
             v, pct, curr, pwr, rem = self.battery_metrics
             pts = self.camera.points_3d if self.camera else []
             has_person = any(d.get('name') == 'PERSON' for d in self.detections)
-            confirmed_objs = self.mapper.get_confirmed_objects() if (self.flags.mapper and self.mapper) else []
-            map_payload = self.mapper.get_map_payload() if (self.flags.mapper and self.mapper) else {}
+            confirmed_objs = self.mapper.get_confirmed_landmarks() if (self.flags.mapper and self.mapper) else []
+            map_payload = self.mapper.get_payload_for_web() if (self.flags.mapper and self.mapper) else {}
             brake_dist = getattr(config, 'SAFETY_BRAKE_DIST_M', 0.20)
             cam_fps = float(self.camera.calc_fps) if (self.camera and hasattr(self.camera, 'calc_fps') and self.camera.calc_fps > 0) else 15.0
             
@@ -726,17 +729,18 @@ class JetBotMasterSystem:
                 "robot_yaw": round(self.robot_yaw, 3), "path": self.path_history,
                 "map_b64": map_payload.get("map_b64", ""),
                 "map_version": map_payload.get("map_version", 1),
-                "map_origin_x": map_payload.get("map_origin_x", -4.0),
-                "map_origin_y": map_payload.get("map_origin_y", -4.0),
+                "map_origin_x": map_payload.get("map_origin_x", -5.0),
+                "map_origin_y": map_payload.get("map_origin_y", -5.0),
                 "map_resolution": map_payload.get("map_resolution", 0.05),
-                "map_width": map_payload.get("map_width", 160),
-                "map_height": map_payload.get("map_height", 160),
+                "map_width": map_payload.get("map_width", 200),
+                "map_height": map_payload.get("map_height", 200),
                 "free_cells": map_payload.get("free_cells", 0),
                 "occ_cells": map_payload.get("occ_cells", 0),
                 "points_3d": pts,
                 "detections": self.detections, "obstacle_distance": self.obstacle_distance,
                 "safety_brake_dist": brake_dist,
                 "semantic_objects": confirmed_objs,
+                "landmarks": confirmed_objs,
                 "follower_enabled": bool(self.follower.is_enabled) if self.follower else False,
                 "mapper_enabled": bool(self.flags.mapper),
                 "camera_source": f"{cam_src} [{cam_mode_str}]",
@@ -788,9 +792,9 @@ class JetBotMasterSystem:
             return new_state
         elif "map" in flag_name:
             if self.mapper is None:
-                self.mapper = SemanticMapper()
+                self.mapper = OccupancySLAM(size_m=10.0, resolution=0.05)
             self.flags.mapper = not self.flags.mapper
-            print(f"🔄 [TOGGLE] Bản đồ ngữ nghĩa 3D: {'BẬT' if self.flags.mapper else 'TẮT'}")
+            print(f"🔄 [TOGGLE] Bản đồ chiếm dụng 2D OccupancySLAM: {'BẬT' if self.flags.mapper else 'TẮT'}")
             return self.flags.mapper
         elif "brake" in flag_name:
             if self.safety_brake:
@@ -807,6 +811,19 @@ class JetBotMasterSystem:
             print(f"🔄 [TOGGLE] Đảo chiều Tiến/Lùi: {'BẬT' if self.motors.invert_linear else 'TẮT'}")
             return self.motors.invert_linear
         return False
+
+    def save_map(self, name="my_room_map"):
+        """Lưu bản đồ hiện tại sang file JSON & PNG"""
+        if self.mapper:
+            return self.mapper.save_map(name)
+        return False, "Module Mapper chưa bật"
+
+    def reset_map(self):
+        """Xóa trắng bản đồ 2D để xây dựng lại từ đầu"""
+        if self.mapper:
+            return self.mapper.reset_map()
+        return False
+
 
     def shutdown(self):
         print("\n🛑 [SHUTDOWN] Đang dừng an toàn toàn bộ hệ thống JetBot...")

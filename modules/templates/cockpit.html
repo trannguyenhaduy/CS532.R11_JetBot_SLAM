@@ -147,7 +147,9 @@
         <div style="display:flex; gap:5px; align-items:center;">
           <button class="tab-btn active" id="btn-view-2d" onclick="switchView('2d')">2D GRID</button>
           <button class="tab-btn" id="btn-view-3d" onclick="switchView('3d')">3D VIEW</button>
-          <button class="tab-btn" style="border-color:var(--amber); color:var(--amber);" onclick="resetMapCamera()" title="Căn giữa góc nhìn">🎯 RESET CAM</button>
+          <button class="tab-btn" style="border-color:var(--amber); color:var(--amber);" onclick="resetMapCamera()" title="Căn giữa góc nhìn">🎯 CĂN GIỮA</button>
+          <button class="tab-btn" style="border-color:var(--emerald); color:var(--emerald);" onclick="saveMap()" title="Lưu bản đồ hiện tại">💾 LƯU BẢN ĐỒ</button>
+          <button class="tab-btn" style="border-color:var(--rose); color:var(--rose);" onclick="resetMap()" title="Xóa trắng bản đồ để tạo mới">🧹 XÓA BẢN ĐỒ</button>
         </div>
       </div>
       <div class="viewport" id="map-viewport-container">
@@ -800,60 +802,36 @@
         mapCtx.restore();
       }
 
-      // 5. CÁC VẬT THỂ NHẬN DIỆN (SEMANTIC OBJECTS)
-      const confirmedObjs = (d.semantic_objects && d.semantic_objects.length > 0) ? d.semantic_objects : [];
-      if (confirmedObjs.length > 0) {
-        confirmedObjs.forEach(obj => {
+      // 5. CÁC VẬT THỂ NGỮ NGHĨA GHIM CỐ ĐỊNH (PINNED SEMANTIC LANDMARKS)
+      const landmarks = (d.landmarks && d.landmarks.length > 0) ? d.landmarks : ((d.semantic_objects && d.semantic_objects.length > 0) ? d.semantic_objects : []);
+      if (landmarks.length > 0) {
+        landmarks.forEach(obj => {
           const cp = worldToCanvas(obj.x, obj.y);
           const isPerson = (obj.id === 0 || obj.name === 'PERSON');
-          const color = isPerson ? '#ff2a6d' : '#00f0ff';
+          const isPinned = (obj.pinned === true || (obj.seen && obj.seen >= 3));
+          const color = isPerson ? '#ff2a6d' : (isPinned ? '#00f0ff' : '#00ffa3');
 
           mapCtx.save();
           mapCtx.fillStyle = color;
           mapCtx.shadowColor = color;
-          mapCtx.shadowBlur = 10;
+          mapCtx.shadowBlur = isPinned ? 12 : 6;
           mapCtx.beginPath();
-          mapCtx.moveTo(cp.x, cp.y - 10);
-          mapCtx.lineTo(cp.x + 9, cp.y);
-          mapCtx.lineTo(cp.x, cp.y + 10);
-          mapCtx.lineTo(cp.x - 9, cp.y);
+          mapCtx.moveTo(cp.x, cp.y - 11);
+          mapCtx.lineTo(cp.x + 10, cp.y);
+          mapCtx.lineTo(cp.x, cp.y + 11);
+          mapCtx.lineTo(cp.x - 10, cp.y);
           mapCtx.closePath();
           mapCtx.fill();
-          mapCtx.strokeStyle = '#fff';
-          mapCtx.lineWidth = 1.5;
+          mapCtx.strokeStyle = isPinned ? '#00f0ff' : '#ffffff';
+          mapCtx.lineWidth = 1.8;
           mapCtx.stroke();
           mapCtx.restore();
 
           mapCtx.font = 'bold 10px Orbitron, monospace';
           mapCtx.fillStyle = color;
-          const icon = isPerson ? '👤' : (obj.name.includes('CHAIR') ? '🪑' : '📦');
-          mapCtx.fillText(`${icon} ${obj.name} (${obj.seen}x)`, cp.x + 12, cp.y + 4);
-        });
-      } else if (d.detections && d.detections.length > 0) {
-        d.detections.forEach(det => {
-          const wx = d.robot_x + (det.z * Math.cos(d.robot_yaw) - (-det.x) * Math.sin(d.robot_yaw));
-          const wy = d.robot_y + (det.z * Math.sin(d.robot_yaw) + (-det.x) * Math.cos(d.robot_yaw));
-          const cp = worldToCanvas(wx, wy);
-
-          const isPerson = (det.id === 0 || det.name === 'PERSON');
-          const color = isPerson ? '#ff2a6d' : '#00ffa3';
-
-          mapCtx.save();
-          mapCtx.fillStyle = color;
-          mapCtx.shadowColor = color;
-          mapCtx.shadowBlur = 8;
-          mapCtx.beginPath();
-          mapCtx.arc(cp.x, cp.y, 7, 0, Math.PI * 2);
-          mapCtx.fill();
-          mapCtx.strokeStyle = '#fff';
-          mapCtx.lineWidth = 1.5;
-          mapCtx.stroke();
-          mapCtx.restore();
-
-          mapCtx.font = 'bold 10px Orbitron, monospace';
-          mapCtx.fillStyle = color;
-          const icon = isPerson ? '👤' : '📦';
-          mapCtx.fillText(`${icon} ${det.name} ${(det.score*100).toFixed(0)}%`, cp.x + 11, cp.y + 4);
+          const icon = isPerson ? '👤' : (obj.name.includes('CHAIR') ? '🪑' : (obj.name.includes('BOTTLE') ? '🍾' : '📦'));
+          const pinBadge = isPinned ? '📌' : '';
+          mapCtx.fillText(`${pinBadge}${icon} ${obj.name} (${obj.seen || 1}x)`, cp.x + 13, cp.y + 4);
         });
       }
 
@@ -980,7 +958,7 @@
       // 8. Chú giải Bản đồ (HUD Legend)
       mapCtx.font = '10px "Space Grotesk", sans-serif';
       mapCtx.fillStyle = 'rgba(255,255,255,0.85)';
-      mapCtx.fillText('🟢 Free Space  |  🟦 Tường / LaserScan  |  🔴 Cản gần  |  🔺 JetBot', W - 350, H - 14);
+      mapCtx.fillText('🟢 Free Space  |  🟦 Tường Tích Lũy  |  📌 Vật Thể Ghim  |  🔺 JetBot', W - 390, H - 14);
 
       // 9. Telemetry mini box ở góc trên bản đồ
       mapCtx.font = '9px Orbitron, monospace';
@@ -1353,31 +1331,47 @@
       }
     }
 
-    // Vẽ bản đồ 2D trên Canvas
-    function draw2DMap(d) {
-      const cv = document.getElementById('map-canvas');
-      const ctx = cv.getContext('2d');
-      cv.width = cv.parentElement.clientWidth; cv.height = cv.parentElement.clientHeight;
-      ctx.fillStyle = '#101520'; ctx.fillRect(0, 0, cv.width, cv.height);
-      if (!mapImage.width) return;
-      const sc = Math.min(cv.width / mapImage.width, cv.height / mapImage.height) * 1.3;
-      ctx.save(); ctx.translate(cv.width / 2, cv.height / 2);
-      ctx.drawImage(mapImage, -mapImage.width*sc/2, -mapImage.height*sc/2, mapImage.width*sc, mapImage.height*sc);
+    // 💾 LƯU BẢN ĐỒ CHIẾM DỤNG 2D RA FILE JSON & PNG
+    function saveMap() {
+      const defaultName = "phong_khach_map_" + new Date().toISOString().slice(0, 10).replace(/-/g, "");
+      const mapName = prompt("Nhập tên file bản đồ cần lưu (JSON & PNG):", defaultName);
+      if (!mapName || !mapName.trim()) return;
 
-      function w2c(wx, wy) {
-        return [((wx - d.map_origin_x)/d.map_resolution - mapImage.width/2)*sc, (mapImage.height/2 - (wy - d.map_origin_y)/d.map_resolution)*sc];
+      fetch(`/api/map/save?name=${encodeURIComponent(mapName.trim())}`, { method: 'POST' })
+        .then(r => r.json())
+        .then(data => {
+          if (data.status === 'OK') {
+            alert(`💾 [THÀNH CÔNG] Đã lưu bản đồ tĩnh 2D vào:\n${data.result}\n(Bao gồm file .json ma trận & file .png ảnh trực quan)`);
+          } else {
+            alert(`❌ [LỖI LƯU BẢN ĐỒ] ${data.result || 'Không thể lưu file'}`);
+          }
+        })
+        .catch(err => {
+          alert(`❌ [LỖI MẠNG] Không thể kết nối tới server: ${err.message}`);
+        });
+    }
+
+    // 🧹 XÓA TRẮNG BẢN ĐỒ ĐỂ XÂY DỰNG LẠI TỪ ĐẦU
+    function resetMap() {
+      if (!confirm("⚠️ Bạn có chắc chắn muốn XÓA TRẮNG toàn bộ bản đồ 2D và các vật thể đã ghim?\n(Dữ liệu quét mới sẽ bắt đầu lại từ đầu)")) {
+        return;
       }
-      if (d.path && d.path.length > 1) {
-        ctx.beginPath(); ctx.strokeStyle = '#00ffa3'; ctx.lineWidth = 2; ctx.setLineDash([3,3]);
-        const s = w2c(d.path[0][0], d.path[0][1]); ctx.moveTo(s[0], s[1]);
-        for(let i=1; i<d.path.length; i++) { const p = w2c(d.path[i][0], d.path[i][1]); ctx.lineTo(p[0], p[1]); }
-        ctx.stroke(); ctx.setLineDash([]);
-      }
-      const [rx, ry] = w2c(d.robot_x, d.robot_y);
-      ctx.save(); ctx.translate(rx, ry); ctx.rotate(-d.robot_yaw);
-      ctx.fillStyle = '#00f0ff'; ctx.beginPath(); ctx.arc(0, 0, 7, 0, Math.PI*2); ctx.fill();
-      ctx.strokeStyle = '#ff2a6d'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(14,0); ctx.stroke();
-      ctx.restore(); ctx.restore();
+      fetch('/api/map/reset', { method: 'POST' })
+        .then(r => r.json())
+        .then(data => {
+          alert("🧹 [ĐÃ XÓA TRẮNG] Bản đồ 2D đã được khởi tạo lại thành công!");
+          currentMapVer = -1;
+          if (lastStateData) {
+            lastStateData.free_cells = 0;
+            lastStateData.occ_cells = 0;
+            lastStateData.landmarks = [];
+            lastStateData.semantic_objects = [];
+            draw2DMap(lastStateData);
+          }
+        })
+        .catch(err => {
+          alert(`❌ [LỖI MẠNG] Không thể kết nối tới server: ${err.message}`);
+        });
     }
 
     // Chuyển đổi trạng thái Tự hành Bám người HRI

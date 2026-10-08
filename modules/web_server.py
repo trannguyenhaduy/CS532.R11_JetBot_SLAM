@@ -132,6 +132,30 @@ class WebHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(json.dumps({"status": "OK", "mode": res_mode}).encode())
             return
+        elif self.path.startswith('/api/map/save'):
+            map_name = "room_map"
+            if '?' in self.path:
+                for p in self.path.split('?')[1].split('&'):
+                    if p.startswith('name='): map_name = p.split('=')[1].strip()
+            ok, res = (False, "No handler")
+            if inst:
+                ok, res = inst.save_map(map_name)
+            self.send_response(200 if ok else 500)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps({"status": "OK" if ok else "ERROR", "result": res}).encode())
+            return
+        elif self.path.startswith('/api/map/reset'):
+            ok = False
+            if inst:
+                ok = inst.reset_map()
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps({"status": "OK", "reset": bool(ok)}).encode())
+            return
         elif self.path.startswith('/api/toggle'):
             flag_name = None
             if '?' in self.path:
@@ -171,6 +195,30 @@ class WebHandler(BaseHTTPRequestHandler):
             self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
             self.end_headers()
             self.wfile.write(b'OK')
+        elif self.path.startswith('/api/map/save'):
+            map_name = "room_map"
+            if '?' in self.path:
+                for p in self.path.split('?')[1].split('&'):
+                    if p.startswith('name='): map_name = p.split('=')[1].strip()
+            ok, res = (False, "No handler")
+            if inst:
+                ok, res = inst.save_map(map_name)
+            self.send_response(200 if ok else 500)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps({"status": "OK" if ok else "ERROR", "result": res}).encode())
+            return
+        elif self.path.startswith('/api/map/reset'):
+            ok = False
+            if inst:
+                ok = inst.reset_map()
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps({"status": "OK", "reset": bool(ok)}).encode())
+            return
         elif self.path.startswith('/api/toggle'):
             # API bật/tắt tính năng động từ Web
             flag_name = None
@@ -214,6 +262,8 @@ class WebCockpitServer:
         self.new_frame_event = None
         self.drive_cmd_cb = None
         self.feature_toggle_cb = None
+        self.map_save_cb = None
+        self.map_reset_cb = None
 
     def start(self):
         WebHandler.server_instance = self
@@ -254,6 +304,17 @@ class WebCockpitServer:
         if self.feature_toggle_cb:
             return self.feature_toggle_cb(flag_name)
         return False
+
+    def save_map(self, name="room_map"):
+        if self.map_save_cb:
+            return self.map_save_cb(name)
+        return False, "Chưa đăng ký hàm lưu bản đồ"
+
+    def reset_map(self):
+        if self.map_reset_cb:
+            return self.map_reset_cb()
+        return False
+
 
 
 if __name__ == '__main__':

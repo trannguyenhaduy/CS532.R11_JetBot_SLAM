@@ -177,77 +177,29 @@ class OccupancyGridMap2D:
         return self.cached_b64, self.version
 
 
-class SemanticMapper:
-    def __init__(self, cluster_dist=0.40, min_seen=3, grid_size=8.0, resolution=0.05):
+try:
+    from modules.occupancy_slam import OccupancySLAM, PinnedLandmark
+except ImportError:
+    from occupancy_slam import OccupancySLAM, PinnedLandmark
+
+
+class SemanticMapper(OccupancySLAM):
+    """
+    SemanticMapper kế thừa trực tiếp OccupancySLAM:
+    Bản đồ chiếm dụng 2D tích lũy vĩnh viễn, ghim vật thể ngữ nghĩa cố định,
+    hỗ trợ lưu/nạp/xóa bản đồ.
+    """
+    def __init__(self, cluster_dist=0.40, min_seen=2, grid_size=8.0, resolution=0.05, save_dir="maps"):
+        super().__init__(size_m=grid_size, resolution=resolution, save_dir=save_dir)
         self.cluster_dist = cluster_dist
         self.min_seen = min_seen
-        self.catalog = []
-        self.occupancy_grid = OccupancyGridMap2D(size_m=grid_size, resolution=resolution)
-
-    def update_from_ros_grid(self, msg):
-        """Cập nhật bản đồ từ ROS OccupancyGrid (/rtabmap/grid_map hoặc /map)"""
-        self.occupancy_grid.update_from_ros_occupancy_grid(msg)
-
-    def transform_cam_to_world(self, xc, yc, zc, rx, ry, rz, yaw):
-        """
-        Chiếu điểm từ Camera Frame sang World Frame bằng phép toán vi sai.
-        Camera: X phải, Y xuống, Z tới -> Robot: X tới (zc), Y trái (-xc), Z lên (-yc + 0.12)
-        """
-        x_rob = zc
-        y_rob = -xc
-        z_rob = -yc + 0.12
-
-        cos_y = math.cos(yaw)
-        sin_y = math.sin(yaw)
-        wx = rx + (x_rob * cos_y - y_rob * sin_y)
-        wy = ry + (x_rob * sin_y + y_rob * cos_y)
-        wz = rz + z_rob
-        return round(wx, 2), round(wy, 2), round(wz, 2)
-
-    def add_detection(self, obj_id, name, xc, yc, zc, score, rx=0.0, ry=0.0, rz=0.0, yaw=0.0):
-        wx, wy, wz = self.transform_cam_to_world(xc, yc, zc, rx, ry, rz, yaw)
-
-        # Gom cụm Euclidean Clustering
-        for obj in self.catalog:
-            if obj.name == name or (obj.obj_id == obj_id and obj_id != 0):
-                d = math.hypot(wx - obj.x, wy - obj.y)
-                if d < self.cluster_dist:
-                    obj.update(wx, wy, wz, score)
-                    return obj
-
-        new_obj = SemanticObject(obj_id, name, wx, wy, wz, score)
-        self.catalog.append(new_obj)
-        return new_obj
-
-    def update_scan(self, rx, ry, points_3d):
-        """Cập nhật mây điểm quét 3D vào bản đồ chiếm dụng 2D"""
-        self.occupancy_grid.update_from_scan(rx, ry, points_3d)
+        # Alias occupancy_grid trỏ tới chính self để tương thích ngược
+        self.occupancy_grid = self
 
     def get_confirmed_objects(self):
         """Chỉ trả về các vật thể đã thấy đủ số lần (chống nhấp nháy)"""
-        return [
-            {
-                "id": o.obj_id, "name": o.name, "score": o.score,
-                "x": round(o.x, 2), "y": round(o.y, 2), "z": round(o.z, 2),
-                "seen": o.seen_count
-            }
-            for o in self.catalog if o.seen_count >= self.min_seen
-        ]
+        return [lm.to_dict() for lm in self.landmarks if lm.seen_count >= self.min_seen]
 
-    def get_map_payload(self):
-        """Trả về toàn bộ thông số và ảnh Base64 của bản đồ 2D"""
-        b64, ver = self.occupancy_grid.get_png_base64()
-        return {
-            "map_b64": b64,
-            "map_version": ver,
-            "map_origin_x": self.occupancy_grid.origin_x,
-            "map_origin_y": self.occupancy_grid.origin_y,
-            "map_resolution": self.occupancy_grid.resolution,
-            "map_width": self.occupancy_grid.width,
-            "map_height": self.occupancy_grid.height,
-            "free_cells": self.occupancy_grid.num_free_cells,
-            "occ_cells": self.occupancy_grid.num_occ_cells
-        }
 
 
 if __name__ == '__main__':
