@@ -735,6 +735,33 @@ class CameraStreamer:
             pass
         return 0.0
 
+    def get_visual_keyframe(self, bgr_img=None):
+        """Trích xuất ảnh mốc chuẩn (Anchor Keyframe) 160x90 float32 grayscale để khóa vòng lặp (Loop Closure)"""
+        if bgr_img is None:
+            bgr_img = getattr(self, '_cached_oak_frame', None) or getattr(self, '_cached_frame', None)
+        if bgr_img is None:
+            return None
+        try:
+            small = cv2.resize(bgr_img, (160, 90), interpolation=cv2.INTER_AREA)
+            return cv2.cvtColor(small, cv2.COLOR_BGR2GRAY).astype(np.float32)
+        except Exception:
+            return None
+
+    def match_visual_keyframe(self, current_bgr, anchor_gray):
+        """So khớp ảnh hiện tại với ảnh mốc Anchor bằng Phase Correlation để đóng vòng quay 360° chính xác 100%.
+        Trả về: (dx, dy, response). Nếu response >= 0.28 và abs(dx) <= 2.5px -> Trùng khớp góc quay ban đầu!
+        """
+        if current_bgr is None or anchor_gray is None:
+            return 999.0, 999.0, 0.0
+        try:
+            curr_gray = self.get_visual_keyframe(current_bgr)
+            if curr_gray is None or curr_gray.shape != anchor_gray.shape:
+                return 999.0, 999.0, 0.0
+            shift, response = cv2.phaseCorrelate(anchor_gray, curr_gray)
+            return float(shift[0]), float(shift[1]), float(response)
+        except Exception:
+            return 999.0, 999.0, 0.0
+
     def process_depth_frame(self, depth_uint16_mm, rx=0.0, ry=0.0, rz=0.0, yaw=0.0):
         """
         Chiếu ma trận Stereo Depth thành tia quét 2D LaserScan / Obstacle Scan chuẩn xác:

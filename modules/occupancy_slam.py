@@ -120,6 +120,7 @@ class OccupancySLAM:
         self._next_landmark_id = 1
 
         self.version = 1
+        self.cached_version = -1
         self.cached_b64 = ""
         self.last_encode_time = 0.0
         self.total_scans_processed = 0
@@ -166,6 +167,10 @@ class OccupancySLAM:
         # Lấy mẫu tối đa 40 điểm cản tiêu biểu trong lượt quét hiện tại để giữ CPU < 1ms
         sampled_pts = points_3d[::max(1, len(points_3d) // 40)] if len(points_3d) > 40 else points_3d
 
+        # Tạo ray_mask 1 lần duy nhất cho toàn bộ 40 tia thay vì cấp phát 40 mảng trong vòng lặp
+        ray_mask = np.zeros((self.height, self.width), dtype=np.uint8)
+        has_ray = False
+
         for pt in sampled_pts:
             try:
                 wx, wy = float(pt[0]), float(pt[1])
@@ -191,11 +196,8 @@ class OccupancySLAM:
                     fy = ry + (wy - ry) * ratio
                     f_col, f_row = self.world_to_grid(fx, fy)
                     if f_col is not None:
-                        ray_mask = np.zeros((self.height, self.width), dtype=np.uint8)
                         cv2.line(ray_mask, (r_col, r_row), (f_col, f_row), 1, 1)
-                        free_indices = (ray_mask == 1) & (self.hit_counts < 2)
-                        self.grid[free_indices] = 128
-                        self.miss_counts[free_indices] += 1
+                        has_ray = True
 
                 # ─── PHÂN LOẠI SÀN NHÀ VÀ VẬT CẢN THỰC SỰ ───
                 # Sàn nhà (wz < 0.06m / 6cm): Không phải vật cản! Xe có thể đi qua!
@@ -213,6 +215,11 @@ class OccupancySLAM:
 
             except Exception:
                 pass
+
+        if has_ray:
+            free_indices = (ray_mask == 1) & (self.hit_counts < 2)
+            self.grid[free_indices] = 128
+            self.miss_counts[free_indices] += 1
 
         if has_new_obstacle or (self.total_scans_processed % 3 == 0):
             self.version += 1
@@ -452,7 +459,12 @@ class OccupancySLAM:
         - Tương thích kép 100% OpenCV 3 (Jetson Nano) & OpenCV 4
         """
         now = time.time()
-        if not force and self.cached_b64 and (now - self.last_encode_time < 0.25):
+        # 1. Trả ngay tức thì nếu dữ liệu bản đồ chưa hề thay đổi (0 CPU, 0ms latency)
+        if not force and self.cached_b64 and (self.cached_version == self.version):
+            return self.cached_b64, self.version
+
+        # 2. Giới hạn tần suất sinh PNG tối đa 3 FPS (cách nhau >= 0.35s) để chống nghẽn CPU Jetson Nano
+        if not force and self.cached_b64 and (now - self.last_encode_time < 0.35):
             return self.cached_b64, self.version
 
         try:
@@ -500,6 +512,7 @@ class OccupancySLAM:
             success, buf = cv2.imencode('.png', bgra)
             if success:
                 self.cached_b64 = base64.b64encode(buf).decode('ascii')
+                self.cached_version = self.version
                 self.last_encode_time = now
 
         except Exception as e:

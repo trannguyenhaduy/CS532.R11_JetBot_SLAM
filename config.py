@@ -55,7 +55,7 @@ IMAGE_SKIP_FRAMES = 2       # Bỏ qua 1/2 frame video để nhẹ CPU encode JP
 AUTO_SCAN_MODE        = "step"  # "step" (Quét từng bước 8 góc dừng tĩnh - Cực nét cho YOLO) hoặc "smooth" (Quay chậm đều)
 AUTO_SCAN_SPEED_PWM   = 0.13    # Mức xung PWM quay cực êm (13% PWM), chống quay tít
 AUTO_SCAN_STEPS       = 8       # 8 cung góc x 45° = 360° (tương thích FOV camera OAK-D S2 ~69°)
-AUTO_SCAN_STEP_TIME_S = 0.35    # Thời gian nhích mỗi góc (~45 độ)
+AUTO_SCAN_STEP_TIME_S = 0.52    # Thời gian nhích mỗi góc (~45 độ ở mức 13% PWM)
 AUTO_SCAN_PAUSE_S     = 0.70    # Thời gian dừng tĩnh mỗi góc để YOLO & 3D Depth chốt vật thể không vệt mờ
 AUTO_SCAN_DURATION_S  = 16.0    # Thời gian cho chế độ quay chậm đều (smooth): 16.0s ~ 22.5 deg/s
 
