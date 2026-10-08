@@ -1407,13 +1407,18 @@
 
     // 🔄 TỰ ĐỘNG XOAY 360 ĐỘ QUÉT BẢN ĐỒ TOÀN CẢNH (AUTO 360° MAPPING SPIN)
     function toggleAutoScan() {
-      fetch('/api/auto_scan')
+      const mainBtn = document.getElementById('btn-teleop-auto-scan') || document.getElementById('btn-auto-scan');
+      const willStart = !mainBtn || !mainBtn.innerText.includes('ĐANG');
+      updateAutoScanBtn(willStart);
+
+      fetch('/api/auto_scan?t=' + Date.now(), { cache: 'no-store' })
         .then(r => r.json())
         .then(data => {
           updateAutoScanBtn(Boolean(data.auto_scanning));
         })
         .catch(err => {
           console.warn('Lỗi gọi API tự quét 360:', err);
+          updateAutoScanBtn(false);
         });
     }
 

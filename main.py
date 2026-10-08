@@ -186,6 +186,7 @@ class JetBotMasterSystem:
             self.web.feature_toggle_cb = self.toggle_feature
             self.web.map_save_cb = self.save_map
             self.web.map_reset_cb = self.reset_map
+            self.web.auto_scan_cb = self.toggle_auto_scan
             self.web.start()
 
         # Kết nối ROS trong nền nếu có roscore
@@ -979,6 +980,10 @@ class JetBotMasterSystem:
             # Phát lệnh quay vi sai với xung đủ thắng ma sát bánh bi
             if self.motors:
                 self.motors.set_cmd_vel(0.0, target_angular_speed)
+            if HAS_ROS and self.ros_cmd_pub:
+                t = Twist()
+                t.angular.z = target_angular_speed
+                self.ros_cmd_pub.publish(t)
 
             with self.lock:
                 cur_yaw = self.robot_yaw
@@ -1001,6 +1006,9 @@ class JetBotMasterSystem:
             self.current_w = 0.0
         if self.motors:
             self.motors.stop()
+        if HAS_ROS and self.ros_cmd_pub:
+            t = Twist()
+            self.ros_cmd_pub.publish(t)
 
     def reset_map(self):
         """Xóa trắng bản đồ 2D để xây dựng lại từ đầu và đặt lại gốc tọa độ"""

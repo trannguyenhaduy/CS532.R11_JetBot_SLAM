@@ -285,6 +285,7 @@ class WebCockpitServer:
         self.feature_toggle_cb = None
         self.map_save_cb = None
         self.map_reset_cb = None
+        self.auto_scan_cb = None
 
     def start(self):
         WebHandler.server_instance = self
@@ -334,6 +335,11 @@ class WebCockpitServer:
     def reset_map(self):
         if self.map_reset_cb:
             return self.map_reset_cb()
+        return False
+
+    def toggle_auto_scan(self):
+        if self.auto_scan_cb:
+            return self.auto_scan_cb()
         return False
 
 
