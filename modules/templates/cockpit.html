@@ -622,9 +622,11 @@
       if (!d) return;
 
       const rect = mapCanvas.getBoundingClientRect();
+      const W = (rect.width && rect.width > 50) ? rect.width : (mapCanvas.clientWidth > 50 ? mapCanvas.clientWidth : 600);
+      const H = (rect.height && rect.height > 50) ? rect.height : (mapCanvas.clientHeight > 50 ? mapCanvas.clientHeight : 420);
       const dpr = window.devicePixelRatio || 1;
-      const targetW = Math.max(300, Math.round((rect.width || 600) * dpr));
-      const targetH = Math.max(200, Math.round((rect.height || 420) * dpr));
+      const targetW = Math.max(300, Math.round(W * dpr));
+      const targetH = Math.max(200, Math.round(H * dpr));
 
       if (mapCanvas.width !== targetW || mapCanvas.height !== targetH) {
         mapCanvas.width = targetW;
@@ -632,424 +634,444 @@
       }
 
       mapCtx.save();
-      mapCtx.scale(dpr, dpr);
+      try {
+        mapCtx.scale(dpr, dpr);
 
-      const W = rect.width || (targetW / dpr);
-      const H = rect.height || (targetH / dpr);
+        const rx = (typeof d.robot_x === 'number') ? d.robot_x : 0.0;
+        const ry = (typeof d.robot_y === 'number') ? d.robot_y : 0.0;
+        const yaw = (typeof d.robot_yaw === 'number') ? d.robot_yaw : 0.0;
 
-      // Nếu đang bật chế độ bám xe, đồng bộ mapPan theo robot
-      if (followRobot) {
-        mapPanX = d.robot_x || 0;
-        mapPanY = d.robot_y || 0;
-      }
+        // Nếu đang bật chế độ bám xe, đồng bộ mapPan theo robot
+        if (followRobot) {
+          mapPanX = rx;
+          mapPanY = ry;
+        }
 
-      // Xóa nền màu Cyber Blueprint Dark
-      mapCtx.fillStyle = '#070b12';
-      mapCtx.fillRect(0, 0, W, H);
+        // Xóa nền màu Cyber Blueprint Dark
+        mapCtx.fillStyle = '#070b12';
+        mapCtx.fillRect(0, 0, W, H);
 
-      // Thang đo tỉ lệ (Scale): 1 mét thực tế = bao nhiêu pixel trên canvas
-      const baseScale = Math.min(W, H) / 7.0; 
-      const scale = baseScale * mapZoom;
-      const centerX = W / 2.0;
-      const centerY = H / 2.0;
+        // Thang đo tỉ lệ (Scale): 1 mét thực tế = bao nhiêu pixel trên canvas
+        const safeZoom = (typeof mapZoom === 'number' && mapZoom > 0.1) ? mapZoom : 1.0;
+        const baseScale = Math.min(W, H) / 7.0; 
+        const scale = Math.max(10.0, baseScale * safeZoom);
+        const centerX = W / 2.0;
+        const centerY = H / 2.0;
 
-      function worldToCanvas(wx, wy) {
-        return {
-          x: centerX + (wx - mapPanX) * scale,
-          y: centerY - (wy - mapPanY) * scale
-        };
-      }
+        function worldToCanvas(wx, wy) {
+          return {
+            x: centerX + ((Number(wx) || 0) - mapPanX) * scale,
+            y: centerY - ((Number(wy) || 0) - mapPanY) * scale
+          };
+        }
 
-      // 1. LƯỚI TỌA ĐỘ MÉT BLUEPRINT TƯƠNG PHẢN CAO
-      const visibleRangeX = (W / scale) / 2.0;
-      const visibleRangeY = (H / scale) / 2.0;
-      const minMeterX = Math.floor(mapPanX - visibleRangeX - 1);
-      const maxMeterX = Math.ceil(mapPanX + visibleRangeX + 1);
-      const minMeterY = Math.floor(mapPanY - visibleRangeY - 1);
-      const maxMeterY = Math.ceil(mapPanY + visibleRangeY + 1);
+        // 1. LƯỚI TỌA ĐỘ MÉT BLUEPRINT TƯƠNG PHẢN CAO (Chặn biên an toàn -25m đến +25m chống tràn vòng lặp)
+        const visibleRangeX = Math.min(25.0, (W / scale) / 2.0);
+        const visibleRangeY = Math.min(25.0, (H / scale) / 2.0);
+        const minMeterX = Math.max(-25, Math.floor(mapPanX - visibleRangeX - 1));
+        const maxMeterX = Math.min(25, Math.ceil(mapPanX + visibleRangeX + 1));
+        const minMeterY = Math.max(-25, Math.floor(mapPanY - visibleRangeY - 1));
+        const maxMeterY = Math.min(25, Math.ceil(mapPanY + visibleRangeY + 1));
 
-      // Đường phụ (Minor grid: mỗi 0.5m)
-      mapCtx.lineWidth = 1;
-      for (let m = minMeterX; m <= maxMeterX; m += 0.5) {
-        if (Math.abs(m % 1.0) >= 0.01) {
+        // Đường phụ (Minor grid: mỗi 0.5m)
+        mapCtx.lineWidth = 1;
+        for (let m = minMeterX; m <= maxMeterX; m += 0.5) {
+          if (Math.abs(m % 1.0) >= 0.01) {
+            const p1 = worldToCanvas(m, minMeterY);
+            const p2 = worldToCanvas(m, maxMeterY);
+            mapCtx.strokeStyle = 'rgba(0, 240, 255, 0.07)';
+            mapCtx.beginPath(); mapCtx.moveTo(p1.x, p1.y); mapCtx.lineTo(p2.x, p2.y); mapCtx.stroke();
+          }
+        }
+        for (let m = minMeterY; m <= maxMeterY; m += 0.5) {
+          if (Math.abs(m % 1.0) >= 0.01) {
+            const q1 = worldToCanvas(minMeterX, m);
+            const q2 = worldToCanvas(maxMeterX, m);
+            mapCtx.strokeStyle = 'rgba(0, 240, 255, 0.07)';
+            mapCtx.beginPath(); mapCtx.moveTo(q1.x, q1.y); mapCtx.lineTo(q2.x, q2.y); mapCtx.stroke();
+          }
+        }
+
+        // Đường chính (Major grid: mỗi 1.0m) với nhãn tọa độ mét
+        mapCtx.font = '9px "Space Grotesk", monospace';
+        for (let m = minMeterX; m <= maxMeterX; m += 1.0) {
+          const isAxis = Math.abs(m) < 0.01;
           const p1 = worldToCanvas(m, minMeterY);
           const p2 = worldToCanvas(m, maxMeterY);
-          mapCtx.strokeStyle = 'rgba(0, 240, 255, 0.07)';
+          mapCtx.strokeStyle = isAxis ? 'rgba(0, 255, 163, 0.45)' : 'rgba(0, 240, 255, 0.18)';
+          mapCtx.lineWidth = isAxis ? 1.5 : 1.0;
           mapCtx.beginPath(); mapCtx.moveTo(p1.x, p1.y); mapCtx.lineTo(p2.x, p2.y); mapCtx.stroke();
+
+          const labelPos = worldToCanvas(m, mapPanY);
+          if (labelPos.x > 30 && labelPos.x < W - 30) {
+            mapCtx.fillStyle = isAxis ? 'rgba(0, 255, 163, 0.8)' : 'rgba(0, 240, 255, 0.45)';
+            mapCtx.fillText((m >= 0 ? `+${m.toFixed(0)}m` : `${m.toFixed(0)}m`), labelPos.x + 3, H - 24);
+          }
         }
-      }
-      for (let m = minMeterY; m <= maxMeterY; m += 0.5) {
-        if (Math.abs(m % 1.0) >= 0.01) {
+
+        for (let m = minMeterY; m <= maxMeterY; m += 1.0) {
+          const isAxis = Math.abs(m) < 0.01;
           const q1 = worldToCanvas(minMeterX, m);
           const q2 = worldToCanvas(maxMeterX, m);
-          mapCtx.strokeStyle = 'rgba(0, 240, 255, 0.07)';
+          mapCtx.strokeStyle = isAxis ? 'rgba(0, 240, 255, 0.45)' : 'rgba(0, 240, 255, 0.18)';
+          mapCtx.lineWidth = isAxis ? 1.5 : 1.0;
           mapCtx.beginPath(); mapCtx.moveTo(q1.x, q1.y); mapCtx.lineTo(q2.x, q2.y); mapCtx.stroke();
-        }
-      }
 
-      // Đường chính (Major grid: mỗi 1.0m) với nhãn tọa độ mét
-      mapCtx.font = '9px "Space Grotesk", monospace';
-      for (let m = minMeterX; m <= maxMeterX; m += 1.0) {
-        const isAxis = Math.abs(m) < 0.01;
-        const p1 = worldToCanvas(m, minMeterY);
-        const p2 = worldToCanvas(m, maxMeterY);
-        mapCtx.strokeStyle = isAxis ? 'rgba(0, 255, 163, 0.45)' : 'rgba(0, 240, 255, 0.18)';
-        mapCtx.lineWidth = isAxis ? 1.5 : 1.0;
-        mapCtx.beginPath(); mapCtx.moveTo(p1.x, p1.y); mapCtx.lineTo(p2.x, p2.y); mapCtx.stroke();
-
-        const labelPos = worldToCanvas(m, mapPanY);
-        if (labelPos.x > 30 && labelPos.x < W - 30) {
-          mapCtx.fillStyle = isAxis ? 'rgba(0, 255, 163, 0.8)' : 'rgba(0, 240, 255, 0.45)';
-          mapCtx.fillText((m >= 0 ? `+${m.toFixed(0)}m` : `${m.toFixed(0)}m`), labelPos.x + 3, H - 24);
-        }
-      }
-
-      for (let m = minMeterY; m <= maxMeterY; m += 1.0) {
-        const isAxis = Math.abs(m) < 0.01;
-        const q1 = worldToCanvas(minMeterX, m);
-        const q2 = worldToCanvas(maxMeterX, m);
-        mapCtx.strokeStyle = isAxis ? 'rgba(0, 240, 255, 0.45)' : 'rgba(0, 240, 255, 0.18)';
-        mapCtx.lineWidth = isAxis ? 1.5 : 1.0;
-        mapCtx.beginPath(); mapCtx.moveTo(q1.x, q1.y); mapCtx.lineTo(q2.x, q2.y); mapCtx.stroke();
-
-        const labelPos = worldToCanvas(mapPanX, m);
-        if (labelPos.y > 20 && labelPos.y < H - 40) {
-          mapCtx.fillStyle = isAxis ? 'rgba(0, 240, 255, 0.8)' : 'rgba(0, 240, 255, 0.45)';
-          mapCtx.fillText((m >= 0 ? `+${m.toFixed(0)}m` : `${m.toFixed(0)}m`), 8, labelPos.y - 3);
-        }
-      }
-
-      // Gốc tọa độ thế giới (0, 0)
-      const orig = worldToCanvas(0, 0);
-      mapCtx.strokeStyle = 'rgba(0, 255, 163, 0.7)';
-      mapCtx.lineWidth = 1.5;
-      mapCtx.beginPath();
-      mapCtx.arc(orig.x, orig.y, 4, 0, Math.PI * 2);
-      mapCtx.stroke();
-      mapCtx.fillStyle = 'rgba(0, 255, 163, 0.7)';
-      mapCtx.fillText('(0,0)', orig.x + 6, orig.y - 6);
-
-      // 2. BẢN ĐỒ CHIẾM DỤNG 2D (OCCUPANCY GRID LAYER)
-      if (mapImage && mapImage.complete && mapImage.naturalWidth > 0) {
-        const res = d.map_resolution || 0.05;
-        const ox = d.map_origin_x !== undefined ? d.map_origin_x : -4.0;
-        const oy = d.map_origin_y !== undefined ? d.map_origin_y : -4.0;
-        const mw = (d.map_width || mapImage.width) * res;
-        const mh = (d.map_height || mapImage.height) * res;
-
-        const tl = worldToCanvas(ox, oy + mh);
-        const br = worldToCanvas(ox + mw, oy);
-        const imgW = br.x - tl.x;
-        const imgH = br.y - tl.y;
-
-        mapCtx.save();
-        mapCtx.imageSmoothingEnabled = false; // Giữ nguyên độ sắc nét từng ô 5cm
-        mapCtx.mozImageSmoothingEnabled = false;
-        mapCtx.webkitImageSmoothingEnabled = false;
-        mapCtx.drawImage(mapImage, tl.x, tl.y, imgW, imgH);
-        mapCtx.restore();
-
-        // Viền ranh giới không gian bản đồ
-        mapCtx.strokeStyle = 'rgba(0, 240, 255, 0.35)';
-        mapCtx.setLineDash([6, 6]);
-        mapCtx.lineWidth = 1;
-        mapCtx.strokeRect(tl.x, tl.y, imgW, imgH);
-        mapCtx.setLineDash([]);
-      }
-
-      // 3. CHIẾU ĐIỂM LASERSCAN 2D TRỰC TIẾP TỪ OAK-D S2 STEREO DEPTH (CHUẨN RVIZ ĐỎ NEON & QUẠT QUÉT RADAR)
-      if (d.points_3d && Array.isArray(d.points_3d) && d.points_3d.length > 0) {
-        const robX = d.robot_x || 0;
-        const robY = d.robot_y || 0;
-        const brakeDist = (d.safety_brake_dist !== undefined) ? d.safety_brake_dist : 0.25;
-        const warnDist = brakeDist + 0.20;
-        const robCenter = worldToCanvas(robX, robY);
-
-        const validPts = [];
-        for (let i = 0; i < d.points_3d.length; i++) {
-          const pt = d.points_3d[i];
-          const px = pt[0], py = pt[1], pz = pt[2] || 0.2;
-          
-          // Lọc điểm vật cản thực sự ở tầm độ cao thân xe (0.05m đến 0.85m), bỏ qua mặt sàn và trần
-          if (pz < 0.05 || pz > 0.85) continue;
-
-          const dist = Math.hypot(px - robX, py - robY);
-          if (dist < 0.12 || dist > 4.5) continue;
-
-          const cp = worldToCanvas(px, py);
-          if (cp.x < -15 || cp.x > W + 15 || cp.y < -15 || cp.y > H + 15) continue;
-
-          validPts.push({ cp, dist });
+          const labelPos = worldToCanvas(mapPanX, m);
+          if (labelPos.y > 20 && labelPos.y < H - 40) {
+            mapCtx.fillStyle = isAxis ? 'rgba(0, 240, 255, 0.8)' : 'rgba(0, 240, 255, 0.45)';
+            mapCtx.fillText((m >= 0 ? `+${m.toFixed(0)}m` : `${m.toFixed(0)}m`), 8, labelPos.y - 3);
+          }
         }
 
-        if (validPts.length > 0) {
+        // Gốc tọa độ thế giới (0, 0)
+        const orig = worldToCanvas(0, 0);
+        mapCtx.strokeStyle = 'rgba(0, 255, 163, 0.7)';
+        mapCtx.lineWidth = 1.5;
+        mapCtx.beginPath();
+        mapCtx.arc(orig.x, orig.y, 4, 0, Math.PI * 2);
+        mapCtx.stroke();
+        mapCtx.fillStyle = 'rgba(0, 255, 163, 0.7)';
+        mapCtx.fillText('(0,0)', orig.x + 6, orig.y - 6);
+
+        // 2. BẢN ĐỒ CHIẾM DỤNG 2D (OCCUPANCY GRID LAYER)
+        if (mapImage && mapImage.complete && mapImage.naturalWidth > 0) {
+          const res = d.map_resolution || 0.05;
+          const ox = d.map_origin_x !== undefined ? d.map_origin_x : -5.0;
+          const oy = d.map_origin_y !== undefined ? d.map_origin_y : -5.0;
+          const mw = (d.map_width || mapImage.width) * res;
+          const mh = (d.map_height || mapImage.height) * res;
+
+          const tl = worldToCanvas(ox, oy + mh);
+          const br = worldToCanvas(ox + mw, oy);
+          const imgW = br.x - tl.x;
+          const imgH = br.y - tl.y;
+
           mapCtx.save();
+          mapCtx.imageSmoothingEnabled = false; // Giữ nguyên độ sắc nét từng ô 5cm
+          mapCtx.drawImage(mapImage, tl.x, tl.y, imgW, imgH);
+          mapCtx.restore();
 
-          // A. VẼ TIA QUÉT QUANG HỌC LIDAR / QUẠT TIA LASERSCAN (Subtle Radar Scan Beams):
-          mapCtx.lineWidth = 0.7;
-          mapCtx.strokeStyle = 'rgba(0, 240, 255, 0.06)';
+          // Viền ranh giới không gian bản đồ
+          mapCtx.strokeStyle = 'rgba(0, 240, 255, 0.35)';
+          mapCtx.setLineDash([6, 6]);
+          mapCtx.lineWidth = 1;
+          mapCtx.strokeRect(tl.x, tl.y, imgW, imgH);
+          mapCtx.setLineDash([]);
+        }
+
+        // 3. CHIẾU ĐIỂM LASERSCAN 2D TRỰC TIẾP TỪ OAK-D S2 STEREO DEPTH (CHUẨN RVIZ ĐỎ NEON & QUẠT QUÉT RADAR)
+        if (d.points_3d && Array.isArray(d.points_3d) && d.points_3d.length > 0) {
+          const robX = rx;
+          const robY = ry;
+          const brakeDist = (d.safety_brake_dist !== undefined) ? d.safety_brake_dist : 0.25;
+          const warnDist = brakeDist + 0.20;
+          const robCenter = worldToCanvas(robX, robY);
+
+          const validPts = [];
+          for (let i = 0; i < d.points_3d.length; i++) {
+            const pt = d.points_3d[i];
+            const px = pt[0], py = pt[1], pz = pt[2] || 0.2;
+            
+            // Lọc điểm vật cản thực sự ở tầm độ cao thân xe (0.05m đến 0.85m), bỏ qua mặt sàn và trần
+            if (pz < 0.05 || pz > 0.85) continue;
+
+            const dist = Math.hypot(px - robX, py - robY);
+            if (dist < 0.12 || dist > 4.5) continue;
+
+            const cp = worldToCanvas(px, py);
+            if (cp.x < -15 || cp.x > W + 15 || cp.y < -15 || cp.y > H + 15) continue;
+
+            validPts.push({ cp, dist });
+          }
+
+          if (validPts.length > 0) {
+            mapCtx.save();
+
+            // A. VẼ TIA QUÉT QUANG HỌC LIDAR / QUẠT TIA LASERSCAN (Subtle Radar Scan Beams):
+            mapCtx.lineWidth = 0.7;
+            mapCtx.strokeStyle = 'rgba(0, 240, 255, 0.06)';
+            mapCtx.beginPath();
+            const beamStep = Math.max(1, Math.floor(validPts.length / 24));
+            for (let i = 0; i < validPts.length; i += beamStep) {
+              mapCtx.moveTo(robCenter.x, robCenter.y);
+              mapCtx.lineTo(validPts[i].cp.x, validPts[i].cp.y);
+            }
+            mapCtx.stroke();
+
+            // B. VẼ CÁC ĐIỂM CHƯỚNG NGẠI VẬT LASERSCAN CHUẨN RVIZ:
+            for (let i = 0; i < validPts.length; i++) {
+              const { cp, dist } = validPts[i];
+              if (dist <= brakeDist) {
+                // Cản sát sạt (< 20cm): Điểm đỏ rực phát quang Neon Ruby Bumper Hazard
+                mapCtx.fillStyle = '#ff2a6d';
+                mapCtx.shadowColor = '#ff2a6d';
+                mapCtx.shadowBlur = 8;
+                mapCtx.beginPath();
+                mapCtx.arc(cp.x, cp.y, 2.8, 0, Math.PI * 2);
+                mapCtx.fill();
+
+                // Tâm trắng laser sáng chói
+                mapCtx.fillStyle = '#ffffff';
+                mapCtx.beginPath();
+                mapCtx.arc(cp.x, cp.y, 1.0, 0, Math.PI * 2);
+                mapCtx.fill();
+              } else if (dist <= warnDist) {
+                // Vùng cảnh báo giảm tốc: Vàng cam Amber Neon
+                mapCtx.fillStyle = '#ffb800';
+                mapCtx.shadowColor = '#ffb800';
+                mapCtx.shadowBlur = 4;
+                mapCtx.beginPath();
+                mapCtx.arc(cp.x, cp.y, 2.2, 0, Math.PI * 2);
+                mapCtx.fill();
+              } else {
+                // Vách tường / cản cự ly bình thường: Điểm đỏ Ruby RViz sắc nét không nhòe
+                mapCtx.shadowBlur = 0;
+                mapCtx.fillStyle = '#ff2a6d';
+                mapCtx.fillRect(cp.x - 1.2, cp.y - 1.2, 2.4, 2.4);
+              }
+            }
+            mapCtx.restore();
+          }
+        }
+
+        // 4. VỆT HÀNH TRÌNH DI CHUYỂN (ODOMETRY PATH)
+        if (d.path && d.path.length > 1) {
+          mapCtx.save();
+          mapCtx.strokeStyle = '#00ffa3';
+          mapCtx.shadowColor = '#00ffa3';
+          mapCtx.shadowBlur = 8;
+          mapCtx.lineWidth = 2.2;
+          mapCtx.lineCap = 'round';
+          mapCtx.lineJoin = 'round';
           mapCtx.beginPath();
-          const beamStep = Math.max(1, Math.floor(validPts.length / 24));
-          for (let i = 0; i < validPts.length; i += beamStep) {
-            mapCtx.moveTo(robCenter.x, robCenter.y);
-            mapCtx.lineTo(validPts[i].cp.x, validPts[i].cp.y);
+          const start = worldToCanvas(d.path[0][0], d.path[0][1]);
+          mapCtx.moveTo(start.x, start.y);
+          for (let i = 1; i < d.path.length; i++) {
+            const pt = worldToCanvas(d.path[i][0], d.path[i][1]);
+            mapCtx.lineTo(pt.x, pt.y);
           }
           mapCtx.stroke();
-
-          // B. VẼ CÁC ĐIỂM CHƯỚNG NGẠI VẬT LASERSCAN CHUẨN RVIZ:
-          for (let i = 0; i < validPts.length; i++) {
-            const { cp, dist } = validPts[i];
-            if (dist <= brakeDist) {
-              // Cản sát sạt (< 20cm): Điểm đỏ rực phát quang Neon Ruby Bumper Hazard
-              mapCtx.fillStyle = '#ff2a6d';
-              mapCtx.shadowColor = '#ff2a6d';
-              mapCtx.shadowBlur = 8;
-              mapCtx.beginPath();
-              mapCtx.arc(cp.x, cp.y, 2.8, 0, Math.PI * 2);
-              mapCtx.fill();
-
-              // Tâm trắng laser sáng chói
-              mapCtx.fillStyle = '#ffffff';
-              mapCtx.beginPath();
-              mapCtx.arc(cp.x, cp.y, 1.0, 0, Math.PI * 2);
-              mapCtx.fill();
-            } else if (dist <= warnDist) {
-              // Vùng cảnh báo giảm tốc: Vàng cam Amber Neon
-              mapCtx.fillStyle = '#ffb800';
-              mapCtx.shadowColor = '#ffb800';
-              mapCtx.shadowBlur = 4;
-              mapCtx.beginPath();
-              mapCtx.arc(cp.x, cp.y, 2.2, 0, Math.PI * 2);
-              mapCtx.fill();
-            } else {
-              // Vách tường / cản cự ly bình thường: Điểm đỏ Ruby RViz sắc nét không nhòe
-              mapCtx.shadowBlur = 0;
-              mapCtx.fillStyle = '#ff2a6d';
-              mapCtx.fillRect(cp.x - 1.2, cp.y - 1.2, 2.4, 2.4);
-            }
-          }
           mapCtx.restore();
         }
-      }
 
-      // 4. VỆT HÀNH TRÌNH DI CHUYỂN (ODOMETRY PATH)
-      if (d.path && d.path.length > 1) {
-        mapCtx.save();
-        mapCtx.strokeStyle = '#00ffa3';
-        mapCtx.shadowColor = '#00ffa3';
-        mapCtx.shadowBlur = 8;
-        mapCtx.lineWidth = 2.2;
-        mapCtx.lineCap = 'round';
-        mapCtx.lineJoin = 'round';
-        mapCtx.beginPath();
-        const start = worldToCanvas(d.path[0][0], d.path[0][1]);
-        mapCtx.moveTo(start.x, start.y);
-        for (let i = 1; i < d.path.length; i++) {
-          const pt = worldToCanvas(d.path[i][0], d.path[i][1]);
-          mapCtx.lineTo(pt.x, pt.y);
+        // 5. CÁC VẬT THỂ NGỮ NGHĨA 2D BOUNDING BOX (METRIC DIMENSIONS & CLEAR LABELS)
+        const landmarks = (d.landmarks && d.landmarks.length > 0) ? d.landmarks : ((d.semantic_objects && d.semantic_objects.length > 0) ? d.semantic_objects : []);
+        if (landmarks.length > 0) {
+          landmarks.forEach(obj => {
+            const cp = worldToCanvas(obj.x, obj.y);
+            const isPerson = (obj.id === 0 || obj.name === 'PERSON');
+            const isPinned = (obj.pinned === true || (obj.seen && obj.seen >= 3));
+            const primaryColor = isPerson ? '#ff2a6d' : (isPinned ? '#00f0ff' : '#ffb800');
+            const fillColor = isPerson ? 'rgba(255, 42, 109, 0.18)' : (isPinned ? 'rgba(0, 240, 255, 0.16)' : 'rgba(255, 184, 0, 0.16)');
+
+            // Kích thước thực tế vật thể tính theo mét (chiều rộng & chiều sâu)
+            const w_m = (obj.width !== undefined && obj.width > 0) ? obj.width : 0.45;
+            const d_m = (obj.depth !== undefined && obj.depth > 0) ? obj.depth : 0.45;
+            const boxW = Math.max(16, w_m * scale);
+            const boxD = Math.max(16, d_m * scale);
+
+            mapCtx.save();
+            // A. Lớp phủ mờ diện tích chiếm dụng (Bounding Box Fill)
+            mapCtx.fillStyle = fillColor;
+            mapCtx.fillRect(cp.x - boxW/2, cp.y - boxD/2, boxW, boxD);
+
+            // B. Viền khung hộp bao kỹ thuật (Bounding Box Stroke)
+            mapCtx.strokeStyle = primaryColor;
+            mapCtx.lineWidth = 1.6;
+            mapCtx.shadowColor = primaryColor;
+            mapCtx.shadowBlur = isPinned ? 8 : 4;
+            mapCtx.strokeRect(cp.x - boxW/2, cp.y - boxD/2, boxW, boxD);
+
+            // C. Hồng tâm tâm vật thể (+)
+            mapCtx.shadowBlur = 0;
+            mapCtx.lineWidth = 1.2;
+            mapCtx.beginPath();
+            mapCtx.moveTo(cp.x - 4, cp.y); mapCtx.lineTo(cp.x + 4, cp.y);
+            mapCtx.moveTo(cp.x, cp.y - 4); mapCtx.lineTo(cp.x, cp.y + 4);
+            mapCtx.stroke();
+
+            // D. Nhãn định danh kỹ thuật chuẩn Aerospace (Không dùng icon emoji ghim/hộp)
+            const distToRob = Math.hypot(obj.x - rx, obj.y - ry).toFixed(2);
+            const tagText = `[${obj.name} · ${distToRob}m]`;
+            mapCtx.font = 'bold 9px Orbitron, monospace';
+            const tagW = mapCtx.measureText(tagText).width;
+            const tagH = 13;
+            const tagX = cp.x - tagW/2 - 5;
+            const tagY = cp.y - boxD/2 - tagH - 4;
+
+            // Hộp nền nhãn đen viền tương phản
+            mapCtx.fillStyle = 'rgba(7, 11, 18, 0.92)';
+            mapCtx.fillRect(tagX, tagY, tagW + 10, tagH);
+            mapCtx.strokeStyle = primaryColor;
+            mapCtx.lineWidth = 1;
+            mapCtx.strokeRect(tagX, tagY, tagW + 10, tagH);
+
+            // Chữ nhãn kỹ thuật
+            mapCtx.fillStyle = primaryColor;
+            mapCtx.fillText(tagText, tagX + 5, tagY + 9.5);
+            mapCtx.restore();
+          });
         }
+
+        // 6. ROBOT JETBOT (CHASSIS FOOTPRINT, BÁNH XE, MŨI TÊN ĐỊNH HƯỚNG & NÓN FOV)
+        const rp = worldToCanvas(rx, ry);
+        const obsDist = d.obstacle_distance !== undefined ? d.obstacle_distance : 99.0;
+        const brakeRadius = (d.safety_brake_dist !== undefined) ? d.safety_brake_dist : 0.25;
+
+        // Nón trường nhìn Camera OAK-D S2 (FOV Cone 75 độ, tự động co giãn theo cự ly vật cản thực tế)
+        mapCtx.save();
+        const fovAngle = (75 * Math.PI) / 180;
+        const effectiveDistM = (obsDist !== undefined && obsDist !== null && obsDist < 3.0) ? Math.max(0.40, obsDist + 0.12) : 2.5;
+        const fovDist = Math.max(15, effectiveDistM * scale);
+        const a1 = -yaw - fovAngle / 2;
+        const a2 = -yaw + fovAngle / 2;
+
+        const fovGrad = mapCtx.createRadialGradient(rp.x, rp.y, 4, rp.x, rp.y, fovDist);
+        fovGrad.addColorStop(0, 'rgba(0, 240, 255, 0.28)');
+        fovGrad.addColorStop(0.7, 'rgba(0, 240, 255, 0.08)');
+        fovGrad.addColorStop(1, 'rgba(0, 240, 255, 0.00)');
+
+        mapCtx.fillStyle = fovGrad;
+        mapCtx.strokeStyle = 'rgba(0, 240, 255, 0.45)';
+        mapCtx.lineWidth = 1.2;
+        mapCtx.beginPath();
+        mapCtx.moveTo(rp.x, rp.y);
+        mapCtx.arc(rp.x, rp.y, fovDist, a1, a2);
+        mapCtx.closePath();
+        mapCtx.fill();
         mapCtx.stroke();
         mapCtx.restore();
+
+        // Vòng tròn an toàn Virtual Bumper
+        mapCtx.save();
+        mapCtx.setLineDash([4, 4]);
+        if (obsDist < brakeRadius) {
+          mapCtx.strokeStyle = 'rgba(255, 42, 109, 0.9)'; // Đỏ phanh gấp
+          mapCtx.fillStyle = 'rgba(255, 42, 109, 0.15)';
+          mapCtx.lineWidth = 2.5;
+        } else if (obsDist < brakeRadius + 0.20) {
+          mapCtx.strokeStyle = 'rgba(255, 184, 0, 0.85)'; // Vàng cảnh báo
+          mapCtx.fillStyle = 'rgba(255, 184, 0, 0.1)';
+          mapCtx.lineWidth = 2.0;
+        } else {
+          mapCtx.strokeStyle = 'rgba(0, 255, 163, 0.6)'; // Xanh an toàn
+          mapCtx.fillStyle = 'rgba(0, 255, 163, 0.05)';
+          mapCtx.lineWidth = 1.5;
+        }
+        mapCtx.beginPath();
+        mapCtx.arc(rp.x, rp.y, brakeRadius * scale, 0, Math.PI * 2);
+        mapCtx.fill();
+        mapCtx.stroke();
+        mapCtx.restore();
+
+        // Thân xe Robot JetBot chân thực (Footprint 18cm x 16cm + 2 Bánh xe + Mũi tên định hướng)
+        mapCtx.save();
+        mapCtx.translate(rp.x, rp.y);
+        mapCtx.rotate(-yaw);
+
+        const robBodyL = 0.18 * scale; // Chiều dài 18cm
+        const robBodyW = 0.16 * scale; // Chiều rộng 16cm
+        const wheelL = 0.08 * scale;
+        const wheelW = 0.03 * scale;
+
+        // 2 Bánh xe JetBot
+        mapCtx.fillStyle = '#222938';
+        mapCtx.strokeStyle = '#00f0ff';
+        mapCtx.lineWidth = 1;
+        // Bánh trái
+        mapCtx.fillRect(-wheelL/2, -robBodyW/2 - wheelW + 1, wheelL, wheelW);
+        mapCtx.strokeRect(-wheelL/2, -robBodyW/2 - wheelW + 1, wheelL, wheelW);
+        // Bánh phải
+        mapCtx.fillRect(-wheelL/2, robBodyW/2 - 1, wheelL, wheelW);
+        mapCtx.strokeRect(-wheelL/2, robBodyW/2 - 1, wheelL, wheelW);
+
+        // Thân xe (Chassis)
+        mapCtx.fillStyle = 'rgba(12, 22, 38, 0.9)';
+        mapCtx.strokeStyle = '#00f0ff';
+        mapCtx.lineWidth = 2;
+        mapCtx.shadowColor = '#00f0ff';
+        mapCtx.shadowBlur = 10;
+        mapCtx.beginPath();
+        if (mapCtx.roundRect) {
+          mapCtx.roundRect(-robBodyL/2, -robBodyW/2, robBodyL, robBodyW, 4);
+        } else {
+          mapCtx.rect(-robBodyL/2, -robBodyW/2, robBodyL, robBodyW);
+        }
+        mapCtx.fill();
+        mapCtx.stroke();
+
+        // Mũi tên định hướng phát sáng
+        mapCtx.fillStyle = '#00ffa3';
+        mapCtx.beginPath();
+        mapCtx.moveTo(robBodyL/2 + 6, 0);
+        mapCtx.lineTo(robBodyL/4, -robBodyW/3.5);
+        mapCtx.lineTo(robBodyL/3, 0);
+        mapCtx.lineTo(robBodyL/4, robBodyW/3.5);
+        mapCtx.closePath();
+        mapCtx.fill();
+
+        // Vị trí Camera OAK-D S2 ở phía mũi xe
+        mapCtx.fillStyle = '#ff2a6d';
+        mapCtx.fillRect(robBodyL/2 - 3, -4, 4, 8);
+
+        mapCtx.restore();
+
+        // 7. Thước đo tỉ lệ (Scale Bar 1 mét) ở góc dưới bên trái
+        const scaleBarPx = 1.0 * scale;
+        const sbX = 18, sbY = H - 18;
+        mapCtx.strokeStyle = '#00f0ff';
+        mapCtx.lineWidth = 2;
+        mapCtx.beginPath();
+        mapCtx.moveTo(sbX, sbY);
+        mapCtx.lineTo(sbX + scaleBarPx, sbY);
+        mapCtx.moveTo(sbX, sbY - 4);
+        mapCtx.lineTo(sbX, sbY + 4);
+        mapCtx.moveTo(sbX + scaleBarPx, sbY - 4);
+        mapCtx.lineTo(sbX + scaleBarPx, sbY + 4);
+        mapCtx.stroke();
+        mapCtx.font = 'bold 9px Orbitron, monospace';
+        mapCtx.fillStyle = '#00f0ff';
+        mapCtx.fillText('1.0 MÉT', sbX + 4, sbY - 6);
+
+        // 8. Chú giải Bản đồ (HUD Legend Chuẩn RViz & Phân loại Màu Sắc Ngữ Nghĩa)
+        mapCtx.font = '10px "Space Grotesk", sans-serif';
+        mapCtx.fillStyle = 'rgba(255,255,255,0.85)';
+        mapCtx.fillText('⬜ Mặt Sàn (Floor)  |  ⬛ Tường Vật Cản  |  🔴 Người (Vật Cản Động)  |  🔷 Đồ Vật Tĩnh (Bàn, Ghế...)  |  🔺 JetBot', W - 540, H - 14);
+
+        // 9. Telemetry mini box ở góc trên bản đồ
+        const degStr = (yaw * 180 / Math.PI).toFixed(0);
+        mapCtx.font = '9px Orbitron, monospace';
+        mapCtx.fillStyle = 'rgba(0, 240, 255, 0.75)';
+        mapCtx.fillText(`TỌA ĐỘ: (${rx.toFixed(2)}, ${ry.toFixed(2)}) · GÓC: ${degStr}° · ZOOM: ${safeZoom.toFixed(1)}x`, 18, 22);
+
+      } catch (err) {
+        console.error("❌ [DRAW2D MAP ERROR]:", err);
+      } finally {
+        mapCtx.restore();
       }
-
-      // 5. CÁC VẬT THỂ NGỮ NGHĨA 2D BOUNDING BOX (METRIC DIMENSIONS & CLEAR LABELS)
-      const landmarks = (d.landmarks && d.landmarks.length > 0) ? d.landmarks : ((d.semantic_objects && d.semantic_objects.length > 0) ? d.semantic_objects : []);
-      if (landmarks.length > 0) {
-        landmarks.forEach(obj => {
-          const cp = worldToCanvas(obj.x, obj.y);
-          const isPerson = (obj.id === 0 || obj.name === 'PERSON');
-          const isPinned = (obj.pinned === true || (obj.seen && obj.seen >= 3));
-          const primaryColor = isPerson ? '#ff2a6d' : (isPinned ? '#00f0ff' : '#ffb800');
-          const fillColor = isPerson ? 'rgba(255, 42, 109, 0.18)' : (isPinned ? 'rgba(0, 240, 255, 0.16)' : 'rgba(255, 184, 0, 0.16)');
-
-          // Kích thước thực tế vật thể tính theo mét (chiều rộng & chiều sâu)
-          const w_m = (obj.width !== undefined && obj.width > 0) ? obj.width : 0.45;
-          const d_m = (obj.depth !== undefined && obj.depth > 0) ? obj.depth : 0.45;
-          const boxW = Math.max(16, w_m * scale);
-          const boxD = Math.max(16, d_m * scale);
-
-          mapCtx.save();
-          // A. Lớp phủ mờ diện tích chiếm dụng (Bounding Box Fill)
-          mapCtx.fillStyle = fillColor;
-          mapCtx.fillRect(cp.x - boxW/2, cp.y - boxD/2, boxW, boxD);
-
-          // B. Viền khung hộp bao kỹ thuật (Bounding Box Stroke)
-          mapCtx.strokeStyle = primaryColor;
-          mapCtx.lineWidth = 1.6;
-          mapCtx.shadowColor = primaryColor;
-          mapCtx.shadowBlur = isPinned ? 8 : 4;
-          mapCtx.strokeRect(cp.x - boxW/2, cp.y - boxD/2, boxW, boxD);
-
-          // C. Hồng tâm tâm vật thể (+)
-          mapCtx.shadowBlur = 0;
-          mapCtx.lineWidth = 1.2;
-          mapCtx.beginPath();
-          mapCtx.moveTo(cp.x - 4, cp.y); mapCtx.lineTo(cp.x + 4, cp.y);
-          mapCtx.moveTo(cp.x, cp.y - 4); mapCtx.lineTo(cp.x, cp.y + 4);
-          mapCtx.stroke();
-
-          // D. Nhãn định danh kỹ thuật chuẩn Aerospace (Không dùng icon emoji ghim/hộp)
-          const distToRob = Math.hypot(obj.x - (d.robot_x || 0), obj.y - (d.robot_y || 0)).toFixed(2);
-          const tagText = `[${obj.name} · ${distToRob}m]`;
-          mapCtx.font = 'bold 9px Orbitron, monospace';
-          const tagW = mapCtx.measureText(tagText).width;
-          const tagH = 13;
-          const tagX = cp.x - tagW/2 - 5;
-          const tagY = cp.y - boxD/2 - tagH - 4;
-
-          // Hộp nền nhãn đen viền tương phản
-          mapCtx.fillStyle = 'rgba(7, 11, 18, 0.92)';
-          mapCtx.fillRect(tagX, tagY, tagW + 10, tagH);
-          mapCtx.strokeStyle = primaryColor;
-          mapCtx.lineWidth = 1;
-          mapCtx.strokeRect(tagX, tagY, tagW + 10, tagH);
-
-          // Chữ nhãn kỹ thuật
-          mapCtx.fillStyle = primaryColor;
-          mapCtx.fillText(tagText, tagX + 5, tagY + 9.5);
-          mapCtx.restore();
-        });
-      }
-
-      // 6. ROBOT JETBOT (CHASSIS FOOTPRINT, BÁNH XE, MŨI TÊN ĐỊNH HƯỚNG & NÓN FOV)
-      const rp = worldToCanvas(d.robot_x, d.robot_y);
-      const yaw = d.robot_yaw;
-      const obsDist = d.obstacle_distance !== undefined ? d.obstacle_distance : 99.0;
-      const brakeRadius = (d.safety_brake_dist !== undefined) ? d.safety_brake_dist : 0.25;
-
-      // Nón trường nhìn Camera OAK-D S2 (FOV Cone 75 độ, tự động co giãn theo cự ly vật cản thực tế)
-      mapCtx.save();
-      const fovAngle = (75 * Math.PI) / 180;
-      const effectiveDistM = (obsDist !== undefined && obsDist !== null && obsDist < 3.0) ? Math.max(0.40, obsDist + 0.12) : 2.5;
-      const fovDist = effectiveDistM * scale;
-      const a1 = -yaw - fovAngle / 2;
-      const a2 = -yaw + fovAngle / 2;
-
-      const fovGrad = mapCtx.createRadialGradient(rp.x, rp.y, 5, rp.x, rp.y, fovDist);
-      fovGrad.addColorStop(0, 'rgba(0, 240, 255, 0.28)');
-      fovGrad.addColorStop(0.7, 'rgba(0, 240, 255, 0.08)');
-      fovGrad.addColorStop(1, 'rgba(0, 240, 255, 0.00)');
-
-      mapCtx.fillStyle = fovGrad;
-      mapCtx.strokeStyle = 'rgba(0, 240, 255, 0.45)';
-      mapCtx.lineWidth = 1.2;
-      mapCtx.beginPath();
-      mapCtx.moveTo(rp.x, rp.y);
-      mapCtx.arc(rp.x, rp.y, fovDist, a1, a2);
-      mapCtx.closePath();
-      mapCtx.fill();
-      mapCtx.stroke();
-      mapCtx.restore();
-
-      // Vòng tròn an toàn Virtual Bumper
-      mapCtx.save();
-      mapCtx.setLineDash([4, 4]);
-      if (obsDist < brakeRadius) {
-        mapCtx.strokeStyle = 'rgba(255, 42, 109, 0.9)'; // Đỏ phanh gấp
-        mapCtx.fillStyle = 'rgba(255, 42, 109, 0.15)';
-        mapCtx.lineWidth = 2.5;
-      } else if (obsDist < brakeRadius + 0.20) {
-        mapCtx.strokeStyle = 'rgba(255, 184, 0, 0.85)'; // Vàng cảnh báo
-        mapCtx.fillStyle = 'rgba(255, 184, 0, 0.1)';
-        mapCtx.lineWidth = 2.0;
-      } else {
-        mapCtx.strokeStyle = 'rgba(0, 255, 163, 0.6)'; // Xanh an toàn
-        mapCtx.fillStyle = 'rgba(0, 255, 163, 0.05)';
-        mapCtx.lineWidth = 1.5;
-      }
-      mapCtx.beginPath();
-      mapCtx.arc(rp.x, rp.y, brakeRadius * scale, 0, Math.PI * 2);
-      mapCtx.fill();
-      mapCtx.stroke();
-      mapCtx.restore();
-
-      // Thân xe Robot JetBot chân thực (Footprint 18cm x 16cm + 2 Bánh xe + Mũi tên định hướng)
-      mapCtx.save();
-      mapCtx.translate(rp.x, rp.y);
-      mapCtx.rotate(-yaw);
-
-      const robBodyL = 0.18 * scale; // Chiều dài 18cm
-      const robBodyW = 0.16 * scale; // Chiều rộng 16cm
-      const wheelL = 0.08 * scale;
-      const wheelW = 0.03 * scale;
-
-      // 2 Bánh xe JetBot
-      mapCtx.fillStyle = '#222938';
-      mapCtx.strokeStyle = '#00f0ff';
-      mapCtx.lineWidth = 1;
-      // Bánh trái
-      mapCtx.fillRect(-wheelL/2, -robBodyW/2 - wheelW + 1, wheelL, wheelW);
-      mapCtx.strokeRect(-wheelL/2, -robBodyW/2 - wheelW + 1, wheelL, wheelW);
-      // Bánh phải
-      mapCtx.fillRect(-wheelL/2, robBodyW/2 - 1, wheelL, wheelW);
-      mapCtx.strokeRect(-wheelL/2, robBodyW/2 - 1, wheelL, wheelW);
-
-      // Thân xe (Chassis)
-      mapCtx.fillStyle = 'rgba(12, 22, 38, 0.9)';
-      mapCtx.strokeStyle = '#00f0ff';
-      mapCtx.lineWidth = 2;
-      mapCtx.shadowColor = '#00f0ff';
-      mapCtx.shadowBlur = 10;
-      mapCtx.beginPath();
-      if (mapCtx.roundRect) {
-        mapCtx.roundRect(-robBodyL/2, -robBodyW/2, robBodyL, robBodyW, 4);
-      } else {
-        mapCtx.rect(-robBodyL/2, -robBodyW/2, robBodyL, robBodyW);
-      }
-      mapCtx.fill();
-      mapCtx.stroke();
-
-      // Mũi tên định hướng phát sáng
-      mapCtx.fillStyle = '#00ffa3';
-      mapCtx.beginPath();
-      mapCtx.moveTo(robBodyL/2 + 6, 0);
-      mapCtx.lineTo(robBodyL/4, -robBodyW/3.5);
-      mapCtx.lineTo(robBodyL/3, 0);
-      mapCtx.lineTo(robBodyL/4, robBodyW/3.5);
-      mapCtx.closePath();
-      mapCtx.fill();
-
-      // Vị trí Camera OAK-D S2 ở phía mũi xe
-      mapCtx.fillStyle = '#ff2a6d';
-      mapCtx.fillRect(robBodyL/2 - 3, -4, 4, 8);
-
-      mapCtx.restore();
-
-      // 7. Thước đo tỉ lệ (Scale Bar 1 mét) ở góc dưới bên trái
-      const scaleBarPx = 1.0 * scale;
-      const sbX = 18, sbY = H - 18;
-      mapCtx.strokeStyle = '#00f0ff';
-      mapCtx.lineWidth = 2;
-      mapCtx.beginPath();
-      mapCtx.moveTo(sbX, sbY);
-      mapCtx.lineTo(sbX + scaleBarPx, sbY);
-      mapCtx.moveTo(sbX, sbY - 4);
-      mapCtx.lineTo(sbX, sbY + 4);
-      mapCtx.moveTo(sbX + scaleBarPx, sbY - 4);
-      mapCtx.lineTo(sbX + scaleBarPx, sbY + 4);
-      mapCtx.stroke();
-      mapCtx.font = 'bold 9px Orbitron, monospace';
-      mapCtx.fillStyle = '#00f0ff';
-      mapCtx.fillText('1.0 MÉT', sbX + 4, sbY - 6);
-
-      // 8. Chú giải Bản đồ (HUD Legend Chuẩn RViz & Phân loại Màu Sắc Ngữ Nghĩa)
-      mapCtx.font = '10px "Space Grotesk", sans-serif';
-      mapCtx.fillStyle = 'rgba(255,255,255,0.85)';
-      mapCtx.fillText('⬜ Mặt Sàn (Floor)  |  ⬛ Tường Vật Cản  |  🔴 Người (Vật Cản Động)  |  🔷 Đồ Vật Tĩnh (Bàn, Ghế...)  |  🔺 JetBot', W - 540, H - 14);
-
-      // 9. Telemetry mini box ở góc trên bản đồ
-      mapCtx.font = '9px Orbitron, monospace';
-      mapCtx.fillStyle = 'rgba(0, 240, 255, 0.75)';
-      mapCtx.fillText(`TỌA ĐỘ: (${d.robot_x.toFixed(2)}, ${d.robot_y.toFixed(2)}) · GÓC: ${(d.robot_yaw*180/Math.PI).toFixed(0)}° · ZOOM: ${mapZoom.toFixed(1)}x`, 18, 22);
-
-      mapCtx.restore();
     }
+
+    // Khởi tạo hiển thị Blueprint Grid ngay khi nạp trang (tránh màn hình đen)
+    draw2DMap({
+      robot_x: 0,
+      robot_y: 0,
+      robot_yaw: 0,
+      points_3d: [],
+      path: [],
+      map_resolution: 0.05,
+      map_origin_x: -5.0,
+      map_origin_y: -5.0,
+      map_width: 200,
+      map_height: 200
+    });
 
     // ════ STATE POLLING & 3D UPDATES ════
     async function pollState() {
       try {
         const res = await fetch('/api/state');
         const d = await res.json();
+        lastStateData = d;
 
         // Header Telemetry (Real-time Battery BMS)
         const bV = d.battery_v !== undefined ? d.battery_v.toFixed(2) : '--';
@@ -1212,13 +1234,14 @@
 
         // 5. Cập nhật 2D Map (nếu bật chế độ 2D)
         if (currentView === '2d') {
-          if (d.map_b64 && d.map_version !== currentMapVer) {
-            currentMapVer = d.map_version;
-            mapImage.src = 'data:image/png;base64,' + d.map_b64;
-            mapImage.onload = () => draw2DMap(d);
-          } else {
-            draw2DMap(d);
-          }
+          draw2DMap(d);
+        }
+        if (d.map_b64 && d.map_version !== currentMapVer) {
+          currentMapVer = d.map_version;
+          mapImage.src = 'data:image/png;base64,' + d.map_b64;
+          mapImage.onload = () => {
+            if (currentView === '2d' && lastStateData) draw2DMap(lastStateData);
+          };
         }
 
         // 6. Danh sách Radar

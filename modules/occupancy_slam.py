@@ -445,61 +445,65 @@ class OccupancySLAM:
     def get_png_base64(self, force=False):
         """
         Tạo ảnh PNG 4-kênh BGRA phong cách ROS RViz / Cartographer / SLAM Toolbox:
-        - Lọc triệt để nhiễu hạt lẻ tẻ (Connected Components filter loại bỏ glare/outlier < 3 pixel)
+        - Bảo toàn 100% vật cản mảnh (chân bàn, chân ghế) đã được xác thực hit_counts >= 2
         - Đóng liền mạch các bức tường đứt đoạn (Morphological Wall Closing 3x3)
         - Lớp đệm an toàn Costmap Inflation 15cm (3 ô buffer màu hổ phách dịu)
         - Viền ngoài tường kiến trúc sắc nét tương phản cao (High-contrast Boundary Contour Stroke)
+        - Tương thích kép 100% OpenCV 3 (Jetson Nano) & OpenCV 4
         """
         now = time.time()
         if not force and self.cached_b64 and (now - self.last_encode_time < 0.25):
             return self.cached_b64, self.version
 
-        bgra = np.zeros((self.height, self.width, 4), dtype=np.uint8)
-        mask_free = (self.grid == 128)
-        raw_occ = (self.grid == 255).astype(np.uint8)
+        try:
+            bgra = np.zeros((self.height, self.width, 4), dtype=np.uint8)
+            mask_free = (self.grid == 128)
+            raw_occ = (self.grid == 255).astype(np.uint8)
 
-        # 1. BỘ LỌC TRIỆT TIÊU NHIỄU HẠT (Connected Components Filter):
-        # Loại bỏ các hạt bụi/phản xạ chói loá lẻ loi < 3 pixel, chỉ giữ cụm vật cản thực sự hoặc hit_counts >= 4
-        clean_occ = np.zeros_like(raw_occ)
-        if np.any(raw_occ):
-            num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(raw_occ, connectivity=8)
-            for i in range(1, num_labels):
-                area = stats[i, cv2.CC_STAT_AREA]
-                comp_mask = (labels == i)
-                if area >= 3 or np.max(self.hit_counts[comp_mask]) >= 4:
-                    clean_occ[comp_mask] = 255
+            # 1. BẢO TOÀN VẬT CẢN & CHÂN BÀN GHẾ:
+            # Các ô grid==255 vốn đã được kiểm chứng bởi hit_counts >= 2 trong update_scan.
+            # Bảo toàn nguyên vẹn vật cản (chân bàn/ghế 1-2 ô) mà không bị bộ lọc diện tích xoá nhầm.
+            clean_occ = raw_occ.copy()
 
-        # 2. HÀN GẮN & NỐI LIỀN TƯỜNG (Morphological Closing 3x3):
-        # Nối các điểm quét LaserScan bị ngắt quãng thành những mảng tường thẳng, vuông vức
-        kernel_close = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-        closed_occ = cv2.morphologyEx(clean_occ, cv2.MORPH_CLOSE, kernel_close)
+            # 2. HÀN GẮN & NỐI LIỀN TƯỜNG (Morphological Closing 3x3):
+            # Nối các điểm quét LaserScan bị ngắt quãng thành những mảng tường thẳng, vuông vức
+            kernel_close = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+            closed_occ = cv2.morphologyEx(clean_occ, cv2.MORPH_CLOSE, kernel_close)
 
-        # 3. LỚP ĐỆM AN TOÀN COSTMAP INFLATION (Bán kính 15cm = 3 ô 5cm):
-        # Giãn nở vùng chướng ngại vật để tạo hành lang đệm an toàn phong cách ROS Costmap 2D
-        kernel_inflate = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
-        inflated = cv2.dilate(closed_occ, kernel_inflate)
-        mask_inflation = (inflated > 0) & mask_free & (closed_occ == 0)
+            # 3. LỚP ĐỆM AN TOÀN COSTMAP INFLATION (Bán kính 15cm = 3 ô 5cm):
+            # Giãn nở vùng chướng ngại vật để tạo hành lang đệm an toàn phong cách ROS Costmap 2D
+            kernel_inflate = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+            inflated = cv2.dilate(closed_occ, kernel_inflate)
+            mask_inflation = (inflated > 0) & mask_free & (closed_occ == 0)
 
-        # 4. TÔ MÀU THEO CHUẨN ĐỒ HỌA CAO CẤP ROS RVIZ / CARTOGRAPHER:
-        # A. Sàn nhà đã khám phá (Free Space): Màu xám ngà sáng, sạch sẽ, phẳng phiu (BGRA)
-        bgra[mask_free] = [228, 230, 232, 235]
+            # 4. TÔ MÀU THEO CHUẨN ĐỒ HỌA CAO CẤP ROS RVIZ / CARTOGRAPHER:
+            # A. Sàn nhà đã khám phá (Free Space): Màu xám ngà sáng, sạch sẽ, phẳng phiu (BGRA)
+            bgra[mask_free] = [228, 230, 232, 235]
 
-        # B. Vùng đệm an toàn Costmap Inflation (15cm buffer): Màu hổ phách dịu ấm áp
-        bgra[mask_inflation] = [185, 210, 240, 235]
+            # B. Vùng đệm an toàn Costmap Inflation (15cm buffer): Màu hổ phách dịu ấm áp
+            bgra[mask_inflation] = [185, 210, 240, 235]
 
-        # C. Tường & Chướng ngại vật thực sự (Occupied): Màu đen đậm kiến trúc CAD sắc sảo
-        bgra[closed_occ > 0] = [15, 15, 15, 255]
+            # C. Tường & Chướng ngại vật thực sự (Occupied): Màu đen đậm kiến trúc CAD sắc sảo
+            bgra[closed_occ > 0] = [15, 15, 15, 255]
 
-        # D. Viền sắc sảo ranh giới tường (Outer Contour Stroke): Nét viền đen tuyền 1px
-        if np.any(closed_occ):
-            contours, _ = cv2.findContours(closed_occ, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            if contours:
-                cv2.drawContours(bgra, contours, -1, (5, 5, 5, 255), 1)
+            # D. Viền sắc sảo ranh giới tường (Outer Contour Stroke): Nét viền đen tuyền 1px
+            # Tương thích kép OpenCV 3 (Jetson Nano Melodic: 3 giá trị) & OpenCV 4 (2 giá trị)
+            if np.any(closed_occ):
+                try:
+                    res = cv2.findContours(closed_occ, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                    contours = res[0] if len(res) == 2 else res[1]
+                    if contours:
+                        cv2.drawContours(bgra, contours, -1, (5, 5, 5, 255), 1)
+                except Exception:
+                    pass
 
-        success, buf = cv2.imencode('.png', bgra)
-        if success:
-            self.cached_b64 = base64.b64encode(buf).decode('ascii')
-            self.last_encode_time = now
+            success, buf = cv2.imencode('.png', bgra)
+            if success:
+                self.cached_b64 = base64.b64encode(buf).decode('ascii')
+                self.last_encode_time = now
+
+        except Exception as e:
+            print(f"⚠️ [OCCUPANCY SLAM] Lỗi render bản đồ PNG base64: {e}")
 
         return self.cached_b64, self.version
 

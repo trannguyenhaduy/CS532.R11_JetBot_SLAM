@@ -354,7 +354,8 @@ class SpatialPerceptionEngine:
                 if dh >= 10 and dw >= 10:
                     valid_d = (depth_frame >= 80) & (depth_frame <= 2200)
                     small_d = cv2.resize(valid_d.astype(np.uint8), (160, 120), interpolation=cv2.INTER_NEAREST)
-                    cnts_d, _ = cv2.findContours(small_d, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                    res_d = cv2.findContours(small_d, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                    cnts_d = res_d[0] if len(res_d) == 2 else res_d[1]
                     scale_dw, scale_dh = w / 160.0, h / 120.0
                     for cd in cnts_d:
                         area_d = cv2.contourArea(cd)
@@ -398,7 +399,8 @@ class SpatialPerceptionEngine:
             skin_mask = cv2.inRange(ycrcb, np.array([0, 133, 77]), np.array([255, 173, 127]))
             kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
             skin_clean = cv2.morphologyEx(skin_mask, cv2.MORPH_OPEN, kernel)
-            cnts_skin, _ = cv2.findContours(skin_clean, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            res_skin = cv2.findContours(skin_clean, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            cnts_skin = res_skin[0] if len(res_skin) == 2 else res_skin[1]
 
             skin_candidates = []
             for c in cnts_skin:
@@ -430,7 +432,8 @@ class SpatialPerceptionEngine:
 
                 candidates = []
                 for t_img in [thresh1, thresh2]:
-                    cnts, _ = cv2.findContours(t_img, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                    res_t = cv2.findContours(t_img, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                    cnts = res_t[0] if len(res_t) == 2 else res_t[1]
                     for c in cnts:
                         area = cv2.contourArea(c)
                         if area > (w * h * 0.04):
