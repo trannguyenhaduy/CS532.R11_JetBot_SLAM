@@ -287,9 +287,8 @@ class MotorController:
 
             if abs(actual_v) < 0.01 and abs(actual_w) > 0.01:
                 # ── QUAY TẠI CHỖ (PURE SPIN IN PLACE) ──
-                # JetBot có bánh bi cầu (caster ball) ở đuôi, tạo ma sát trượt lớn khi quay tròn tại chỗ.
-                # Cần mức xung PWM tối thiểu 24% - 28% để động cơ đủ mô-men xoắn thắng ma sát.
-                turn_duty = max(0.24, min(0.35, abs(actual_w) * 0.55))
+                # Mức xung 18% - 21% PWM giúp JetBot quay chậm rãi, êm ái, chống quay tít làm nhòe camera
+                turn_duty = max(0.18, min(0.22, abs(actual_w) * 0.45))
                 p_l = -turn_duty if actual_w > 0 else turn_duty
                 p_r = turn_duty if actual_w > 0 else -turn_duty
             else:
@@ -341,6 +340,23 @@ class MotorController:
                 left, right = right, left
             if self.is_connected and self.driver:
                 self.driver.set_motors(left, right)
+
+    def spin_in_place(self, duty: float = 0.19, direction: int = 1):
+        """Quay tròn tại chỗ với mức xung PWM chỉ định và kiểm soát hướng (direction: 1=trái CCW, -1=phải CW).
+        Tự động áp dụng các thiết lập đảo chiều cực tính và đổi kênh motor.
+        """
+        turn_duty = max(0.12, min(0.35, float(duty)))
+        # Quay trái CCW: bánh trái lùi (-), bánh phải tiến (+)
+        p_l = -turn_duty if direction > 0 else turn_duty
+        p_r = turn_duty if direction > 0 else -turn_duty
+        with self.lock:
+            self.last_cmd_time = time.time()
+            if self.invert_left: p_l = -p_l
+            if self.invert_right: p_r = -p_r
+            if self.swap_motors: p_l, p_r = p_r, p_l
+            if self.is_connected and self.driver:
+                self.driver.set_motors(p_l, p_r)
+
 
     def stop(self):
         with self.lock:

@@ -157,9 +157,15 @@ class WebHandler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps({"status": "OK", "reset": bool(ok)}).encode())
             return
         elif self.path.startswith('/api/auto_scan'):
+            duration = None
+            if '?' in self.path:
+                for p in self.path.split('?')[1].split('&'):
+                    if p.startswith('duration='):
+                        try: duration = float(p.split('=')[1])
+                        except Exception: duration = None
             active = False
             if inst and hasattr(inst, 'toggle_auto_scan'):
-                active = inst.toggle_auto_scan()
+                active = inst.toggle_auto_scan(duration=duration)
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
             self.send_header('Access-Control-Allow-Origin', '*')
@@ -231,9 +237,15 @@ class WebHandler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps({"status": "OK", "reset": bool(ok)}).encode())
             return
         elif self.path.startswith('/api/auto_scan'):
+            duration = None
+            if '?' in self.path:
+                for p in self.path.split('?')[1].split('&'):
+                    if p.startswith('duration='):
+                        try: duration = float(p.split('=')[1])
+                        except Exception: duration = None
             active = False
             if inst and hasattr(inst, 'toggle_auto_scan'):
-                active = inst.toggle_auto_scan()
+                active = inst.toggle_auto_scan(duration=duration)
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
             self.send_header('Access-Control-Allow-Origin', '*')
@@ -337,9 +349,12 @@ class WebCockpitServer:
             return self.map_reset_cb()
         return False
 
-    def toggle_auto_scan(self):
+    def toggle_auto_scan(self, duration=None):
         if self.auto_scan_cb:
-            return self.auto_scan_cb()
+            try:
+                return self.auto_scan_cb(duration=duration)
+            except TypeError:
+                return self.auto_scan_cb()
         return False
 
 

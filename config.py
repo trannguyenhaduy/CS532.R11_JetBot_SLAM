@@ -51,3 +51,7 @@ DEPTH_SKIP_FRAMES = 5       # Chỉ tính mây điểm 3D 1 trong 5 frame (~3 Hz
 DEPTH_DOWNSAMPLE_STEP = 25  # Bước nhảy lấy mẫu ma trận điểm ảnh (pixel)
 IMAGE_SKIP_FRAMES = 2       # Bỏ qua 1/2 frame video để nhẹ CPU encode JPEG
 
+# ─── THÔNG SỐ TỰ QUÉT 360 ĐỘ (AUTO 360° PANORAMA SCAN) ──────────────────────
+AUTO_SCAN_DURATION_S = 5.0  # Thời gian hoàn tất đúng 1 vòng 360 độ trên mặt sàn (giây)
+AUTO_SCAN_SPEED_PWM  = 0.19 # Mức xung PWM quay êm ái, chống quay tít làm nhòe camera
+

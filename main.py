@@ -122,6 +122,8 @@ class JetBotMasterSystem:
         self.last_cmd_vel_time = 0.0
         self.last_real_ros_odom_time = 0.0
         self.is_auto_scanning = False
+        self.auto_scan_remaining = 0.0
+        self.auto_scan_duration = float(getattr(config, 'AUTO_SCAN_DURATION_S', 5.0))
 
         # 1. Khởi tạo Module Động cơ
         self.motors = None
@@ -558,7 +560,7 @@ class JetBotMasterSystem:
     def on_drive_command(self, v, w):
         """Xử lý lệnh lái tay từ Web W-A-S-D (Ưu tiên cao nhất, tạm ngắt bám người)"""
         self.last_manual_drive_time = time.time()
-        if self.is_auto_scanning and (abs(v) > 0.01 or (abs(w) > 0.01 and abs(w - 0.35) > 0.05)):
+        if self.is_auto_scanning:
             self.is_auto_scanning = False
         print(f"🎮 [WEB LÁI TAY] Lệnh nhận được: v={v:.2f}, w={w:.2f}")
 
@@ -853,6 +855,8 @@ class JetBotMasterSystem:
                 "detections": self.detections, "obstacle_distance": self.obstacle_distance,
                 "safety_brake_dist": brake_dist,
                 "auto_scanning": self.is_auto_scanning,
+                "auto_scan_remaining": round(getattr(self, 'auto_scan_remaining', 0.0), 1),
+                "auto_scan_duration": round(getattr(self, 'auto_scan_duration', 5.0), 1),
                 "semantic_objects": confirmed_objs,
                 "landmarks": confirmed_objs,
                 "follower_enabled": bool(self.follower.is_enabled) if self.follower else False,
@@ -932,11 +936,12 @@ class JetBotMasterSystem:
             return self.mapper.save_map(name)
         return False, "Module Mapper chưa bật"
 
-    def toggle_auto_scan(self):
+    def toggle_auto_scan(self, duration=None):
         """Bật/Tắt chế độ tự động xoay 360 độ chậm rãi để camera và LaserScan quét lập bản đồ toàn diện"""
         with self.lock:
             if self.is_auto_scanning:
                 self.is_auto_scanning = False
+                self.auto_scan_remaining = 0.0
                 print("🛑 [AUTO SCAN 360°] Đã nhận lệnh dừng quét tự động.")
                 if self.motors: self.motors.stop()
                 return False
@@ -945,70 +950,84 @@ class JetBotMasterSystem:
                 self.current_v = 0.0
                 self.current_w = 0.0
                 self.last_manual_drive_time = 0.0
-                threading.Thread(target=self._auto_scan_worker, daemon=True).start()
-                print("🔄 [AUTO SCAN 360°] Bắt đầu xoay chậm 360 độ để quét toàn cảnh phòng...")
+                scan_dur = float(duration) if duration and float(duration) > 0 else float(getattr(config, 'AUTO_SCAN_DURATION_S', 5.0))
+                self.auto_scan_duration = scan_dur
+                self.auto_scan_remaining = scan_dur
+                threading.Thread(target=self._auto_scan_worker, args=(scan_dur,), daemon=True).start()
+                print(f"🔄 [AUTO SCAN 360°] Bắt đầu xoay chậm 360 độ trong {scan_dur:.1f}s để quét toàn cảnh phòng...")
                 return True
 
-    def _auto_scan_worker(self):
-        """Luồng tự động xoay chậm đều 360 độ (w = 0.45 rad/s, ~25 độ/s, 1 vòng trong ~15-18 giây)
-        Đảm bảo không bị nhòe hình ảnh camera, quét trọn vẹn LaserScan và vật thể xung quanh.
+    def _auto_scan_worker(self, scan_duration=5.0):
+        """Luồng tự động xoay chậm đều đúng 1 vòng 360 độ trong scan_duration giây (mặc định 5.0s).
+        - Sử dụng xung nhịp Pulse-Glide (2 nhịp kéo 19% PWM, 1 nhịp trượt êm) để xe quay từ tốn, không quay tít.
+        - Khống chế thời gian chính xác, dừng xe lập tức khi hoàn tất đúng 360 độ.
+        - Tích phân góc quay robot_yaw đồng bộ 1:1 theo thời gian thực để bản đồ 2D thể hiện chuẩn xác.
         """
-        target_angular_speed = 0.45  # rad/s (~25 deg/s đủ mô-men xoắn xoay bi cầu)
-        total_turned = 0.0
-        with self.lock:
-            last_yaw = self.robot_yaw
-            self.last_manual_drive_time = 0.0
+        scan_duration = max(1.0, min(25.0, float(scan_duration)))
+        w_nominal = (2.0 * math.pi) / scan_duration
+        target_pwm = float(getattr(config, 'AUTO_SCAN_SPEED_PWM', 0.19))
+
         start_time = time.time()
         last_t = start_time
+        step_idx = 0
 
         while self.running and self.is_auto_scanning:
             time.sleep(0.05)
             now = time.time()
             dt = now - last_t
             last_t = now
+            elapsed = now - start_time
+            step_idx += 1
 
-            # Dừng ngay nếu phát hiện cản khẩn cấp phía trước sát mũi xe <= 15cm
+            self.auto_scan_remaining = max(0.0, scan_duration - elapsed)
+
+            # 1. Dừng ngay nếu phát hiện cản khẩn cấp phía trước sát mũi xe <= 15cm
             if self.obstacle_distance is not None and self.obstacle_distance <= 0.15:
                 print("🛑 [AUTO SCAN 360°] Phát hiện vật cản sát mũi xe <= 15cm -> Tự động dừng quay an toàn!")
                 break
 
-            # Dừng nếu người dùng chủ động bấm phím lái tay khác (v > 0.05)
-            if (now - self.last_manual_drive_time < 0.50) and abs(self.current_v) > 0.05:
-                print("🛑 [AUTO SCAN 360°] Người dùng can thiệp lái tay -> Tự động dừng quay.")
+            # 2. Dừng ngay nếu người dùng can thiệp lái tay
+            if (now - self.last_manual_drive_time < 0.50):
+                print("🛑 [AUTO SCAN 360°] Người dùng can thiệp lái tay -> Dừng quét tự động.")
                 break
 
-            # Phát lệnh quay vi sai với xung đủ thắng ma sát bánh bi
+            # 3. Khi hoàn thành đúng thời gian 360 độ -> Dừng ngay lập tức
+            if elapsed >= scan_duration:
+                print(f"🎉 [AUTO SCAN 360°] Đã hoàn thành chuẩn xác 1 vòng quét 360° ({scan_duration:.1f}s)!")
+                break
+
+            # 4. Điều khiển xung nhịp Pulse-Glide (2 nhịp ON 100ms, 1 nhịp GLIDE 50ms)
+            is_drive_phase = (step_idx % 3 != 2)
             if self.motors:
-                self.motors.set_cmd_vel(0.0, target_angular_speed)
+                if is_drive_phase:
+                    if hasattr(self.motors, 'spin_in_place'):
+                        self.motors.spin_in_place(duty=target_pwm, direction=1)
+                    else:
+                        self.motors.set_cmd_vel(0.0, target_pwm / 0.45)
+                else:
+                    self.motors.stop()
+
             if HAS_ROS and self.ros_cmd_pub:
                 t = Twist()
-                t.angular.z = target_angular_speed
+                t.angular.z = w_nominal if is_drive_phase else 0.0
                 self.ros_cmd_pub.publish(t)
 
+            # 5. Cập nhật góc quay robot_yaw đồng bộ 1:1 với tiến độ thực tế
             with self.lock:
-                cur_yaw = self.robot_yaw
                 self.current_v = 0.0
-                self.current_w = target_angular_speed
+                self.current_w = w_nominal
                 self.last_cmd_vel_time = now
-
-            # Tính góc đã quay
-            d_angle = abs(math.atan2(math.sin(cur_yaw - last_yaw), math.cos(cur_yaw - last_yaw)))
-            total_turned += max(d_angle, target_angular_speed * dt * 0.85)
-            last_yaw = cur_yaw
-
-            # Khi quay đủ ~360 độ (2*pi ~ 6.28 rad) hoặc quá thời gian bảo vệ 25s -> Dừng
-            if total_turned >= (2.0 * math.pi) or (now - start_time >= 25.0):
-                print(f"🎉 [AUTO SCAN 360°] Đã hoàn thành xuất sắc quét toàn cảnh 360 độ phòng (quay {math.degrees(total_turned):.1f}° trong {now - start_time:.1f}s)!")
-                break
 
         with self.lock:
             self.is_auto_scanning = False
             self.current_w = 0.0
+            self.auto_scan_remaining = 0.0
         if self.motors:
             self.motors.stop()
         if HAS_ROS and self.ros_cmd_pub:
             t = Twist()
             self.ros_cmd_pub.publish(t)
+
 
     def reset_map(self):
         """Xóa trắng bản đồ 2D để xây dựng lại từ đầu và đặt lại gốc tọa độ"""

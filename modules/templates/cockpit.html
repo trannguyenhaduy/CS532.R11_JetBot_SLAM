@@ -147,7 +147,13 @@
         <div style="display:flex; gap:5px; align-items:center;">
           <button class="tab-btn active" id="btn-view-2d" onclick="switchView('2d')">2D GRID</button>
           <button class="tab-btn" id="btn-view-3d" onclick="switchView('3d')">3D VIEW</button>
-          <button class="tab-btn" id="btn-auto-scan" style="border-color:var(--cyan); color:var(--cyan);" onclick="toggleAutoScan()" title="JetBot tự xoay đều 360 độ để quét toàn cảnh phòng">🔄 TỰ QUÉT 360°</button>
+          <button class="tab-btn" id="btn-auto-scan" style="border-color:var(--cyan); color:var(--cyan);" onclick="toggleAutoScan()" title="JetBot tự xoay đều 360 độ để quét toàn cảnh phòng">🔄 TỰ QUÉT 360° (5.0s)</button>
+          <select id="sel-scan-duration" onchange="changeScanDuration(this.value)" style="background:#0b1326; color:var(--cyan); border:1px solid var(--cyan); border-radius:4px; font-size:11px; padding:3px 5px; cursor:pointer; font-weight:600;" title="Điều chỉnh thời gian xoay 360 độ tùy theo độ trơn của mặt sàn">
+            <option value="4.0">4.0s (Sàn trơn)</option>
+            <option value="5.0" selected>5.0s (Chuẩn)</option>
+            <option value="6.0">6.0s (Sàn gỗ)</option>
+            <option value="7.5">7.5s (Thảm/Chậm)</option>
+          </select>
           <button class="tab-btn" style="border-color:var(--amber); color:var(--amber);" onclick="resetMapCamera()" title="Căn giữa góc nhìn">🎯 CĂN GIỮA</button>
           <button class="tab-btn" style="border-color:var(--emerald); color:var(--emerald);" onclick="saveMap()" title="Lưu bản đồ hiện tại">💾 LƯU BẢN ĐỒ</button>
           <button class="tab-btn" style="border-color:var(--rose); color:var(--rose);" onclick="resetMap()" title="Xóa trắng bản đồ để tạo mới">🧹 XÓA BẢN ĐỒ</button>
@@ -163,7 +169,7 @@
         <div id="map-overlay-controls" style="position:absolute; right:12px; bottom:30px; display:flex; flex-direction:column; gap:5px; z-index:15;">
           <button class="tab-btn" onclick="zoom2D(1.2)" style="padding:4px 8px; font-weight:bold; font-size:12px; background:rgba(10,14,23,0.85);" title="Phóng to">➕</button>
           <button class="tab-btn" onclick="zoom2D(0.83)" style="padding:4px 8px; font-weight:bold; font-size:12px; background:rgba(10,14,23,0.85);" title="Thu nhỏ">➖</button>
-          <button class="tab-btn" id="btn-map-auto-scan" onclick="toggleAutoScan()" style="padding:4px 8px; font-size:11px; background:rgba(10,14,23,0.85); color:var(--cyan); border-color:var(--cyan); font-weight:bold;" title="JetBot tự xoay 360° để quét bản đồ">🔄 QUÉT 360°</button>
+          <button class="tab-btn" id="btn-map-auto-scan" onclick="toggleAutoScan()" style="padding:4px 8px; font-size:11px; background:rgba(10,14,23,0.85); color:var(--cyan); border-color:var(--cyan); font-weight:bold;" title="JetBot tự xoay 360° để quét bản đồ">🔄 QUÉT (5.0s)</button>
           <button class="tab-btn" id="btn-follow-toggle" onclick="toggleFollowRobot()" style="padding:4px 8px; font-size:11px; background:rgba(10,14,23,0.85); color:var(--cyan); border-color:var(--cyan);" title="Khóa tâm bám theo Robot">🎯 BÁM XE: BẬT</button>
         </div>
       </div>
@@ -205,7 +211,7 @@
         <button class="tab-btn" id="spd-slow" onclick="setSpeed(0.15, 0.40, 'slow')" style="padding:3px 8px; font-size:0.72rem; cursor:pointer;">Cham (15%)</button>
         <button class="tab-btn active" id="spd-norm" onclick="setSpeed(0.20, 0.50, 'norm')" style="padding:3px 8px; font-size:0.72rem; cursor:pointer; font-weight:bold;">Chuan (20%)</button>
         <button class="tab-btn" id="spd-fast" onclick="setSpeed(0.25, 0.60, 'fast')" style="padding:3px 8px; font-size:0.72rem; cursor:pointer;">Nhanh (25%)</button>
-        <button class="tab-btn" id="btn-teleop-auto-scan" onclick="toggleAutoScan()" style="padding:3px 10px; font-size:0.72rem; cursor:pointer; border-color:var(--cyan); color:var(--cyan); font-weight:bold; background:rgba(0,240,255,0.12);" title="JetBot tự xoay chậm 360° để quét toàn cảnh phòng">🔄 TỰ QUÉT 360°</button>
+        <button class="tab-btn" id="btn-teleop-auto-scan" onclick="toggleAutoScan()" style="padding:3px 10px; font-size:0.72rem; cursor:pointer; border-color:var(--cyan); color:var(--cyan); font-weight:bold; background:rgba(0,240,255,0.12);" title="JetBot tự xoay chậm 360° để quét toàn cảnh phòng">🔄 TỰ QUÉT 360° (5.0s)</button>
       </div>
       <div class="dpad-container">
         <div class="dpad-row"><button class="btn-drive" id="btn-up" onmousedown="sendDrive(speedLinear,0)" onmouseup="emergencyStop()" ontouchstart="sendDrive(speedLinear,0)" ontouchend="emergencyStop()">▲</button></div>
@@ -1305,7 +1311,7 @@
 
         // Cập nhật trạng thái nút Tự Quét 360° Panorama Spin
         if (d.auto_scanning !== undefined) {
-          updateAutoScanBtn(Boolean(d.auto_scanning));
+          updateAutoScanBtn(Boolean(d.auto_scanning), d.auto_scan_remaining);
         }
       } catch (e) {}
       setTimeout(pollState, 140);
@@ -1406,12 +1412,20 @@
     }
 
     // 🔄 TỰ ĐỘNG XOAY 360 ĐỘ QUÉT BẢN ĐỒ TOÀN CẢNH (AUTO 360° MAPPING SPIN)
+    let currentScanDuration = 5.0;
+
+    function changeScanDuration(val) {
+      currentScanDuration = parseFloat(val) || 5.0;
+      updateAutoScanBtn(false);
+    }
+
     function toggleAutoScan() {
       const mainBtn = document.getElementById('btn-teleop-auto-scan') || document.getElementById('btn-auto-scan');
-      const willStart = !mainBtn || !mainBtn.innerText.includes('ĐANG');
-      updateAutoScanBtn(willStart);
+      const willStart = !mainBtn || (!mainBtn.innerText.includes('ĐANG') && !mainBtn.innerText.includes('DỪNG'));
+      updateAutoScanBtn(willStart, currentScanDuration);
 
-      fetch('/api/auto_scan?t=' + Date.now(), { cache: 'no-store' })
+      const durParam = currentScanDuration ? `&duration=${currentScanDuration}` : '';
+      fetch('/api/auto_scan?t=' + Date.now() + durParam, { cache: 'no-store' })
         .then(r => r.json())
         .then(data => {
           updateAutoScanBtn(Boolean(data.auto_scanning));
@@ -1422,21 +1436,23 @@
         });
     }
 
-    function updateAutoScanBtn(isScanning) {
+    function updateAutoScanBtn(isScanning, remTime) {
       const btnIds = ['btn-auto-scan', 'btn-map-auto-scan', 'btn-teleop-auto-scan'];
       btnIds.forEach(id => {
         const btn = document.getElementById(id);
         if (!btn) return;
         if (isScanning) {
           btn.classList.add('active');
-          btn.innerText = (id === 'btn-map-auto-scan') ? '⏹ ĐANG QUÉT...' : '⏹ ĐANG QUÉT 360°...';
+          const remStr = (remTime !== undefined && remTime > 0) ? ` (${remTime.toFixed(1)}s)` : '';
+          btn.innerText = (id === 'btn-map-auto-scan') ? `⏹ DỪNG${remStr}` : `⏹ ĐANG QUÉT${remStr}`;
           btn.style.borderColor = 'var(--rose)';
           btn.style.color = '#fff';
           btn.style.background = 'var(--rose)';
           btn.style.boxShadow = '0 0 12px var(--rose)';
         } else {
           btn.classList.remove('active');
-          btn.innerText = (id === 'btn-map-auto-scan') ? '🔄 QUÉT 360°' : '🔄 TỰ QUÉT 360°';
+          const durStr = `${currentScanDuration.toFixed(1)}s`;
+          btn.innerText = (id === 'btn-map-auto-scan') ? `🔄 QUÉT (${durStr})` : `🔄 TỰ QUÉT 360° (${durStr})`;
           btn.style.borderColor = 'var(--cyan)';
           btn.style.color = 'var(--cyan)';
           btn.style.background = (id === 'btn-map-auto-scan') ? 'rgba(10,14,23,0.85)' : 'rgba(0, 240, 255, 0.12)';
