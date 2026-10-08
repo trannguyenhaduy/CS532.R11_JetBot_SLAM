@@ -1,57 +1,67 @@
-# 🤖 CS532 — HỆ THỐNG XE TỰ HÀNH JETBOT TÍCH HỢP OAK-D S2, VISUAL SEMANTIC SLAM & WEB COCKPIT 3D
+# 🤖 CS532 — ĐỒ ÁN XE TỰ HÀNH JETBOT: KẾT HỢP CAMERA VÀ LIDAR ĐỂ XÂY DỰNG BẢN ĐỒ, ĐỊNH VỊ, LẬP KẾ HOẠCH ĐƯỜNG ĐI VÀ TRÁNH VẬT CẢN
 
 > **Môn học:** CS532 — Thị giác máy tính trong tương tác người–máy  
-> **Nền tảng phần cứng:** NVIDIA Jetson Nano 4GB (JetPack 4.5 / Ubuntu 18.04 / ROS Melodic / Python 3)  
-> **Cảm biến thị giác:** Luxonis OAK-D S2 (DepthAI v2/v3, Intel Movidius Myriad X VPU)  
-> **Giao diện điều khiển:** WebGL 3D Digital Twin (Three.js, Zero-Latency Streaming @ Port 8080)
+> **Tên đề tài:** *JetBot — Kết hợp Camera và LiDAR để xây dựng bản đồ, định vị, lập kế hoạch đường đi và tránh vật cản*  
+> **Nền tảng phần cứng:** NVIDIA Jetson Nano 4GB (Ubuntu 18.04 / ROS Melodic / Python 3)  
+> **Cảm biến thị giác & Chiều sâu:** Luxonis OAK-D S2 (DepthAI v2/v3, Intel Movidius Myriad X VPU)  
+> **Giao diện điều khiển & Giám sát:** Web Cockpit Three.js Digital Twin (Port `8080`)
 
 ---
 
-## 📖 1. TỔNG QUAN DỰ ÁN
+## 📖 1. TỔNG QUAN ĐỀ TÀI & GIẢI PHÁP KỸ THUẬT
 
-Dự án phát triển hệ thống robot tự hành thông minh dựa trên nền tảng **Waveshare JetBot**, kết hợp sức mạnh tính toán biên Edge AI của camera **Luxonis OAK-D S2**. Hệ thống tích hợp toàn diện:
-- **Thị giác không gian 3D (Spatial AI):** Chạy mô hình Deep Learning trực tiếp trên chip VPU Myriad X, đo đạc tọa độ thực tế $(X, Y, Z)$ tính bằng mét ở tốc độ khung hình **60 FPS** với tải CPU Jetson Nano $\le 15\%$.
-- **Phanh an toàn khẩn cấp (Virtual Bumper):** Tự động phát hiện vật cản ở cự ly gần ($< 25\text{cm}$), ngắt lệnh tiến tức thời nhưng luôn cho phép lùi và quay đầu thoát hiểm, tích hợp bộ lọc chống dính phanh giả trên sàn phẳng.
-- **Tương tác Người–Máy (HRI - Person Follower):** Tự hành bám theo mục tiêu người qua thuật toán điều khiển PD vi sai, có cơ chế nhường quyền lái tay ưu tiên tuyệt đối.
-- **Giám sát Năng lượng thời gian thực:** Đọc trực tiếp cảm biến I2C INA219 (Điện áp V, Dòng A, Công suất W, Tỉ lệ Pin %).
-- **Trạm chỉ huy Web Cockpit 3D:** Giám sát camera kép (Camera AI Detect & Camera Nhiệt độ sâu), điều khiển xe mượt mà qua phím `W-A-S-D` hoặc Joystick cảm ứng, hiển thị bản đồ Occupancy Grid 2D và đám mây điểm 3D.
+Đề tài tập trung giải quyết bài toán cốt lõi của Robot Di động Tự hành (AMR - Autonomous Mobile Robot) trong môi trường trong nhà (Indoor Navigation) bao gồm **4 trụ cột chính**:
+
+```mermaid
+flowchart LR
+    A["1. XÂY DỰNG BẢN ĐỒ<br/>(2D Occupancy SLAM)"] --> B["2. ĐỊNH VỊ ROBOT<br/>(Odometry / Pose)"]
+    B --> C["3. LẬP KẾ HOẠCH ĐƯỜNG ĐI<br/>(A* Global Path Planning)"]
+    C --> D["4. TRÁNH VẬT CẢN & TỰ HÀNH<br/>(Path Follower & Dynamic Avoidance)"]
+```
+
+### 💡 Giải pháp kết hợp "Camera + LiDAR" trên phần cứng OAK-D S2:
+Robot sử dụng camera không gian **Luxonis OAK-D S2** đóng vai trò kép:
+1. **Camera RGB:** Thu nhận hình ảnh trực quan, nhận diện đối tượng bằng AI (Người, Ghế, Chai nước...) trên chip VPU Myriad X.
+2. **LiDAR Quang Học (Stereo Depth emulated LiDAR):** Thay vì phải trang bị thêm cảm biến LiDAR cơ khí 360° đắt tiền và cồng kềnh, hệ thống sử dụng thuật toán **Depth Ray-Casting / Depth-to-LaserScan** để cắt lát ma trận đo chiều sâu Stereo Depth của OAK-D S2 thành **các tia quét LaserScan 2D**. Giải pháp này cung cấp cự ly đo đạt độ chính xác cao (từ $20\text{cm}$ đến $4.0\text{m}$), trực tiếp xây dựng bản đồ chiếm dụng 2D (Occupancy Grid Map) và phát hiện chướng ngại vật thời gian thực.
 
 ---
 
-## ⚡ 2. CÁC TÍNH NĂNG NỔI BẬT
+## ⚡ 2. BỐN TRỤ CỘT CỐT LÕI CỦA HỆ THỐNG
 
-| Tính năng | Công nghệ cốt lõi | Hiệu năng / Đặc tả |
+| Trụ cột | Công nghệ & Thuật toán | Chức năng chi tiết |
 | :--- | :--- | :--- |
-| **Edge AI Vision** | DepthAI MobileNet-SSD / YOLO trên Myriad X VPU | 60 FPS, độ trễ $< 20\text{ms}$, nhận diện 20+ lớp COCO |
-| **Phanh An Toàn** | Stereo Depth RoI Filter + 15th Percentile | Phanh cứng $< 25\text{cm}$, lọc sạch mặt sàn, cho phép lùi |
-| **Động Cơ Vi Sai** | Cầu H TB6612 + PCA9685 I2C (`0x60`) @ 1600Hz | Giới hạn trần an toàn PWM $\le 35\%$, deadband $\le 16\%$ |
-| **Tự Hành Bám Người** | PD Closed-Loop Control + Temporal Tracker | Giữ cự ly $1.0\text{m} - 1.4\text{m}$, tự dừng khi mất dấu |
-| **Bản Đồ Ngữ Nghĩa** | 3D Spatial Clustering + 2D Occupancy Grid | Xuất bản đồ chiếm dụng thời gian thực, tích hợp RTAB-Map |
-| **Web Cockpit 3D** | Three.js Digital Twin + Web Audio + REST/WebSocket | Port `8080`, hỗ trợ mọi trình duyệt điện thoại/laptop |
-| **Đo Pin INA219** | Direct SMBus I2C (`0x41`) | Cập nhật 1 Hz, cảnh báo pin yếu tự động |
+| **1. Xây dựng bản đồ (Mapping)** | 2D Occupancy Grid SLAM + Depth Ray-Casting | Quét môi trường lập lưới ô vuông $8\text{m} \times 8\text{m}$ (độ phân giải $5\text{cm/ô}$), hỗ trợ lưu và nạp bản đồ (`save_map` / `load_map`). |
+| **2. Định vị (Localization)** | Dead-Reckoning Odometry + Yaw Angle Fusion | Ước lượng vị trí $(X, Y, \theta)$ liên tục của xe trong hệ quy chiếu toàn cục `map`. |
+| **3. Lập kế hoạch đường đi (Path Planning)** | Thuật toán A\* (A-Star) + Costmap Inflation | Tìm đường đi ngắn nhất từ vị trí xe đến điểm đích Goal, tự động mở rộng vùng đệm an toàn quanh tường ($15\text{cm}$) chống cạ gầm. |
+| **4. Tránh vật cản & Tự hành (Obstacle Avoidance)** | Path Follower + Dynamic Re-planning + Virtual Bumper | Xe tự động bám theo đường đi A\*. Khi có vật cản bất ngờ chặn đường, xe tự né hoặc tính lại đường mới; chốt chặn Virtual Bumper phanh khẩn cấp khi cự ly $\le 25\text{cm}$. |
 
 ---
 
-## 📁 3. CẤU TRÚC THƯ MỤC DỰ ÁN
+## 📁 3. CẤU TRÚC MÔ-ĐUN: MỖI TÍNH NĂNG 1 FILE RIÊNG
+
+Hệ thống được thiết kế theo chuẩn kỹ sư phần mềm Robotics, tách biệt hoàn toàn thành các file độc lập trong thư mục `modules/`:
 
 ```text
 d:\Robot (catkin_ws/src/jetbot_slam)
-├── config.py                     # Cấu hình trung tâm: Feature Flags (ENABLE_*), ngưỡng phanh, PID
+├── config.py                     # Cấu hình trung tâm: Ngưỡng phanh, kích thước robot, tham số A*
 ├── main.py                       # Điểm khởi chạy chính: Điều phối toàn bộ các module & Web Cockpit
+├── KE_HOACH_THUC_HIEN.md         # Kế hoạch chi tiết & Checklist lộ trình từng tính năng
 ├── CMakeLists.txt                # Cấu hình build package ROS Melodic
 ├── package.xml                   # Khai báo phụ thuộc package ROS
 ├── README.md                     # Tài liệu hướng dẫn dự án
 │
-├── modules/                      # THƯ MỤC CHỨA CÁC MODULE ĐỘC LẬP (MODULAR ARCHITECTURE)
+├── modules/                      # KIẾN TRÚC MÔ-ĐUN HÓA (MỖI TÍNH NĂNG 1 FILE RIÊNG)
 │   ├── __init__.py               # Khai báo package modules
-│   ├── motor_controller.py       # Module 1: Điều khiển động cơ TB6612/PCA9685, lái vi sai WASD
-│   ├── battery_monitor.py        # Module 2: Đo đạc điện áp, dòng điện, công suất pin qua INA219
-│   ├── camera_streamer.py        # Module 3: Luồng Camera OAK-D S2, VPU AI, Camera nhiệt & ROS Pub
-│   ├── spatial_detector.py       # Module 4: Bộ suy luận không gian 3D, HOG People, Spatial Cluster
-│   ├── person_tracker.py         # Module 5: Tự hành bám người (HRI) với bộ điều khiển vi sai PD
-│   ├── emergency_brake.py        # Module 6: Hệ thống phanh khẩn cấp Virtual Bumper lọc mặt sàn
-│   ├── semantic_mapper.py        # Module 7: Bản đồ ngữ nghĩa 3D thời gian thực & LaserScan 2D
-│   ├── web_server.py             # Module 8: Web Server HTTP/MJPEG điều khiển xe tại cổng 8080
+│   ├── motor_controller.py       # Tính năng 1: Điều khiển động cơ vi sai PCA9685/TB6612
+│   ├── battery_monitor.py        # Tính năng 2: Giám sát năng lượng & Pin INA219 (V, A, W, %)
+│   ├── camera_streamer.py        # Tính năng 3: Thu nhận Camera RGB & LaserScan từ Depth OAK-D S2
+│   ├── localization.py           # Tính năng 4: Định vị vị trí Robot (X, Y, Yaw) trên bản đồ
+│   ├── occupancy_slam.py         # Tính năng 5: Xây dựng bản đồ chiếm dụng 2D (Lưu & Nạp bản đồ)
+│   ├── path_planner.py           # Tính năng 6: Lập kế hoạch đường đi tối ưu A* & Costmap Inflation
+│   ├── navigator.py              # Tính năng 7: Điều hướng tự hành bám quỹ đạo & Tránh vật cản động
+│   ├── emergency_brake.py        # Tính năng 8: Phanh khẩn cấp phần cứng Virtual Bumper (<= 25cm)
+│   ├── spatial_detector.py       # Tính năng 9: Nhận diện đối tượng thị giác AI VPU Myriad X
+│   ├── web_server.py             # Tính năng 10: Giao diện Web Cockpit điều khiển & Đặt điểm Goal
 │   └── templates/
 │       └── cockpit.html          # Giao diện Web Cockpit Three.js Digital Twin tối tân
 │
@@ -95,7 +105,6 @@ Nếu bạn cần phát Topics hình ảnh cho các node ROS C++ ngoài:
   ```bash
   python3 main.py
   ```
-*(Hệ thống đã được tối ưu bộ đệm socket 16MB `buff_size=2**24` và bộ khử trùng lặp khung hình, duy trì 30–35 FPS ổn định).*
 
 ---
 
@@ -111,53 +120,6 @@ http://<IP_ROBOT>:8080    (Ví dụ: http://192.168.1.13:8080)
   - `S` / `Mũi tên Xuống`: Lùi xe (Luôn cho phép lùi để thoát hiểm).
   - `A` / `Mũi tên Trái`: Quay trái tại chỗ.
   - `D` / `Mũi tên Phải`: Quay phải tại chỗ.
-  - `Space` / Thả phím: Dừng khẩn cấp tức thì.
-* **Cảm ứng (Mobile / Tablet):** Sử dụng nút bấm D-Pad hoặc Joystick cảm ứng trực quan trên màn hình.
-* **Chuyển chế độ camera:** Bấm nút chuyển đổi giữa **Normal AI Detect** và **Thermal (Camera Nhiệt độ sâu)**.
-
----
-
-## 🧪 6. QUY TRÌNH KIỂM THỬ ĐỘC LẬP (SELF-TEST)
-
-Hệ thống được thiết kế theo kiến trúc Modular, mỗi module đều có thể tự kiểm thử độc lập mà không cần bật cả xe:
-
-```bash
-# 1. Chạy bài kiểm thử toàn diện toàn bộ 52 tiêu chí hệ thống:
-python3 scripts/self_test.py
-
-# 2. Kiểm thử độc lập Hệ thống Phanh Khẩn Cấp (Emergency Brake):
-python3 -m modules.emergency_brake
-
-# 3. Kiểm thử độc lập Động cơ vi sai PCA9685/TB6612:
-python3 -m modules.motor_controller
-
-# 4. Kiểm thử độc lập Mạch đo pin INA219:
-python3 -m modules.battery_monitor
-
-# 5. Kiểm thử độc lập Camera OAK-D S2 Streamer:
-python3 -m modules.camera_streamer
-```
-
----
-
-## 🎛️ 7. BẢNG CỜ TÍNH NĂNG TRONG `config.py`
-
-Bạn có thể chủ động bật/tắt an toàn bất kỳ chức năng nào trong file [config.py](config.py):
-
-```python
-ENABLE_MOTORS       = True   # Bật/Tắt module động cơ vi sai PCA9685
-ENABLE_BATTERY      = True   # Bật/Tắt module đọc pin INA219
-ENABLE_CAMERA       = True   # Bật/Tắt camera OAK-D S2
-ENABLE_YOLO         = True   # Bật/Tắt AI nhận diện người & vật thể
-ENABLE_FOLLOWER     = False  # Bật/Tắt tự động bám người (Mặc định False để lái tay an toàn)
-ENABLE_MAPPER       = False  # Bật/Tắt dựng bản đồ ngữ nghĩa 3D (Bật khi test SLAM)
-ENABLE_WEB          = True   # Bật/Tắt Web Cockpit 3D Dashboard (Port 8080)
-ENABLE_SAFETY_BRAKE = True   # Bật/Tắt hệ thống phanh an toàn tự động (< 25cm)
-```
-
----
-
-## 👥 THÔNG TIN TÁC GIẢ & BẢN QUYỀN
-* **Đề tài:** Autonomous 3D Semantic SLAM on JetBot with OAK-D S2
-* **Khoa:** Khoa Khoa học Máy tính — Trường Đại học Công nghệ Thông tin (ĐHQG-HCM)
-* **Mã môn:** CS532.R11
+  - `Space`: Dừng xe khẩn cấp tức thì.
+* **Tự hành Lập kế hoạch đường đi (Autonomous Navigation):**
+  - Click chuột vào ô đích trên Bản đồ Occupancy Grid 2D ➔ Xe tự tính toán đường đi A* và bám theo lộ trình.
