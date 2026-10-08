@@ -41,6 +41,23 @@ class PinnedLandmark:
         self.last_seen = self.first_seen
         self.is_pinned = False  # Khi seen_count >= 10 -> Khóa cứng tọa độ không đổi!
 
+        # Kích thước hình học 2D thực tế (Rộng x Sâu, mét) phục vụ vẽ 2D Bounding Box:
+        dim_map = {
+            "PERSON": (0.45, 0.45),
+            "CHAIR": (0.50, 0.50),
+            "DININGTABLE": (1.10, 0.70),
+            "TABLE": (1.10, 0.70),
+            "DESK": (1.10, 0.70),
+            "POTTEDPLANT": (0.35, 0.35),
+            "BOTTLE": (0.15, 0.15),
+            "CUP": (0.12, 0.12),
+            "LAPTOP": (0.35, 0.25),
+            "TVMONITOR": (0.80, 0.20),
+            "SOFA": (1.40, 0.80),
+            "BED": (1.60, 1.20)
+        }
+        self.width_m, self.depth_m = dim_map.get(self.name, (0.40, 0.40))
+
     def update(self, x, y, z, score):
         self.last_seen = time.time()
         self.seen_count += 1
@@ -69,7 +86,9 @@ class PinnedLandmark:
             "z": round(self.z, 3),
             "score": round(self.score, 2),
             "seen": self.seen_count,
-            "pinned": self.is_pinned
+            "pinned": self.is_pinned,
+            "width": self.width_m,
+            "depth": self.depth_m
         }
 
 
@@ -432,17 +451,18 @@ class OccupancySLAM:
         mask_free = (self.grid == 128)
         mask_occ = (self.grid == 255)
 
-        # 1. Sàn nhà đã quét (Free space): Xanh lục nhạt dịu mắt, bán trong suốt (alpha=40)
-        # Trong hệ BGRA: B=20, G=170, R=40, A=40 (Màu xanh lá êm dịu, tương ứng 🟢 Free Space trên HUD)
-        bgra[mask_free] = [20, 170, 40, 40]
+        # 1. Sàn nhà đã quét (Free space): Màu xám sáng / trắng ngà thanh lịch chuẩn RViz (alpha=230)
+        # Trong hệ BGRA: B=224, G=226, R=228, A=230 (Tạo cảm giác mặt sàn bê tông/gạch phẳng phiu, sạch sẽ)
+        bgra[mask_free] = [224, 226, 228, 230]
 
-        # 2. Vật cản & Tường cố định (Occupied): Màu Cyan rực rỡ, độ mờ 100% (alpha=255, 🟦 Tường Tích Lũy)
-        bgra[mask_occ] = [255, 240, 0, 255]
+        # 2. Vật cản & Tường cố định (Occupied): Màu ĐEN ĐẬM chuẩn xác 100% (alpha=255)
+        # Đậm nét, sắc sảo như nét vẽ kiến trúc CAD / RViz, phân định tường và chân bàn ghế
+        bgra[mask_occ] = [15, 15, 15, 255]
 
         # 3. Làm liền mạch các mép tường bằng giãn nở nhẹ 2x2
         kernel = np.ones((2, 2), np.uint8)
         dilated = cv2.dilate(mask_occ.astype(np.uint8), kernel)
-        bgra[dilated > 0] = [255, 240, 0, 255]
+        bgra[dilated > 0] = [15, 15, 15, 255]
 
         success, buf = cv2.imencode('.png', bgra)
         if success:

@@ -147,6 +147,7 @@
         <div style="display:flex; gap:5px; align-items:center;">
           <button class="tab-btn active" id="btn-view-2d" onclick="switchView('2d')">2D GRID</button>
           <button class="tab-btn" id="btn-view-3d" onclick="switchView('3d')">3D VIEW</button>
+          <button class="tab-btn" id="btn-auto-scan" style="border-color:var(--cyan); color:var(--cyan);" onclick="toggleAutoScan()" title="JetBot tự xoay đều 360 độ để quét toàn cảnh phòng">🔄 TỰ QUÉT 360°</button>
           <button class="tab-btn" style="border-color:var(--amber); color:var(--amber);" onclick="resetMapCamera()" title="Căn giữa góc nhìn">🎯 CĂN GIỮA</button>
           <button class="tab-btn" style="border-color:var(--emerald); color:var(--emerald);" onclick="saveMap()" title="Lưu bản đồ hiện tại">💾 LƯU BẢN ĐỒ</button>
           <button class="tab-btn" style="border-color:var(--rose); color:var(--rose);" onclick="resetMap()" title="Xóa trắng bản đồ để tạo mới">🧹 XÓA BẢN ĐỒ</button>
@@ -741,12 +742,11 @@
         mapCtx.setLineDash([]);
       }
 
-      // 3. CHIẾU ĐIỂM LASERSCAN 2D TRỰC TIẾP TỪ OAK-D S2 STEREO DEPTH
+      // 3. CHIẾU ĐIỂM LASERSCAN 2D TRỰC TIẾP TỪ OAK-D S2 STEREO DEPTH (CHUẨN RVIZ ĐỎ NEON)
       if (d.points_3d && Array.isArray(d.points_3d) && d.points_3d.length > 0) {
         const robX = d.robot_x || 0;
         const robY = d.robot_y || 0;
         const brakeDist = (d.safety_brake_dist !== undefined) ? d.safety_brake_dist : 0.25;
-        const warnDist = brakeDist + 0.20;
 
         mapCtx.save();
         for (let i = 0; i < d.points_3d.length; i++) {
@@ -762,16 +762,19 @@
           // Bỏ qua nếu điểm nằm ngoài vùng hiển thị canvas
           if (cp.x < -10 || cp.x > W + 10 || cp.y < -10 || cp.y > H + 10) continue;
 
-          // Phân loại màu sắc theo cự ly vật cản
+          // Điểm quét LaserScan chuẩn RViz: Đỏ rực rỡ #ff2a6d
           if (dist < brakeDist) {
-            mapCtx.fillStyle = '#ff2a6d'; // Đỏ Neon - Nguy hiểm
-          } else if (dist < warnDist) {
-            mapCtx.fillStyle = '#ffb800'; // Vàng Hổ Phách - Cảnh báo
+            mapCtx.fillStyle = '#ff2a6d';
+            mapCtx.shadowColor = '#ff2a6d';
+            mapCtx.shadowBlur = 6;
+            mapCtx.beginPath();
+            mapCtx.arc(cp.x, cp.y, 2.5, 0, Math.PI * 2);
+            mapCtx.fill();
           } else {
-            mapCtx.fillStyle = '#00f0ff'; // Xanh Cyan - Thoáng
+            mapCtx.fillStyle = '#ff2a6d';
+            mapCtx.shadowBlur = 0;
+            mapCtx.fillRect(cp.x - 1.2, cp.y - 1.2, 2.4, 2.4);
           }
-
-          mapCtx.fillRect(cp.x - 1.5, cp.y - 1.5, 3, 3);
         }
         mapCtx.restore();
       }
@@ -796,36 +799,62 @@
         mapCtx.restore();
       }
 
-      // 5. CÁC VẬT THỂ NGỮ NGHĨA GHIM CỐ ĐỊNH (PINNED SEMANTIC LANDMARKS)
+      // 5. CÁC VẬT THỂ NGỮ NGHĨA 2D BOUNDING BOX (METRIC DIMENSIONS & CLEAR LABELS)
       const landmarks = (d.landmarks && d.landmarks.length > 0) ? d.landmarks : ((d.semantic_objects && d.semantic_objects.length > 0) ? d.semantic_objects : []);
       if (landmarks.length > 0) {
         landmarks.forEach(obj => {
           const cp = worldToCanvas(obj.x, obj.y);
           const isPerson = (obj.id === 0 || obj.name === 'PERSON');
           const isPinned = (obj.pinned === true || (obj.seen && obj.seen >= 3));
-          const color = isPerson ? '#ff2a6d' : (isPinned ? '#00f0ff' : '#00ffa3');
+          const primaryColor = isPerson ? '#ff2a6d' : (isPinned ? '#00f0ff' : '#ffb800');
+          const fillColor = isPerson ? 'rgba(255, 42, 109, 0.18)' : (isPinned ? 'rgba(0, 240, 255, 0.16)' : 'rgba(255, 184, 0, 0.16)');
+
+          // Kích thước thực tế vật thể tính theo mét (chiều rộng & chiều sâu)
+          const w_m = (obj.width !== undefined && obj.width > 0) ? obj.width : 0.45;
+          const d_m = (obj.depth !== undefined && obj.depth > 0) ? obj.depth : 0.45;
+          const boxW = Math.max(16, w_m * scale);
+          const boxD = Math.max(16, d_m * scale);
 
           mapCtx.save();
-          mapCtx.fillStyle = color;
-          mapCtx.shadowColor = color;
-          mapCtx.shadowBlur = isPinned ? 12 : 6;
-          mapCtx.beginPath();
-          mapCtx.moveTo(cp.x, cp.y - 11);
-          mapCtx.lineTo(cp.x + 10, cp.y);
-          mapCtx.lineTo(cp.x, cp.y + 11);
-          mapCtx.lineTo(cp.x - 10, cp.y);
-          mapCtx.closePath();
-          mapCtx.fill();
-          mapCtx.strokeStyle = isPinned ? '#00f0ff' : '#ffffff';
-          mapCtx.lineWidth = 1.8;
-          mapCtx.stroke();
-          mapCtx.restore();
+          // A. Lớp phủ mờ diện tích chiếm dụng (Bounding Box Fill)
+          mapCtx.fillStyle = fillColor;
+          mapCtx.fillRect(cp.x - boxW/2, cp.y - boxD/2, boxW, boxD);
 
-          mapCtx.font = 'bold 10px Orbitron, monospace';
-          mapCtx.fillStyle = color;
-          const icon = isPerson ? '👤' : (obj.name.includes('CHAIR') ? '🪑' : (obj.name.includes('BOTTLE') ? '🍾' : '📦'));
-          const pinBadge = isPinned ? '📌' : '';
-          mapCtx.fillText(`${pinBadge}${icon} ${obj.name} (${obj.seen || 1}x)`, cp.x + 13, cp.y + 4);
+          // B. Viền khung hộp bao kỹ thuật (Bounding Box Stroke)
+          mapCtx.strokeStyle = primaryColor;
+          mapCtx.lineWidth = 1.6;
+          mapCtx.shadowColor = primaryColor;
+          mapCtx.shadowBlur = isPinned ? 8 : 4;
+          mapCtx.strokeRect(cp.x - boxW/2, cp.y - boxD/2, boxW, boxD);
+
+          // C. Hồng tâm tâm vật thể (+)
+          mapCtx.shadowBlur = 0;
+          mapCtx.lineWidth = 1.2;
+          mapCtx.beginPath();
+          mapCtx.moveTo(cp.x - 4, cp.y); mapCtx.lineTo(cp.x + 4, cp.y);
+          mapCtx.moveTo(cp.x, cp.y - 4); mapCtx.lineTo(cp.x, cp.y + 4);
+          mapCtx.stroke();
+
+          // D. Nhãn định danh kỹ thuật chuẩn Aerospace (Không dùng icon emoji ghim/hộp)
+          const distToRob = Math.hypot(obj.x - (d.robot_x || 0), obj.y - (d.robot_y || 0)).toFixed(2);
+          const tagText = `[${obj.name} · ${distToRob}m]`;
+          mapCtx.font = 'bold 9px Orbitron, monospace';
+          const tagW = mapCtx.measureText(tagText).width;
+          const tagH = 13;
+          const tagX = cp.x - tagW/2 - 5;
+          const tagY = cp.y - boxD/2 - tagH - 4;
+
+          // Hộp nền nhãn đen viền tương phản
+          mapCtx.fillStyle = 'rgba(7, 11, 18, 0.92)';
+          mapCtx.fillRect(tagX, tagY, tagW + 10, tagH);
+          mapCtx.strokeStyle = primaryColor;
+          mapCtx.lineWidth = 1;
+          mapCtx.strokeRect(tagX, tagY, tagW + 10, tagH);
+
+          // Chữ nhãn kỹ thuật
+          mapCtx.fillStyle = primaryColor;
+          mapCtx.fillText(tagText, tagX + 5, tagY + 9.5);
+          mapCtx.restore();
         });
       }
 
@@ -950,10 +979,10 @@
       mapCtx.fillStyle = '#00f0ff';
       mapCtx.fillText('1.0 MÉT', sbX + 4, sbY - 6);
 
-      // 8. Chú giải Bản đồ (HUD Legend)
+      // 8. Chú giải Bản đồ (HUD Legend Chuẩn RViz)
       mapCtx.font = '10px "Space Grotesk", sans-serif';
       mapCtx.fillStyle = 'rgba(255,255,255,0.85)';
-      mapCtx.fillText('🟢 Free Space  |  🟦 Tường Tích Lũy  |  📌 Vật Thể Ghim  |  🔺 JetBot', W - 390, H - 14);
+      mapCtx.fillText('⬜ Mặt Sàn (Floor)  |  ⬛ Tường Vật Cản  |  🔴 LaserScan OAK-D  |  🔷 Bounding Box 2D  |  🔺 JetBot', W - 490, H - 14);
 
       // 9. Telemetry mini box ở góc trên bản đồ
       mapCtx.font = '9px Orbitron, monospace';
@@ -1271,6 +1300,11 @@
         if (d.follower_enabled !== undefined) {
           updateFollowerBtn(d.follower_enabled);
         }
+
+        // Cập nhật trạng thái nút Tự Quét 360° Panorama Spin
+        if (d.auto_scanning !== undefined) {
+          updateAutoScanBtn(Boolean(d.auto_scanning));
+        }
       } catch (e) {}
       setTimeout(pollState, 140);
     }
@@ -1367,6 +1401,38 @@
         .catch(err => {
           alert(`❌ [LỖI MẠNG] Không thể kết nối tới server: ${err.message}`);
         });
+    }
+
+    // 🔄 TỰ ĐỘNG XOAY 360 ĐỘ QUÉT BẢN ĐỒ TOÀN CẢNH (AUTO 360° MAPPING SPIN)
+    function toggleAutoScan() {
+      fetch('/api/auto_scan')
+        .then(r => r.json())
+        .then(data => {
+          updateAutoScanBtn(Boolean(data.auto_scanning));
+        })
+        .catch(err => {
+          console.warn('Lỗi gọi API tự quét 360:', err);
+        });
+    }
+
+    function updateAutoScanBtn(isScanning) {
+      const btn = document.getElementById('btn-auto-scan');
+      if (!btn) return;
+      if (isScanning) {
+        btn.classList.add('active');
+        btn.innerText = '⏹ ĐANG QUÉT 360°...';
+        btn.style.borderColor = 'var(--rose)';
+        btn.style.color = '#fff';
+        btn.style.background = 'var(--rose)';
+        btn.style.boxShadow = '0 0 12px var(--rose)';
+      } else {
+        btn.classList.remove('active');
+        btn.innerText = '🔄 TỰ QUÉT 360°';
+        btn.style.borderColor = 'var(--cyan)';
+        btn.style.color = 'var(--cyan)';
+        btn.style.background = 'rgba(0, 240, 255, 0.1)';
+        btn.style.boxShadow = 'none';
+      }
     }
 
     // Chuyển đổi trạng thái Tự hành Bám người HRI

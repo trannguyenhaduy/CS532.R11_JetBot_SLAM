@@ -156,6 +156,17 @@ class WebHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(json.dumps({"status": "OK", "reset": bool(ok)}).encode())
             return
+        elif self.path.startswith('/api/auto_scan'):
+            active = False
+            if inst and hasattr(inst, 'toggle_auto_scan'):
+                active = inst.toggle_auto_scan()
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+            self.end_headers()
+            self.wfile.write(json.dumps({"status": "OK", "auto_scanning": bool(active)}).encode())
+            return
         elif self.path.startswith('/api/toggle'):
             flag_name = None
             if '?' in self.path:
@@ -218,6 +229,16 @@ class WebHandler(BaseHTTPRequestHandler):
             self.send_header('Access-Control-Allow-Origin', '*')
             self.end_headers()
             self.wfile.write(json.dumps({"status": "OK", "reset": bool(ok)}).encode())
+            return
+        elif self.path.startswith('/api/auto_scan'):
+            active = False
+            if inst and hasattr(inst, 'toggle_auto_scan'):
+                active = inst.toggle_auto_scan()
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps({"status": "OK", "auto_scanning": bool(active)}).encode())
             return
         elif self.path.startswith('/api/toggle'):
             # API bật/tắt tính năng động từ Web
