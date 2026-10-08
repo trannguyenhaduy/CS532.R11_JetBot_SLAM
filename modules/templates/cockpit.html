@@ -744,6 +744,8 @@
 
         mapCtx.save();
         mapCtx.imageSmoothingEnabled = false; // Giữ nguyên độ sắc nét từng ô 5cm
+        mapCtx.mozImageSmoothingEnabled = false;
+        mapCtx.webkitImageSmoothingEnabled = false;
         mapCtx.drawImage(mapImage, tl.x, tl.y, imgW, imgH);
         mapCtx.restore();
 
@@ -755,41 +757,79 @@
         mapCtx.setLineDash([]);
       }
 
-      // 3. CHIẾU ĐIỂM LASERSCAN 2D TRỰC TIẾP TỪ OAK-D S2 STEREO DEPTH (CHUẨN RVIZ ĐỎ NEON)
+      // 3. CHIẾU ĐIỂM LASERSCAN 2D TRỰC TIẾP TỪ OAK-D S2 STEREO DEPTH (CHUẨN RVIZ ĐỎ NEON & QUẠT QUÉT RADAR)
       if (d.points_3d && Array.isArray(d.points_3d) && d.points_3d.length > 0) {
         const robX = d.robot_x || 0;
         const robY = d.robot_y || 0;
         const brakeDist = (d.safety_brake_dist !== undefined) ? d.safety_brake_dist : 0.25;
+        const warnDist = brakeDist + 0.20;
+        const robCenter = worldToCanvas(robX, robY);
 
-        mapCtx.save();
+        const validPts = [];
         for (let i = 0; i < d.points_3d.length; i++) {
           const pt = d.points_3d[i];
           const px = pt[0], py = pt[1], pz = pt[2] || 0.2;
           
-          // Lọc điểm vật cản thực sự ở tầm độ cao thân xe (0.05m đến 0.85m), bỏ qua mặt sàn
+          // Lọc điểm vật cản thực sự ở tầm độ cao thân xe (0.05m đến 0.85m), bỏ qua mặt sàn và trần
           if (pz < 0.05 || pz > 0.85) continue;
 
           const dist = Math.hypot(px - robX, py - robY);
+          if (dist < 0.12 || dist > 4.5) continue;
+
           const cp = worldToCanvas(px, py);
+          if (cp.x < -15 || cp.x > W + 15 || cp.y < -15 || cp.y > H + 15) continue;
 
-          // Bỏ qua nếu điểm nằm ngoài vùng hiển thị canvas
-          if (cp.x < -10 || cp.x > W + 10 || cp.y < -10 || cp.y > H + 10) continue;
-
-          // Điểm quét LaserScan chuẩn RViz: Đỏ rực rỡ #ff2a6d
-          if (dist < brakeDist) {
-            mapCtx.fillStyle = '#ff2a6d';
-            mapCtx.shadowColor = '#ff2a6d';
-            mapCtx.shadowBlur = 6;
-            mapCtx.beginPath();
-            mapCtx.arc(cp.x, cp.y, 2.5, 0, Math.PI * 2);
-            mapCtx.fill();
-          } else {
-            mapCtx.fillStyle = '#ff2a6d';
-            mapCtx.shadowBlur = 0;
-            mapCtx.fillRect(cp.x - 1.2, cp.y - 1.2, 2.4, 2.4);
-          }
+          validPts.push({ cp, dist });
         }
-        mapCtx.restore();
+
+        if (validPts.length > 0) {
+          mapCtx.save();
+
+          // A. VẼ TIA QUÉT QUANG HỌC LIDAR / QUẠT TIA LASERSCAN (Subtle Radar Scan Beams):
+          mapCtx.lineWidth = 0.7;
+          mapCtx.strokeStyle = 'rgba(0, 240, 255, 0.06)';
+          mapCtx.beginPath();
+          const beamStep = Math.max(1, Math.floor(validPts.length / 24));
+          for (let i = 0; i < validPts.length; i += beamStep) {
+            mapCtx.moveTo(robCenter.x, robCenter.y);
+            mapCtx.lineTo(validPts[i].cp.x, validPts[i].cp.y);
+          }
+          mapCtx.stroke();
+
+          // B. VẼ CÁC ĐIỂM CHƯỚNG NGẠI VẬT LASERSCAN CHUẨN RVIZ:
+          for (let i = 0; i < validPts.length; i++) {
+            const { cp, dist } = validPts[i];
+            if (dist <= brakeDist) {
+              // Cản sát sạt (< 20cm): Điểm đỏ rực phát quang Neon Ruby Bumper Hazard
+              mapCtx.fillStyle = '#ff2a6d';
+              mapCtx.shadowColor = '#ff2a6d';
+              mapCtx.shadowBlur = 8;
+              mapCtx.beginPath();
+              mapCtx.arc(cp.x, cp.y, 2.8, 0, Math.PI * 2);
+              mapCtx.fill();
+
+              // Tâm trắng laser sáng chói
+              mapCtx.fillStyle = '#ffffff';
+              mapCtx.beginPath();
+              mapCtx.arc(cp.x, cp.y, 1.0, 0, Math.PI * 2);
+              mapCtx.fill();
+            } else if (dist <= warnDist) {
+              // Vùng cảnh báo giảm tốc: Vàng cam Amber Neon
+              mapCtx.fillStyle = '#ffb800';
+              mapCtx.shadowColor = '#ffb800';
+              mapCtx.shadowBlur = 4;
+              mapCtx.beginPath();
+              mapCtx.arc(cp.x, cp.y, 2.2, 0, Math.PI * 2);
+              mapCtx.fill();
+            } else {
+              // Vách tường / cản cự ly bình thường: Điểm đỏ Ruby RViz sắc nét không nhòe
+              mapCtx.shadowBlur = 0;
+              mapCtx.fillStyle = '#ff2a6d';
+              mapCtx.fillRect(cp.x - 1.2, cp.y - 1.2, 2.4, 2.4);
+            }
+          }
+          mapCtx.restore();
+        }
       }
 
       // 4. VỆT HÀNH TRÌNH DI CHUYỂN (ODOMETRY PATH)
