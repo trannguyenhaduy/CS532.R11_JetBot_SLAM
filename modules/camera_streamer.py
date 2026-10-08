@@ -9,6 +9,7 @@ import os
 import sys
 import time
 import math
+import json
 import numpy as np
 import cv2
 
@@ -45,10 +46,11 @@ class CameraStreamer:
     """
     VIEW_MODES = ['ai', 'thermal']
 
-    def __init__(self, depth_step=25, depth_skip=5, img_skip=1):
+    def __init__(self, depth_step=25, depth_skip=5, img_skip=1, as_ros_publisher=False):
         self.depth_step = depth_step
         self.depth_skip = depth_skip
         self.img_skip = img_skip
+        self.as_ros_publisher = as_ros_publisher
 
         self._img_counter = 0
         self._depth_counter = 0
@@ -395,8 +397,9 @@ class CameraStreamer:
                     })
                 self.latest_vpu_detections = vpu_dets
 
-            # Tự động xuất bản các Topics ROS nếu roscore đang bật
-            self._publish_ros_frames(frame, depth, self.obstacle_distance)
+            # Chỉ xuất bản các Topics ROS khi được cấu hình làm ROS Publisher Node độc lập
+            if getattr(self, 'as_ros_publisher', False):
+                self._publish_ros_frames(frame, depth, self.obstacle_distance)
 
             return frame, depth
         except Exception as e:
@@ -415,6 +418,7 @@ class CameraStreamer:
                 self._ros_pub_rgb = rospy.Publisher('/stereo_inertial_publisher/color/image', ROSImage, queue_size=1)
                 self._ros_pub_depth = rospy.Publisher('/stereo_inertial_publisher/stereo/depth', ROSImage, queue_size=1)
                 self._ros_pub_dist = rospy.Publisher('/obstacle_distance', ROSFloat32, queue_size=1)
+                self._ros_pub_objects = rospy.Publisher('/spatial_objects', ROSString, queue_size=2)
                 self._ros_pubs_initialized = True
 
             now_ros = rospy.Time.now()
@@ -428,6 +432,12 @@ class CameraStreamer:
 
             if obstacle_dist is not None and hasattr(self, '_ros_pub_dist'):
                 self._ros_pub_dist.publish(ROSFloat32(data=float(obstacle_dist)))
+
+            if getattr(self, 'latest_vpu_detections', None) and hasattr(self, '_ros_pub_objects'):
+                try:
+                    self._ros_pub_objects.publish(ROSString(data=json.dumps(self.latest_vpu_detections)))
+                except Exception:
+                    pass
         except Exception:
             pass
 
@@ -755,7 +765,7 @@ def run_ros_camera_node():
 
     rospy.init_node('oak_camera_publisher', anonymous=False)
 
-    streamer = CameraStreamer()
+    streamer = CameraStreamer(as_ros_publisher=True)
     if not streamer._try_open_oak():
         rospy.logerr("❌ [OAK-D] Không thể mở kết nối OAK-D S2 qua USB!")
         return

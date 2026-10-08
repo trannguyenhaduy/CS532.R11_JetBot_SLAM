@@ -59,8 +59,9 @@ d:\Robot (catkin_ws/src/jetbot_slam)
 │   ├── camera_ai.launch          # Launch driver OAK-D S2 ROS Publisher + TF base_to_camera
 │   └── master.launch             # Launch toàn bộ hệ thống qua main.py + TF
 │
-└── scripts/                      # SCRIPT KIỂM THỬ TỰ ĐỘNG
-    └── self_test.py              # Suite kiểm thử tự động 52 bài test xác thực tính toàn vẹn hệ thống
+└── scripts/                      # SCRIPT THỰC THI & KIỂM THỬ TỰ ĐỘNG
+    ├── camera_streamer_node.py   # ROS Node Publisher chuyên trách OAK-D S2 & VPU Spatial AI
+    └── self_test.py              # Suite kiểm thử tự động 53 bài test xác thực tính toàn vẹn hệ thống
 ```
 
 ---
@@ -71,7 +72,7 @@ d:\Robot (catkin_ws/src/jetbot_slam)
 ```bash
 cd ~/catkin_ws/src/jetbot_slam
 git fetch origin && git reset --hard origin/main
-chmod +x main.py scripts/self_test.py
+chmod +x main.py scripts/*.py
 ```
 
 ### 4.2. Khởi chạy hệ thống

@@ -101,9 +101,14 @@ def run_tests():
                 node_type = node.get('type')
                 if pkg == 'jetbot_slam' and node_type:
                     total_tests += 1
-                    target_file = os.path.join(REPO_ROOT, node_type)
-                    if os.path.isfile(target_file):
-                        print(f"  ✅ [PASS] Node '{node_type}' trong '{rel_path}' tồn tại trong repo.")
+                    candidate_paths = [
+                        os.path.join(REPO_ROOT, node_type),
+                        os.path.join(REPO_ROOT, "scripts", node_type)
+                    ]
+                    matched = [p for p in candidate_paths if os.path.isfile(p)]
+                    if matched:
+                        rel_found = os.path.relpath(matched[0], REPO_ROOT)
+                        print(f"  ✅ [PASS] Node '{node_type}' trong '{rel_path}' tồn tại: {rel_found}")
                         passed_tests += 1
                     else:
                         msg = f"Launch file '{rel_path}' gọi node '{node_type}' nhưng file không tồn tại!"
@@ -159,7 +164,7 @@ def run_tests():
     # [TEST 6] Kiểm tra quyền thực thi (Executable bits)
     # ──────────────────────────────────────────────────────────────────────────
     print("\n[TEST 6/6] Kiểm tra quyền thực thi script chạy chính...")
-    key_scripts = ["main.py"]
+    key_scripts = ["main.py", os.path.join("scripts", "camera_streamer_node.py")]
     for s in key_scripts:
         total_tests += 1
         full_path = os.path.join(REPO_ROOT, s)

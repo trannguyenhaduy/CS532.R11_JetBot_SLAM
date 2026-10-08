@@ -14,6 +14,6 @@
   <param name="/camera_model" value="$(arg camera_model)" />
   <param name="/confidence" value="$(arg confidence)" />
 
-  <!-- 3. KHỞI CHẠY DRIVER CAMERA NỘI BỘ (MODULES/CAMERA_STREAMER.PY) -->
-  <node pkg="jetbot_slam" type="modules/camera_streamer.py" name="oak_camera_publisher" output="screen" respawn="true" respawn_delay="2" />
+  <!-- 3. KHỞI CHẠY DRIVER CAMERA NỘI BỘ (SCRIPTS/CAMERA_STREAMER_NODE.PY) -->
+  <node pkg="jetbot_slam" type="camera_streamer_node.py" name="oak_camera_publisher" output="screen" respawn="true" respawn_delay="2" />
 </launch>
