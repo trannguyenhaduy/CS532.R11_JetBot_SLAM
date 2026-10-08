@@ -165,25 +165,30 @@ class OccupancySLAM:
                     continue
 
                 # Vẽ tia quan sát quang học: Vùng giữa Robot và Điểm đo là KHÔNG GIAN THOÁNG
-                ray_mask = np.zeros((self.height, self.width), dtype=np.uint8)
-                cv2.line(ray_mask, (r_col, r_row), (o_col, o_row), 1, 1)
-
-                # Ô trống (Free space): Chỉ cập nhật nếu ô đó chưa bị chốt là vật cản kiên cố
-                free_indices = (ray_mask == 1) & (self.hit_counts < 3)
-                self.grid[free_indices] = 128
-                self.miss_counts[free_indices] += 1
+                # Dừng tia trước vật cản 6cm để bảo toàn mép vật cản không bị tia đè lên
+                if dist > 0.08:
+                    ratio = max(0.0, (dist - 0.06) / dist)
+                    fx = rx + (wx - rx) * ratio
+                    fy = ry + (wy - ry) * ratio
+                    f_col, f_row = self.world_to_grid(fx, fy)
+                    if f_col is not None:
+                        ray_mask = np.zeros((self.height, self.width), dtype=np.uint8)
+                        cv2.line(ray_mask, (r_col, r_row), (f_col, f_row), 1, 1)
+                        free_indices = (ray_mask == 1) & (self.hit_counts < 2)
+                        self.grid[free_indices] = 128
+                        self.miss_counts[free_indices] += 1
 
                 # ─── PHÂN LOẠI SÀN NHÀ VÀ VẬT CẢN THỰC SỰ ───
                 # Sàn nhà (wz < 0.06m / 6cm): Không phải vật cản! Xe có thể đi qua!
                 if wz < 0.06:
-                    if self.hit_counts[o_row, o_col] < 3:
+                    if self.hit_counts[o_row, o_col] < 2:
                         self.grid[o_row, o_col] = 128
                     continue
 
-                # Vật cản thực sự (wz >= 0.06m: chân ghế, tường, chân người, thùng carton...)
+                # Vật cản thực sự (wz >= 0.06m: chân ghế, mặt ghế, tường...):
                 self.hit_counts[o_row, o_col] += 1
-                # Khi quét trúng >= 3 lần -> Ghim chặt thành vật cản cố định (255)
-                if self.hit_counts[o_row, o_col] >= 3:
+                # Khi quét trúng >= 2 lần -> Ghim chặt thành vật cản cố định (255)
+                if self.hit_counts[o_row, o_col] >= 2:
                     self.grid[o_row, o_col] = 255
                     has_new_obstacle = True
 
@@ -427,11 +432,12 @@ class OccupancySLAM:
         mask_free = (self.grid == 128)
         mask_occ = (self.grid == 255)
 
-        # 1. Sàn nhà đã quét (Free space): Xanh lục nhạt dịu mắt, bán trong suốt (alpha=65)
-        bgra[mask_free] = [180, 255, 60, 65]
+        # 1. Sàn nhà đã quét (Free space): Xanh lục nhạt dịu mắt, bán trong suốt (alpha=40)
+        # Trong hệ BGRA: B=20, G=170, R=40, A=40 (Màu xanh lá êm dịu, tương ứng 🟢 Free Space trên HUD)
+        bgra[mask_free] = [20, 170, 40, 40]
 
-        # 2. Vật cản & Tường cố định (Occupied): Màu Cyan rực rỡ, độ mờ 100% (alpha=255)
-        bgra[mask_occ] = [255, 230, 0, 255]
+        # 2. Vật cản & Tường cố định (Occupied): Màu Cyan rực rỡ, độ mờ 100% (alpha=255, 🟦 Tường Tích Lũy)
+        bgra[mask_occ] = [255, 240, 0, 255]
 
         # 3. Làm liền mạch các mép tường bằng giãn nở nhẹ 2x2
         kernel = np.ones((2, 2), np.uint8)

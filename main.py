@@ -294,14 +294,19 @@ class JetBotMasterSystem:
             return
         with self.lock:
             rx, ry, rz, yaw = self.robot_x, self.robot_y, self.robot_z, self.robot_yaw
+            obs_dist = self.obstacle_distance
         for d in detections:
             try:
                 zc = float(d.get('z', 99.0))
+                xc = float(d.get('x', 0.0))
+                # Đồng bộ zc nếu cản trước mặt gần hơn (tránh YOLO đo tâm lưng ghế 0.65m nhưng mép cản trước ở 0.34m)
+                if obs_dist is not None and abs(xc) <= 0.35 and obs_dist < zc:
+                    zc = float(obs_dist)
                 if 0.15 <= zc <= 3.5:
                     self.mapper.add_detection(
                         int(d.get('id', 0)),
                         str(d.get('name', 'OBJ')),
-                        float(d.get('x', 0.0)),
+                        xc,
                         float(d.get('y', 0.0)),
                         zc,
                         float(d.get('score', 0.8)),
@@ -427,6 +432,15 @@ class JetBotMasterSystem:
                 self._ros_first_img_logged = True
                 print("🎥 [TERMINAL 1 -> 2] Đã nhận luồng hình ảnh màu RGB trực tiếp từ 'camera_ai.launch' thành công!")
 
+            # Ước lượng góc quay thị giác thời gian thực (Visual Gyroscope):
+            # Nhận diện chính xác xe quay khi người dùng dùng tay xoay JetBot hoặc khi trượt bánh
+            if self.camera:
+                delta_yaw = self.camera.estimate_visual_rotation(img)
+                if abs(delta_yaw) > 0.002:
+                    with self.lock:
+                        self.robot_yaw += delta_yaw
+                        self.robot_yaw = math.atan2(math.sin(self.robot_yaw), math.cos(self.robot_yaw))
+
             with self.lock:
                 current_dets = list(self.detections)
                 obs_dist = self.obstacle_distance
@@ -486,6 +500,11 @@ class JetBotMasterSystem:
         """Nhận góc quay trực tiếp từ cảm biến quán tính IMU (OAK-D hoặc BNO055/MPU6050)"""
         try:
             q = msg.orientation
+            norm_sq = q.x*q.x + q.y*q.y + q.z*q.z + q.w*q.w
+            if norm_sq < 0.5:
+                return # Bỏ qua quaternion rỗng hoặc không có dữ liệu
+            if hasattr(msg, 'orientation_covariance') and len(msg.orientation_covariance) > 0 and msg.orientation_covariance[0] < 0:
+                return
             siny = 2.0 * (q.w * q.z + q.x * q.y)
             cosy = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
             yaw = math.atan2(siny, cosy)
@@ -496,17 +515,26 @@ class JetBotMasterSystem:
             pass
 
     def _ros_odom_cb(self, msg):
-        self.last_real_ros_odom_time = time.time()
-        p = msg.pose.pose.position
-        q = msg.pose.pose.orientation
-        siny = 2.0 * (q.w * q.z + q.x * q.y)
-        cosy = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
-        yaw = math.atan2(siny, cosy)
-        with self.lock:
-            self.robot_x, self.robot_y, self.robot_z = p.x, p.y, p.z
-            self.robot_yaw = yaw
-            self.path_history.append([round(p.x, 3), round(p.y, 3), round(p.z, 3)])
-            if len(self.path_history) > 400: self.path_history.pop(0)
+        try:
+            q = msg.pose.pose.orientation
+            norm_sq = q.x*q.x + q.y*q.y + q.z*q.z + q.w*q.w
+            if norm_sq < 0.5:
+                return
+            p = msg.pose.pose.position
+            # Bỏ qua nếu topic phát dummy tĩnh (0,0,0) liên tục
+            if abs(p.x) < 1e-4 and abs(p.y) < 1e-4 and abs(q.z) < 1e-4:
+                return
+            siny = 2.0 * (q.w * q.z + q.x * q.y)
+            cosy = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
+            yaw = math.atan2(siny, cosy)
+            with self.lock:
+                self.robot_x, self.robot_y, self.robot_z = p.x, p.y, p.z
+                self.robot_yaw = yaw
+                self.last_real_ros_odom_time = time.time()
+                self.path_history.append([round(p.x, 3), round(p.y, 3), round(p.z, 3)])
+                if len(self.path_history) > 400: self.path_history.pop(0)
+        except Exception:
+            pass
 
     def _ros_cmd_cb(self, msg):
         # Bỏ qua nếu lệnh vừa được phát từ Web Cockpit nội bộ trong 0.3s để tránh lặp kênh
@@ -581,9 +609,8 @@ class JetBotMasterSystem:
 
     def _odometry_loop(self):
         """Luồng tính toán Dead-Reckoning Odometry vi sai thời gian thực (20 Hz):
-        Nếu không có nguồn ROS Odometry từ cảm biến ngoài (/rtabmap/odom hoặc IMU),
-        hệ thống tự động tích phân động học vi sai (Differential Drive Kinematics)
-        từ vận tốc v (m/s) và w (rad/s) để cập nhật liên tục tọa độ (X, Y) và góc quay Yaw (θ).
+        Tích phân động học vi sai (Differential Drive Kinematics) từ vận tốc v (m/s) và w (rad/s)
+        để cập nhật liên tục tọa độ (X, Y) và góc quay Yaw (θ) khi xe nhận lệnh điều khiển.
         """
         last_t = time.time()
         while self.running:
@@ -591,10 +618,6 @@ class JetBotMasterSystem:
             now = time.time()
             dt = min(0.2, max(0.01, now - last_t))
             last_t = now
-
-            # Nếu có ROS Odom/IMU thực từ phần cứng trong 1.0s gần nhất thì ưu tiên ROS
-            if (now - getattr(self, 'last_real_ros_odom_time', 0.0)) < 1.0:
-                continue
 
             with self.lock:
                 # Nếu không nhận thêm lệnh lái trong 0.35s -> coi như đã dừng xe (v=0, w=0)
@@ -737,6 +760,14 @@ class JetBotMasterSystem:
 
                 if live_frame is not None:
                     self.latest_raw_bgr = live_frame
+
+                    # Ước lượng xoay thị giác thời gian thực (Visual Gyroscope)
+                    delta_yaw = self.camera.estimate_visual_rotation(live_frame)
+                    if abs(delta_yaw) > 0.002:
+                        with self.lock:
+                            self.robot_yaw += delta_yaw
+                            self.robot_yaw = math.atan2(math.sin(self.robot_yaw), math.cos(self.robot_yaw))
+
                     with self.lock:
                         current_dets = list(self.detections)
                         obs_dist = self.obstacle_distance

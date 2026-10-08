@@ -835,10 +835,11 @@
       const obsDist = d.obstacle_distance !== undefined ? d.obstacle_distance : 99.0;
       const brakeRadius = (d.safety_brake_dist !== undefined) ? d.safety_brake_dist : 0.25;
 
-      // Nón trường nhìn Camera OAK-D S2 (FOV Cone 75 độ, quét cự ly 2.5m)
+      // Nón trường nhìn Camera OAK-D S2 (FOV Cone 75 độ, tự động co giãn theo cự ly vật cản thực tế)
       mapCtx.save();
       const fovAngle = (75 * Math.PI) / 180;
-      const fovDist = 2.5 * scale;
+      const effectiveDistM = (obsDist !== undefined && obsDist !== null && obsDist < 3.0) ? Math.max(0.40, obsDist + 0.12) : 2.5;
+      const fovDist = effectiveDistM * scale;
       const a1 = -yaw - fovAngle / 2;
       const a2 = -yaw + fovAngle / 2;
 

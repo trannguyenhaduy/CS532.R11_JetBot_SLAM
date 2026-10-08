@@ -701,8 +701,47 @@ class CameraStreamer:
         self.new_frame_event.set()
         return self.latest_jpeg
 
+    def estimate_visual_rotation(self, bgr_img):
+        """Ước lượng góc quay ngang delta_yaw từ thị giác (Visual Gyroscope / Phase Correlation)
+        Hoạt động cực nhanh (~0.3ms), đo chính xác góc quay của xe kể cả khi người dùng
+        dùng tay xoay JetBot hoặc khi bánh xe bị trượt trên sàn gạch men!
+        """
+        if bgr_img is None:
+            return 0.0
+        try:
+            h, w = bgr_img.shape[:2]
+            # Downsample về 160x90 grayscale để tính toán siêu tốc < 0.3ms
+            small = cv2.resize(bgr_img, (160, 90), interpolation=cv2.INTER_AREA)
+            gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY).astype(np.float32)
+
+            if not hasattr(self, '_prev_vis_gray') or self._prev_vis_gray is None or self._prev_vis_gray.shape != gray.shape:
+                self._prev_vis_gray = gray
+                return 0.0
+
+            shift, response = cv2.phaseCorrelate(self._prev_vis_gray, gray)
+            self._prev_vis_gray = gray
+
+            # Chỉ chấp nhận nếu độ tin cậy tương quan cao
+            if response > 0.30:
+                dx = shift[0]
+                # Bỏ qua rung lắc vi mô (< 0.5 pixel) và bước nhảy quá lớn (> 50 pixel)
+                if 0.5 <= abs(dx) <= 50.0:
+                    # fx tương ứng ở độ phân giải 160px với FOV 75 độ
+                    fx_small = 160.0 / (2.0 * math.tan(math.radians(75.0) / 2.0))
+                    # Khi xe quay trái, cảnh dạt sang phải (dx > 0) -> delta_yaw > 0 (CCW)
+                    delta_yaw = math.atan2(dx, fx_small)
+                    return delta_yaw
+        except Exception:
+            pass
+        return 0.0
+
     def process_depth_frame(self, depth_uint16_mm, rx=0.0, ry=0.0, rz=0.0, yaw=0.0):
-        """Chiếu ma trận độ sâu thành đám mây điểm 3D với tần số ~3 Hz"""
+        """
+        Chiếu ma trận Stereo Depth thành tia quét 2D LaserScan / Obstacle Scan chuẩn xác:
+        - Với mỗi cột góc nhìn ngang u, tìm vật cản GẦN NHẤT z_min trong tầm độ cao xe (0.05m đến 0.85m).
+        - Đảm bảo tia quét DỪNG LẠI tại vật cản đầu tiên (ví dụ: mặt ghế ở 34cm),
+          tuyệt đối không xuyên thủng vật cản để vẽ không gian thoáng xuyên ra tường 3.5m!
+        """
         self._depth_counter += 1
         if self._depth_counter % self.depth_skip != 0:
             return self.points_3d
@@ -711,42 +750,60 @@ class CameraStreamer:
             return self.points_3d
 
         h, w = depth_uint16_mm.shape[:2]
-        # Giới hạn dải quét từ 10% đến 45% chiều cao ảnh (vùng quét vật cản trên mặt sàn)
-        # Loại trừ 100% sàn nhà phẳng ở nửa dưới ảnh (v > 0.45h) giúp bản đồ sạch sẽ, chống lag
+        # Lấy dải quét từ 10% đến 65% chiều cao ảnh (vùng tầm nhìn thân xe & vật cản)
         v_start = int(h * 0.10)
-        v_end = int(h * 0.45)
-        u_grid, v_grid = np.meshgrid(np.arange(0, w, self.depth_step), np.arange(v_start, v_end, self.depth_step))
-        z_sample = depth_uint16_mm[v_grid, u_grid].astype(np.float32) / 1000.0
+        v_end = int(h * 0.65)
+        v_slice = depth_uint16_mm[v_start:v_end, :]
 
-        valid = (z_sample > 0.20) & (z_sample < 3.5)
-        self.valid_depth_pct = round(float(np.count_nonzero(valid)) / max(1.0, float(valid.size)) * 100.0, 1)
-
-        z_val = z_sample[valid]
-        u_val = u_grid[valid]
-        v_val = v_grid[valid]
-
-        x_cam = (u_val - self.cx) * z_val / self.fx
-        y_cam = (v_val - self.cy) * z_val / self.fy
-
-        x_rob = z_val
-        y_rob = -x_cam
-        z_rob = -y_cam + 0.12
-
+        # Lấy mẫu ngang 60 góc quét phân bố đều trên FOV của camera
+        u_cols = np.linspace(15, w - 15, 60, dtype=np.int32)
         cos_y = math.cos(yaw)
         sin_y = math.sin(yaw)
-        x_world = rx + (x_rob * cos_y - y_rob * sin_y)
-        y_world = ry + (x_rob * sin_y + y_rob * cos_y)
-        z_world = z_rob
 
-        new_pts = []
-        for i in range(min(len(x_world), 250)):
-            # Lọc điểm cản: Chỉ lấy điểm cao hơn sàn nhà (z_world >= 0.05m)
-            if z_world[i] >= 0.05:
-                new_pts.append([round(float(x_world[i]), 3), round(float(y_world[i]), 3), round(float(z_world[i]), 3)])
+        scan_pts = []
+        for u in u_cols:
+            col_z = v_slice[:, u].astype(np.float32) / 1000.0
+            valid_mask = (col_z > 0.15) & (col_z < 3.5)
+            if not np.any(valid_mask):
+                continue
 
-        # Giữ luồng điểm quét của lượt quét hiện tại (~100-200 điểm), không tích lũy chồng chéo gây lag browser
-        self.points_3d = new_pts
+            valid_z = col_z[valid_mask]
+            valid_v = np.where(valid_mask)[0] + v_start
+
+            # Tính độ cao z_rob trong tọa độ xe cho các điểm hợp lệ
+            y_cam = (valid_v - self.cy) * valid_z / self.fy
+            z_rob = -y_cam + 0.12
+
+            # Lọc chỉ lấy các điểm thực sự là vật cản (cao hơn sàn 5cm và dưới trần 85cm)
+            obs_mask = (z_rob >= 0.05) & (z_rob <= 0.85)
+            if not np.any(obs_mask):
+                continue
+
+            # Lấy vật cản GẦN NHẤT (bề mặt đón tia đầu tiên) trong cột góc nhìn này
+            obs_z = valid_z[obs_mask]
+            obs_v = valid_v[obs_mask]
+            min_idx = np.argmin(obs_z)
+            closest_z = float(obs_z[min_idx])
+            closest_v = float(obs_v[min_idx])
+
+            # Chiếu sang tọa độ Robot:
+            x_cam = (u - self.cx) * closest_z / self.fx
+            y_cam = (closest_v - self.cy) * closest_z / self.fy
+
+            x_rob = closest_z
+            y_rob = -x_cam
+            z_rob_pt = -y_cam + 0.12
+
+            # Chiếu sang tọa độ Bản đồ toàn cục (World Frame):
+            wx = rx + (x_rob * cos_y - y_rob * sin_y)
+            wy = ry + (x_rob * sin_y + y_rob * cos_y)
+            wz = z_rob_pt
+
+            scan_pts.append([round(wx, 3), round(wy, 3), round(wz, 3)])
+
+        self.points_3d = scan_pts
         return self.points_3d
+
 
 
 def run_ros_camera_node():
