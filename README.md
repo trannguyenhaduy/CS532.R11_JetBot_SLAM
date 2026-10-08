@@ -38,7 +38,6 @@ Dự án phát triển hệ thống robot tự hành thông minh dựa trên n�
 d:\Robot (catkin_ws/src/jetbot_slam)
 ├── config.py                     # Cấu hình trung tâm: Feature Flags (ENABLE_*), ngưỡng phanh, PID
 ├── main.py                       # Điểm khởi chạy chính: Điều phối toàn bộ các module & Web Cockpit
-├── test_emergency_brake.py       # Script kiểm thử độc lập phần cứng Motor HAT & Phanh khẩn cấp
 ├── CMakeLists.txt                # Cấu hình build package ROS Melodic
 ├── package.xml                   # Khai báo phụ thuộc package ROS
 ├── README.md                     # Tài liệu hướng dẫn dự án
@@ -72,7 +71,7 @@ d:\Robot (catkin_ws/src/jetbot_slam)
 ```bash
 cd ~/catkin_ws/src/jetbot_slam
 git fetch origin && git reset --hard origin/main
-chmod +x main.py scripts/self_test.py test_emergency_brake.py
+chmod +x main.py scripts/self_test.py
 ```
 
 ### 4.2. Khởi chạy hệ thống
