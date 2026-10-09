@@ -76,7 +76,7 @@ class WebHandler(BaseHTTPRequestHandler):
             while inst and getattr(inst, 'is_running', True):
                 frame_evt = getattr(inst, 'new_frame_event', None)
                 if frame_evt:
-                    frame_evt.wait(timeout=0.035)
+                    frame_evt.wait(timeout=0.015)
                     frame_evt.clear()
 
                 frame_id, jpeg = inst.get_latest_jpeg_with_id()
@@ -89,7 +89,7 @@ class WebHandler(BaseHTTPRequestHandler):
                     except Exception:
                         break
                 elif not frame_evt:
-                    time.sleep(0.008)
+                    time.sleep(0.003)
         elif self.path == '/api/state':
             state_data = inst.get_state_dict() if inst else {}
             self.send_response(200)

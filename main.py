@@ -307,7 +307,7 @@ class JetBotMasterSystem:
                 # Đồng bộ zc nếu cản trước mặt gần hơn (tránh YOLO đo tâm lưng ghế 0.65m nhưng mép cản trước ở 0.34m)
                 if obs_dist is not None and abs(xc) <= 0.35 and obs_dist < zc:
                     zc = float(obs_dist)
-                if 0.15 <= zc <= 3.5:
+                if 0.06 <= zc <= 2.0:
                     self.mapper.add_detection(
                         int(d.get('id', 0)),
                         str(d.get('name', 'OBJ')),
@@ -412,7 +412,7 @@ class JetBotMasterSystem:
                 self.last_vpu_det_time = time.time()
                 # Cập nhật cự ly vật cản trước mặt trực tiếp từ các đối tượng 3D
                 if tracked:
-                    forward_objs = [d['z'] for d in tracked if abs(d.get('x', 0.0)) <= 0.35 and d.get('z', 99.0) > 0.08]
+                    forward_objs = [d['z'] for d in tracked if abs(d.get('x', 0.0)) <= 0.35 and 0.06 <= d.get('z', 99.0) <= 2.0]
                     self.last_yolo_clearance = min(forward_objs) if forward_objs else 99.0
                 else:
                     self.last_yolo_clearance = 99.0
@@ -683,7 +683,9 @@ class JetBotMasterSystem:
         """Luồng suy luận AI bất đồng bộ (Zero-Latency Async Worker):
         Tách biệt hoàn toàn tính toán mạng nơ-ron AI khỏi luồng Camera Stream.
         Giúp Camera Stream đạt tối đa 25-30 FPS siêu mượt, độ trễ < 25ms!"""
+        last_processed_frame = None
         while self.running:
+            loop_t0 = time.time()
             if self.flags.yolo and self.yolo and (self.latest_raw_bgr is not None):
                 try:
                     now = time.time()
@@ -693,24 +695,29 @@ class JetBotMasterSystem:
 
                     if not vpu_active:
                         frame = self.latest_raw_bgr
-                        depth = self.latest_depth_np
-                        live_dets = self.yolo.detect_fallback(frame, depth)
-                        tracked = self.yolo.tracker.update(live_dets)
-                        with self.lock:
-                            self.detections = tracked
+                        # Tránh suy luận lặp lại trên cùng 1 frame
+                        if frame is not last_processed_frame:
+                            last_processed_frame = frame
+                            depth = self.latest_depth_np
+                            live_dets = self.yolo.detect_fallback(frame, depth)
+                            tracked = self.yolo.tracker.update(live_dets)
+                            with self.lock:
+                                self.detections = tracked
 
-                        calc_dist = self.yolo.calculate_obstacle_distance(depth, tracked)
-                        with self.lock:
-                            if calc_dist is not None:
-                                self.last_yolo_clearance = calc_dist
-                            else:
-                                self.last_yolo_clearance = 99.0
+                            calc_dist = self.yolo.calculate_obstacle_distance(depth, tracked)
+                            with self.lock:
+                                if calc_dist is not None:
+                                    self.last_yolo_clearance = calc_dist
+                                else:
+                                    self.last_yolo_clearance = 99.0
 
-                        # Hợp nhất cự ly cản an toàn, cập nhật Motor & Camera HUD
-                        self._update_fused_obstacle_clearance()
+                            # Hợp nhất cự ly cản an toàn, cập nhật Motor & Camera HUD
+                            self._update_fused_obstacle_clearance()
                 except Exception:
                     pass
-            time.sleep(0.04) # Cập nhật AI ~20-25 Hz mượt mà, không chặn luồng video
+
+            elapsed = time.time() - loop_t0
+            time.sleep(max(0.005, 0.035 - elapsed))
 
     def _camera_provider_loop(self):
         """Cung cấp luồng hình ảnh camera siêu tốc độ cao (25-30 FPS, độ trễ cực thấp)"""
@@ -743,7 +750,7 @@ class JetBotMasterSystem:
                     with self.lock:
                         self.detections = vpu_dets
                         self.last_vpu_det_time = now
-                        vpu_dists = [d['z'] for d in vpu_dets if 'z' in d and 0.15 <= d['z'] <= 10.0]
+                        vpu_dists = [d['z'] for d in vpu_dets if 'z' in d and 0.06 <= d['z'] <= 2.0]
                         if vpu_dists:
                             self.last_yolo_clearance = min(vpu_dists)
                     self._update_fused_obstacle_clearance()
@@ -784,31 +791,6 @@ class JetBotMasterSystem:
                         current_dets = list(self.detections)
                         obs_dist = self.obstacle_distance
                         rx, ry, rz, yaw = self.robot_x, self.robot_y, self.robot_z, self.robot_yaw
-
-                    # Bổ sung các vật cản UNKNOWN từ OccupancySLAM vào HUD camera nếu chưa có trong detections
-                    if self.mapper and self.flags.mapper:
-                        for lm in self.mapper.get_confirmed_landmarks():
-                            if lm.get('name') in ['UNKNOWN', 'OBSTACLE']:
-                                lx, ly, lz = float(lm['x']), float(lm['y']), float(lm.get('z', 0.2))
-                                dx = lx - rx
-                                dy = ly - ry
-                                cos_y = math.cos(yaw)
-                                sin_y = math.sin(yaw)
-                                x_rob = dx * cos_y + dy * sin_y
-                                y_rob = -dx * sin_y + dy * cos_y
-                                if 0.15 <= x_rob <= 3.0 and abs(y_rob) <= (x_rob * 0.75):
-                                    x_cam = -y_rob
-                                    y_cam = -(lz - rz - 0.12)
-                                    z_cam = x_rob
-                                    if not any(math.hypot(d.get('x', 0) - x_cam, d.get('z', 99) - z_cam) < 0.35 for d in current_dets):
-                                        current_dets.append({
-                                            "id": int(lm.get('id', 99)),
-                                            "name": "UNKNOWN",
-                                            "score": float(lm.get('score', 0.85)),
-                                            "x": round(x_cam, 2),
-                                            "y": round(y_cam, 2),
-                                            "z": round(z_cam, 2)
-                                        })
 
                     annotator = (lambda im: self.yolo.draw_detections(im, current_dets)) if self.yolo else None
                     self.camera.process_color_frame(live_frame, annotator, detections=current_dets, obstacle_dist=obs_dist)

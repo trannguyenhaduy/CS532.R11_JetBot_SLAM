@@ -224,9 +224,13 @@ class CameraStreamer:
                     print(f"⚠️ [OAK-D USB] Bỏ qua Stereo Depth: {ex_stereo}")
                     has_stereo = False
 
-                # Tích hợp mô hình VPU Spatial Detection Network nếu có sẵn blob trên Jetson Nano
+                # Tích hợp mô hình VPU Spatial Detection Network nếu có sẵn blob trên Jetson Nano hoặc PC
                 has_vpu_nn = False
+                res_blob = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "resources", "mobilenet-ssd.blob")
+                cache_blob = os.path.join(os.path.expanduser("~"), ".cache", "blobconverter", "mobilenet-ssd_openvino_2022.1_6shave.blob")
                 blob_candidates = [
+                    res_blob,
+                    cache_blob,
                     "/home/jetbot/catkin_ws/src/depthai-ros/depthai_examples/resources/mobilenet-ssd_openvino_2021.2_6shave.blob",
                 ]
                 chosen_blob = None
@@ -234,6 +238,12 @@ class CameraStreamer:
                     if os.path.exists(b_path):
                         chosen_blob = b_path
                         break
+                if chosen_blob is None:
+                    try:
+                        import blobconverter
+                        chosen_blob = blobconverter.from_zoo(name="mobilenet-ssd", shaves=6)
+                    except Exception:
+                        pass
 
                 if chosen_blob is not None and has_stereo:
                     try:
@@ -242,8 +252,8 @@ class CameraStreamer:
                         spatial_nn.setConfidenceThreshold(0.25)
                         spatial_nn.input.setBlocking(False)
                         spatial_nn.setBoundingBoxScaleFactor(0.5)
-                        spatial_nn.setDepthLowerThreshold(100)   # 10cm
-                        spatial_nn.setDepthUpperThreshold(5000)  # 5m
+                        spatial_nn.setDepthLowerThreshold(60)    # 6cm (hỗ trợ cản áp sát)
+                        spatial_nn.setDepthUpperThreshold(2000)  # 2m (chống loạn camera)
 
                         manip = pipeline.create(dai.node.ImageManip)
                         manip.initialConfig.setResize(300, 300)
@@ -381,6 +391,12 @@ class CameraStreamer:
                     x_m = round(float(d.spatialCoordinates.x) / 1000.0, 2)
                     y_m = round(float(d.spatialCoordinates.y) / 1000.0, 2)
                     z_m = round(float(d.spatialCoordinates.z) / 1000.0, 2)
+                    if z_m < 0.06:
+                        z_m = 0.15
+                    # Giới hạn bán kính 2.0m chống loạn camera
+                    if z_m > 2.0 or (x_m * x_m + z_m * z_m > 4.0):
+                        continue
+
                     bx = max(0, min(640, int(d.xmin * 640)))
                     by = max(0, min(480, int(d.ymin * 480)))
                     bw = max(10, min(640 - bx, int((d.xmax - d.xmin) * 640)))
@@ -474,12 +490,20 @@ class CameraStreamer:
                 cap = cv2.VideoCapture(0)
 
             if cap.isOpened():
+                try:
+                    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'))
+                except Exception:
+                    pass
                 cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
                 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
                 cap.set(cv2.CAP_PROP_FPS, 30)
+                try:
+                    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                except Exception:
+                    pass
                 self._cap = cap
                 self._cap_failed = False
-                print("📹 [WEBCAM] Đã kết nối Webcam Laptop thành công!")
+                print("📹 [WEBCAM] Đã kết nối Webcam Laptop (MJPG 30 FPS, Zero-Latency Buffer) thành công!")
                 return self._cap
             else:
                 cap.release()
@@ -522,12 +546,8 @@ class CameraStreamer:
             oak_frame, oak_depth = self.read_oak_frame()
             if oak_frame is not None:
                 return oak_frame, (oak_depth if oak_depth is not None else self.latest_oak_depth), "OAK-D S2 (USB LIVE)"
-            elif getattr(self, '_cached_oak_frame', None) is not None:
-                # OAK-D đang chờ frame kế tiếp trong chu kỳ 30 FPS:
-                # Trả về cached frame để AI inference và an toàn không bị gián đoạn
-                return self._cached_oak_frame, self.latest_oak_depth, "OAK-D S2 (USB LIVE)"
             else:
-                return None, self.latest_oak_depth, "OAK-D S2 (CONNECTING)"
+                return None, self.latest_oak_depth, "OAK-D S2 (USB LIVE)"
 
         # Chỉ khi OAK-D không cắm hoặc mất kết nối hoàn toàn mới dùng Webcam Laptop
         lap_frame = self.read_laptop_frame()
@@ -790,7 +810,7 @@ class CameraStreamer:
         scan_pts = []
         for u in u_cols:
             col_z = v_slice[:, u].astype(np.float32) / 1000.0
-            valid_mask = (col_z > 0.15) & (col_z < 3.5)
+            valid_mask = (col_z >= 0.06) & (col_z <= 2.0)
             if not np.any(valid_mask):
                 continue
 
