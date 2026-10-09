@@ -48,9 +48,12 @@
   - [x] Thuật toán Pyramidal Lucas-Kanade Optical Flow (Shi-Tomasi features) xử lý siêu tốc ~1.5ms trên khung hình 320x180.
   - [x] Lọc nhiễu ngoại lai: Giới hạn rung lắc dọc $|dy| < 8\text{px}$, lấy trung vị độ dời ngang $dx_{\text{median}}$ để tính $d\theta = \arctan(dx / f_x)$ với $f_x = 232.8\text{ px/rad}$ (HFOV 69° OAK-D S2).
   - [x] Cập nhật liên tục góc quay thực tế ngoài đời vào `self.robot_yaw` ở tần số 30 FPS, đồng bộ 1:1 biểu tượng xe trên bản đồ 2D trong mọi tình huống (kể cả khi lấy tay xoay xe).
-- [x] **2.3. Chuyển đổi tính năng Tự Quét 360° sang Điều Khiển Vòng Kín (Closed-Loop Feedback Control):**
-  - [x] Chế độ Step (8 bước AI): Xe quay và giám sát góc tích lũy thời gian thực, đạt đủ $45.0^\circ$ ($0.785\text{ rad}$) mỗi bước thì tự động ngắt phanh, dừng tĩnh 0.70s cho YOLO & Depth quét mây điểm, sau 8 bước hoàn thành chuẩn xác $360.0^\circ$ và trở về đúng hướng ban đầu.
-  - [x] Chế độ Smooth: Quay chậm đều và liên tục đo góc từ Camera, tự động giảm tốc khi còn $15^\circ$ và ngắt phanh tức thì khi góc đo đạt đủ $360.0^\circ$ ($2\pi\text{ rad}$).
+- [x] **2.3. Hợp nhất thành 1 Chế Độ Tự Quét 360° Duy Nhất — Quay Chậm Đều Vòng Kín (Single Smooth 360° Mode):**
+  - [x] Loại bỏ các chế độ chia bước hoặc chọn thời gian rườm rà; chỉ giữ lại 1 nút bấm duy nhất `🔄 QUÉT 360°`.
+  - [x] Robot quay chậm đều êm ái ở mức 13% PWM và đo liên tục góc thực tế qua camera OAK-D (Visual Gyroscope).
+  - [x] Tự động giảm tốc xung khi còn $15^\circ$ để triệt tiêu trớn quán tính, ngắt phanh tức thì khi góc đo chạm đúng $360.0^\circ$ ($2\pi\text{ rad}$).
+  - [x] Chốt cứng góc quay về đúng hướng xuất phát ban đầu, đồng bộ 100% với bản đồ 2D.
+
 
 ---
 
