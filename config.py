@@ -51,9 +51,12 @@ DEPTH_SKIP_FRAMES = 5       # Chỉ tính mây điểm 3D 1 trong 5 frame (~3 Hz
 DEPTH_DOWNSAMPLE_STEP = 25  # Bước nhảy lấy mẫu ma trận điểm ảnh (pixel)
 IMAGE_SKIP_FRAMES = 2       # Bỏ qua 1/2 frame video để nhẹ CPU encode JPEG
 
-# ─── THÔNG SỐ TỰ QUÉT 360 ĐỘ CHẬM ĐỀU VÒNG KÍN (CLOSED-LOOP 360° SMOOTH PAN) ────
-AUTO_SCAN_MODE        = "smooth"  # Chế độ quay chậm đều duy nhất khép kín chuẩn 360°
-AUTO_SCAN_SPEED_PWM   = 0.13      # Mức xung PWM quay êm ái (13% PWM), tương đương 1.50 rad/s
-AUTO_SCAN_DURATION_S  = 4.5       # Thời gian tham chiếu ước tính cho 1 vòng 360° (Dừng bằng cảm biến góc đo thực tế)
-CAMERA_HFOV_DEG       = 69.0      # Góc nhìn ngang OAK-D S2 (Horizontal FOV = 69 độ)
+# ─── THÔNG SỐ TỰ QUÉT 360 ĐỘ & DETECT VẬT THỂ (PANORAMA SCAN & PERCEPTION) ────
+AUTO_SCAN_MODE        = "step"  # "step" (Quét từng bước 8 góc dừng tĩnh - Cực nét cho YOLO) hoặc "smooth" (Quay chậm đều)
+AUTO_SCAN_SPEED_PWM   = 0.13    # Mức xung PWM quay cực êm (13% PWM), tương đương 1.50 rad/s
+AUTO_SCAN_STEPS       = 8       # 8 cung góc x 45° = 360° (tương thích FOV camera OAK-D S2 ~69°)
+AUTO_SCAN_STEP_TIME_S = 0.48    # Thời gian nhích mỗi góc (~45 độ ở mức 13% PWM: 0.48s x 1.50 rad/s = 0.72 rad ~ 42-45°)
+AUTO_SCAN_PAUSE_S     = 0.70    # Thời gian dừng tĩnh mỗi góc để YOLO & 3D Depth chốt vật thể không vệt mờ
+AUTO_SCAN_DURATION_S  = 4.2     # Thời gian cho chế độ quay chậm đều (smooth): 4.2s tương ứng chuẩn 1 vòng 360° (2pi rad)
+
 

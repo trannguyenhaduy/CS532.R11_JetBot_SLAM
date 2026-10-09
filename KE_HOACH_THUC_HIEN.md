@@ -38,22 +38,20 @@
 
 ---
 
-### 🟢 PHẦN 2: ĐỒNG BỘ PHƯƠNG HƯỚNG & ĐỊNH VỊ (CLOSED-LOOP VISUAL GYROSCOPE & HEADING)
-> *Mục tiêu:* Xe quay $360^\circ$ ngoài đời thực thì trên bản đồ 2D phải quay đúng $360^\circ$, không bị lệch góc, không xoay lố, không ăn gian giây.
+### 🟢 PHẦN 2: ĐỒNG BỘ PHƯƠNG HƯỚNG & ĐỊNH VỊ (LOCALIZATION & YAW - ĐÃ XONG)
+> *Mục tiêu:* Xe quay $360^\circ$ ngoài đời thực thì trên bản đồ 2D phải quay đúng $360^\circ$, không bị lệch góc, không xoay lố $720^\circ$.
 
-- [x] **2.1. Phân tích nguyên nhân cốt lõi khiến quay lố / lệch hướng:**
-  - [x] Phát hiện phương pháp cũ dùng thời gian mò (Open-loop timing bằng giây) bị sai lệch nặng nề do trượt bánh trên sàn gạch và điện áp pin 3S giảm từ 12.6V xuống 11.1V làm thay đổi RPM động cơ.
-  - [x] Khắc phục việc luồng thị giác bị vô hiệu hóa khi xe đang di chuyển (`if not is_moving`).
-- [x] **2.2. Xây dựng bộ đo góc quay thị giác vòng kín (`VisualHeadingTracker` trong `modules/camera_streamer.py`):**
-  - [x] Thuật toán Pyramidal Lucas-Kanade Optical Flow (Shi-Tomasi features) xử lý siêu tốc ~1.5ms trên khung hình 320x180.
-  - [x] Lọc nhiễu ngoại lai: Giới hạn rung lắc dọc $|dy| < 8\text{px}$, lấy trung vị độ dời ngang $dx_{\text{median}}$ để tính $d\theta = \arctan(dx / f_x)$ với $f_x = 232.8\text{ px/rad}$ (HFOV 69° OAK-D S2).
-  - [x] Cập nhật liên tục góc quay thực tế ngoài đời vào `self.robot_yaw` ở tần số 30 FPS, đồng bộ 1:1 biểu tượng xe trên bản đồ 2D trong mọi tình huống (kể cả khi lấy tay xoay xe).
-- [x] **2.3. Hợp nhất thành 1 Chế Độ Tự Quét 360° Duy Nhất — Quay Chậm Đều Vòng Kín (Single Smooth 360° Mode):**
-  - [x] Loại bỏ các chế độ chia bước hoặc chọn thời gian rườm rà; chỉ giữ lại 1 nút bấm duy nhất `🔄 QUÉT 360°`.
-  - [x] Robot quay chậm đều êm ái ở mức 13% PWM và đo liên tục góc thực tế qua camera OAK-D (Visual Gyroscope).
-  - [x] Tự động giảm tốc xung khi còn $15^\circ$ để triệt tiêu trớn quán tính, ngắt phanh tức thì khi góc đo chạm đúng $360.0^\circ$ ($2\pi\text{ rad}$).
-  - [x] Chốt cứng góc quay về đúng hướng xuất phát ban đầu, đồng bộ 100% với bản đồ 2D.
-
+- [x] **2.1. Tìm ra nguyên nhân lệch góc quay giữa thực tế và phần mềm:**
+  - [x] Phát hiện vận tốc góc phần mềm ($28.6^\circ/\text{s}$) lệch 3.2 lần so với tốc độ quay thực tế của bánh xe ($90^\circ - 100^\circ/\text{s}$).
+  - [x] Khử bỏ việc đè góc giữa luồng thị giác thụ động và lệnh lái động học.
+- [x] **2.2. Hiệu chuẩn mô hình động học Odometry góc quay (Angular Odometry Calibration):**
+  - [x] Hiệu chuẩn ánh xạ tuyến tính `turn_duty = (|w| / 1.58) * 0.13` trong `modules/motor_controller.py`.
+  - [x] Cập nhật vận tốc góc Web `speedAngular = 1.58 rad/s` ($\approx 90.5^\circ/\text{s}$) đồng bộ 1:1 với mô-men động cơ.
+  - [x] Cập nhật các mức tốc độ Teleop: Chậm ($1.20\text{ rad/s}$), Chuẩn ($1.58\text{ rad/s}$), Nhanh ($1.90\text{ rad/s}$).
+  - [x] Giữ phím A/D trong 4.0 giây: Xe quay đúng 1 vòng $360^\circ$ ngoài đời và bản đồ quay đúng 1 vòng $360^\circ$.
+- [x] **2.3. Hiệu chuẩn chế độ Tự Quét 360° (Auto 360° Panorama - Triệt tiêu lỗi xoay 720°):**
+  - [x] Chế độ Smooth: Điều chỉnh thời gian quay chuẩn xuống `4.2s` trong `config.py`, `cockpit.html`, và `main.py` (quay đúng 1 vòng $360^\circ$, không xoay quá trớn $720^\circ$).
+  - [x] Chế độ Step (8 bước x 45°): Mỗi bước xung `0.48s` @ 13% PWM ($45^\circ$), dừng tĩnh 0.7s để quét, kết thúc đúng 1 vòng $360^\circ$ và khóa chốt ảnh mốc xuất phát Loop Closure.
 
 ---
 

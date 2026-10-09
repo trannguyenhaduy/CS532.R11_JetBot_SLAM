@@ -115,7 +115,6 @@ class JetBotMasterSystem:
         self.last_vpu_det_time = 0.0
         self.battery_metrics = (11.1, 50, 0.85, 9.4, 120)
         self.last_manual_drive_time = 0.0
-        self.last_visual_yaw_time = 0.0
 
         # Vận tốc tức thời phục vụ Dead-Reckoning Odometry
         self.current_v = 0.0
@@ -438,15 +437,16 @@ class JetBotMasterSystem:
                 self._ros_first_img_logged = True
                 print("🎥 [TERMINAL 1 -> 2] Đã nhận luồng hình ảnh màu RGB trực tiếp từ 'camera_ai.launch' thành công!")
 
-            # Ước lượng góc quay thị giác thời gian thực (Visual Gyroscope bằng Optical Flow LK):
-            # Cập nhật liên tục 30 FPS để đồng bộ góc quay 1:1 với ngoài đời thực
+            # Ước lượng góc quay thị giác thời gian thực (Visual Gyroscope):
+            # CHỈ bù góc khi xe đứng yên (tránh cộng dồn kép với odometry bánh xe hoặc auto scan)
             if self.camera:
-                delta_yaw = self.camera.estimate_visual_rotation(img)
-                if abs(delta_yaw) > 0.001:
-                    with self.lock:
-                        self.robot_yaw += delta_yaw
-                        self.robot_yaw = math.atan2(math.sin(self.robot_yaw), math.cos(self.robot_yaw))
-                        self.last_visual_yaw_time = time.time()
+                is_moving = (abs(getattr(self, 'current_w', 0.0)) > 0.01 or abs(getattr(self, 'current_v', 0.0)) > 0.01)
+                if not is_moving and not getattr(self, 'is_auto_scanning', False):
+                    delta_yaw = self.camera.estimate_visual_rotation(img)
+                    if abs(delta_yaw) > 0.002:
+                        with self.lock:
+                            self.robot_yaw += delta_yaw
+                            self.robot_yaw = math.atan2(math.sin(self.robot_yaw), math.cos(self.robot_yaw))
 
             with self.lock:
                 current_dets = list(self.detections)
@@ -638,13 +638,12 @@ class JetBotMasterSystem:
                 w = getattr(self, 'current_w', 0.0)
 
                 if abs(v) > 0.005 or abs(w) > 0.005:
-                    # Nếu KHÔNG có cảm biến thị giác cập nhật yaw gần đây (> 0.25s), dùng dead-reckoning w*dt
-                    has_recent_visual = (now - getattr(self, 'last_visual_yaw_time', 0.0)) < 0.25
-                    if not has_recent_visual:
-                        self.robot_yaw += w * dt
-                        self.robot_yaw = math.atan2(math.sin(self.robot_yaw), math.cos(self.robot_yaw))
+                    # Tích phân góc quay (Yaw) chuẩn vi phân:
+                    self.robot_yaw += w * dt
+                    # Chuẩn hóa góc quay về [-pi, +pi]
+                    self.robot_yaw = math.atan2(math.sin(self.robot_yaw), math.cos(self.robot_yaw))
 
-                    # Tích phân tọa độ không gian (X, Y) dựa trên robot_yaw chuẩn xác:
+                    # Tích phân tọa độ không gian (X, Y):
                     self.robot_x += v * dt * math.cos(self.robot_yaw)
                     self.robot_y += v * dt * math.sin(self.robot_yaw)
 
@@ -778,19 +777,20 @@ class JetBotMasterSystem:
                 if live_frame is not None:
                     self.latest_raw_bgr = live_frame
 
-                    # Ước lượng xoay thị giác thời gian thực (Visual Gyroscope bằng Optical Flow LK):
-                    # Cập nhật liên tục 30 FPS để đồng bộ góc quay 1:1 với ngoài đời thực
-                    if self.camera:
+                    # Ước lượng xoay thị giác thời gian thực (Visual Gyroscope):
+                    # CHỈ bù góc khi xe đứng yên (tránh cộng dồn kép với odometry bánh xe hoặc auto scan)
+                    is_moving = (abs(getattr(self, 'current_w', 0.0)) > 0.01 or abs(getattr(self, 'current_v', 0.0)) > 0.01)
+                    if not is_moving and not getattr(self, 'is_auto_scanning', False):
                         delta_yaw = self.camera.estimate_visual_rotation(live_frame)
-                        if abs(delta_yaw) > 0.001:
+                        if abs(delta_yaw) > 0.002:
                             with self.lock:
                                 self.robot_yaw += delta_yaw
                                 self.robot_yaw = math.atan2(math.sin(self.robot_yaw), math.cos(self.robot_yaw))
-                                self.last_visual_yaw_time = time.time()
 
                     with self.lock:
                         current_dets = list(self.detections)
                         obs_dist = self.obstacle_distance
+                        rx, ry, rz, yaw = self.robot_x, self.robot_y, self.robot_z, self.robot_yaw
 
                     annotator = (lambda im: self.yolo.draw_detections(im, current_dets)) if self.yolo else None
                     self.camera.process_color_frame(live_frame, annotator, detections=current_dets, obstacle_dist=obs_dist)
@@ -966,7 +966,7 @@ class JetBotMasterSystem:
         return False, "Module Mapper chưa bật"
 
     def toggle_auto_scan(self, duration=None, mode=None, pwm=None):
-        """Bật/Tắt chế độ tự động xoay chậm đều 360 độ vòng kín (Closed-Loop 360° Pan)"""
+        """Bật/Tắt chế độ tự động xoay 360 độ chậm rãi để camera và LaserScan quét lập bản đồ toàn diện"""
         with self.lock:
             if self.is_auto_scanning:
                 self.is_auto_scanning = False
@@ -979,88 +979,216 @@ class JetBotMasterSystem:
                 self.current_v = 0.0
                 self.current_w = 0.0
                 self.last_manual_drive_time = 0.0
-                self.auto_scan_mode = "smooth"
+                scan_mode = mode if mode in ["step", "smooth"] else getattr(config, 'AUTO_SCAN_MODE', 'step')
+                self.auto_scan_mode = scan_mode
                 scan_pwm = float(pwm) if pwm and 0.08 <= float(pwm) <= 0.30 else float(getattr(config, 'AUTO_SCAN_SPEED_PWM', 0.13))
-                scan_dur = float(duration) if duration and float(duration) > 0 else float(getattr(config, 'AUTO_SCAN_DURATION_S', 4.5))
+                scan_dur = float(duration) if duration and float(duration) > 0 else float(getattr(config, 'AUTO_SCAN_DURATION_S', 4.2))
                 self.auto_scan_duration = scan_dur
                 self.auto_scan_remaining = scan_dur
-                threading.Thread(target=self._auto_scan_worker, args=(scan_dur, scan_pwm), daemon=True).start()
-                print(f"🔄 [AUTO SCAN 360°] Bắt đầu tự xoay chậm đều 360° vòng kín [PWM: {scan_pwm*100:.0f}%]...")
+                threading.Thread(target=self._auto_scan_worker, args=(scan_dur, scan_mode, scan_pwm), daemon=True).start()
+                print(f"🔄 [AUTO SCAN 360°] Bắt đầu quét 360 độ [Chế độ: {scan_mode.upper()} - PWM: {scan_pwm*100:.0f}%]...")
                 return True
 
-    def _auto_scan_worker(self, scan_duration=4.5, scan_pwm=0.13):
-        """Luồng tự động xoay 360 độ chậm đều vòng kín (Closed-Loop 360° Smooth Pan):
-        1. Khóa mốc xuất phát start_yaw và reset bộ đo tích lũy góc quang học.
-        2. Robot xoay từ từ ở xung PWM êm dịu (13%), camera liên tục đo tích lũy góc quay thật.
-        3. Khi còn cách đích 15° (0.26 rad), giảm xung PWM xuống mức tinh (fine PWM) để triệt tiêu trớn quán tính.
-        4. Ngay khi góc đo đạt đủ 360.0° (2*pi rad), ngắt phanh tức thì và chốt cứng robot_yaw = start_yaw!
-        5. Tích hợp ngắt an toàn tức thì nếu phát hiện cản <= 15cm hoặc người dùng bấm lái tay W-A-S-D.
+    def _auto_scan_worker(self, scan_duration=4.2, scan_mode='step', scan_pwm=0.13):
+        """Luồng tự động xoay 360 độ khép kín (Closed-Loop Visual Keyframe Tracking):
+        1. Khóa ảnh mốc xuất phát (Start Anchor Keyframe) & góc ban đầu start_yaw.
+        2. Chế độ 'step' (8 cung x 45°):
+           - Các bước 1 đến 7: Xoay ~45° (xung điều khiển 0.52s @ 13% PWM) rồi dừng tĩnh 0.7s để AI bắt trọn vật thể.
+           - Bước 8 (Khóa vòng lặp Loop Closure): Xoay từ từ và so khớp liên tục với ảnh xuất phát (Anchor Keyframe)
+             bằng OpenCV Phase Correlation. Ngay khi khung hình hội tụ về vạch xuất phát (abs(dx) <= 2.5px, response >= 0.28):
+             DỪNG XE NGAY LẬP TỨC và đặt robot_yaw = start_yaw!
+             -> Đảm bảo Robot trở về đúng 100% hướng ban đầu ngoài đời thực, không ăn gian giây!
+        3. Chế độ 'smooth': Quay chậm đều, khi gần đủ vòng lặp sẽ tự động dò tìm ảnh mốc ban đầu để khóa chốt.
         """
         target_pwm = max(0.09, min(0.25, float(scan_pwm)))
         start_time = time.time()
-        target_angle = 2.0 * math.pi  # Đúng 360.0 độ = 6.28318 rad
-        max_safety_time = max(8.0, float(scan_duration) * 2.0)  # Giới hạn an toàn chống kẹt tối đa
 
         with self.lock:
             start_yaw = self.robot_yaw
             self.current_v = 0.0
             self.current_w = 0.0
 
+        # Trích xuất ảnh mốc xuất phát (Anchor Keyframe 160x90 grayscale)
+        anchor_gray = None
         if self.camera:
-            self.camera.reset_visual_accumulated_yaw()
+            init_frame = getattr(self, 'latest_raw_bgr', None)
+            if init_frame is None and hasattr(self.camera, 'get_live_frame'):
+                try:
+                    init_frame = self.camera.get_live_frame()[0]
+                except Exception:
+                    pass
+            if init_frame is not None:
+                anchor_gray = self.camera.get_visual_keyframe(init_frame)
+                if anchor_gray is not None:
+                    print(f"🎯 [AUTO SCAN 360°] Đã lưu Ảnh Mốc Ban Đầu (Anchor Keyframe) lúc góc yaw={start_yaw*180/math.pi:.1f}°")
 
-        print(f"🎯 [AUTO SCAN 360°] Bắt đầu quay chậm đều 360° vòng kín lúc yaw={math.degrees(start_yaw):.1f}° (Target: 360.0°)")
+        if scan_mode == 'step':
+            num_steps = int(getattr(config, 'AUTO_SCAN_STEPS', 8))
+            step_angle = (2.0 * math.pi) / num_steps  # 45 deg = 0.785 rad
+            pulse_t = float(getattr(config, 'AUTO_SCAN_STEP_TIME_S', 0.52))  # 0.52s đủ lực quay ~45 độ
+            pause_t = float(getattr(config, 'AUTO_SCAN_PAUSE_S', 0.70))
+            total_est = num_steps * (pulse_t + pause_t)
+            self.auto_scan_duration = total_est
 
-        while self.running and self.is_auto_scanning:
-            time.sleep(0.03)
-            now = time.time()
-            elapsed = now - start_time
-            self.auto_scan_remaining = max(0.0, float(scan_duration) - elapsed)
+            for step in range(num_steps):
+                if not (self.running and self.is_auto_scanning):
+                    break
 
-            # 1. An toàn: Vật cản sát mũi xe <= 15cm
-            if self.obstacle_distance is not None and self.obstacle_distance <= 0.15:
-                print("🛑 [AUTO SCAN 360°] Phát hiện vật cản sát mũi xe <= 15cm -> Dừng an toàn!")
-                break
+                is_final_step = (step == num_steps - 1)
 
-            # 2. An toàn: Người dùng can thiệp lái tay
-            if (now - self.last_manual_drive_time < 0.50):
-                print("🛑 [AUTO SCAN 360°] Người dùng can thiệp lái tay -> Dừng quét tự động.")
-                break
+                if not is_final_step or anchor_gray is None:
+                    # ─── BƯỚC 1 ĐẾN 7: XOAY CUNG 45 ĐỘ ───
+                    sub_start = time.time()
+                    while time.time() - sub_start < pulse_t and self.running and self.is_auto_scanning:
+                        now = time.time()
+                        elapsed = now - start_time
+                        self.auto_scan_remaining = max(0.0, total_est - elapsed)
 
-            # 3. Đo góc quay tích lũy thực tế từ Camera Visual Tracker (Optical Flow LK)
-            measured_accum = abs(self.camera.get_visual_accumulated_yaw()) if self.camera else 0.0
-            rem_angle = target_angle - measured_accum
+                        if self.obstacle_distance is not None and self.obstacle_distance <= 0.15:
+                            print("🛑 [AUTO SCAN 360°] Phát hiện vật cản sát mũi xe <= 15cm -> Dừng an toàn!")
+                            self.is_auto_scanning = False
+                            break
+                        if (now - self.last_manual_drive_time < 0.50):
+                            print("🛑 [AUTO SCAN 360°] Người dùng can thiệp lái tay -> Dừng quét.")
+                            self.is_auto_scanning = False
+                            break
 
-            # 4. Điều kiện dừng: Đã đủ 360.0 độ (sai số < 2.5 độ ~ 0.04 rad) hoặc quá thời gian an toàn
-            if rem_angle <= 0.04 or elapsed >= max_safety_time:
-                measured_deg = math.degrees(measured_accum)
-                print(f"🎉 [AUTO SCAN 360°] Đã hoàn thành đúng 1 vòng 360° khép kín! (Đo được: {measured_deg:.1f}°/360.0° sau {elapsed:.1f}s)")
-                break
+                        if self.motors:
+                            if hasattr(self.motors, 'spin_in_place'):
+                                self.motors.spin_in_place(duty=target_pwm, direction=1)
+                            else:
+                                self.motors.set_cmd_vel(0.0, 0.35)
+                        time.sleep(0.04)
 
-            # 5. Điều khiển xung: Giảm tốc khi còn < 15 độ để dừng chính xác không bị trớn
-            if rem_angle < 0.26:
-                turn_pwm = max(0.09, target_pwm * 0.70)
-            else:
-                turn_pwm = target_pwm
+                    if self.motors: self.motors.stop()
+                    if not (self.running and self.is_auto_scanning):
+                        break
 
-            if self.motors:
-                if hasattr(self.motors, 'spin_in_place'):
-                    self.motors.spin_in_place(duty=turn_pwm, direction=1)
+                    # Cập nhật góc robot_yaw theo cung vừa quay
+                    with self.lock:
+                        self.robot_yaw = start_yaw + (step + 1) * step_angle
+                        self.robot_yaw = math.atan2(math.sin(self.robot_yaw), math.cos(self.robot_yaw))
+
                 else:
-                    self.motors.set_cmd_vel(0.0, target_pwm / 0.45)
+                    # ─── BƯỚC 8: ĐÓNG VÒNG LẶP THỊ GIÁC (VISUAL LOOP CLOSURE) ───
+                    # Quay từ tốn và so khớp liên tục với anchor_gray cho đến khi trùng khít vạch xuất phát!
+                    print("🔄 [AUTO SCAN 360°] Bước 8: Đang kích hoạt Khóa Vòng Lặp Thị Giác để trở về đúng vạch xuất phát...")
+                    loop_start = time.time()
+                    max_loop_t = pulse_t * 1.8  # Giới hạn an toàn
+
+                    while time.time() - loop_start < max_loop_t and self.running and self.is_auto_scanning:
+                        now = time.time()
+                        elapsed = now - start_time
+                        self.auto_scan_remaining = max(0.0, total_est - elapsed)
+
+                        if (now - self.last_manual_drive_time < 0.50):
+                            self.is_auto_scanning = False
+                            break
+
+                        # Kiểm tra so khớp khung hình camera hiện tại với anchor_gray
+                        curr_frame = getattr(self, 'latest_raw_bgr', None)
+                        if curr_frame is not None and self.camera:
+                            dx, dy, resp = self.camera.match_visual_keyframe(curr_frame, anchor_gray)
+                            # Nếu ảnh xuất hiện trùng khớp (resp >= 0.28) và độ lệch ngang nhỏ (abs(dx) <= 2.5 pixel)
+                            # -> Đã trở về đúng chính xác khung hình lúc bắt đầu quay!
+                            if resp >= 0.28 and abs(dx) <= 2.5:
+                                if self.motors: self.motors.stop()
+                                print(f"🎯 [AUTO SCAN 360°] KHÓA VÒNG THÀNH CÔNG! (dx={dx:.1f}px, conf={resp:.2f}) -> Trở về 100% góc xuất phát!")
+                                break
+
+                        if self.motors:
+                            fine_pwm = max(0.09, target_pwm * 0.95)
+                            if hasattr(self.motors, 'spin_in_place'):
+                                self.motors.spin_in_place(duty=fine_pwm, direction=1)
+                            else:
+                                self.motors.set_cmd_vel(0.0, 0.30)
+                        time.sleep(0.03)
+
+                    if self.motors: self.motors.stop()
+                    if not (self.running and self.is_auto_scanning):
+                        break
+
+                    # Đóng chốt góc quay về đúng start_yaw ban đầu
+                    with self.lock:
+                        self.robot_yaw = start_yaw
+
+                # PHA DỪNG TĨNH QUÉT AI & LASERSCAN (Pause / Perception Phase)
+                pause_start = time.time()
+                while time.time() - pause_start < pause_t and self.running and self.is_auto_scanning:
+                    now = time.time()
+                    elapsed = now - start_time
+                    self.auto_scan_remaining = max(0.0, total_est - elapsed)
+                    if (now - self.last_manual_drive_time < 0.50):
+                        self.is_auto_scanning = False
+                        break
+                    time.sleep(0.05)
+
+            if self.is_auto_scanning:
+                with self.lock:
+                    self.robot_yaw = start_yaw
+                print(f"🎉 [AUTO SCAN 360°] Hoàn tất 8 cung quét! Xe đã trở về góc xuất phát ({start_yaw*180/math.pi:.1f}°).")
+
+        else:
+            # Chế độ quay chậm đều liên tục (Smooth Continuous Pan với Visual Loop Closure)
+            scan_duration = max(1.0, min(30.0, float(scan_duration)))
+            last_t = start_time
+            step_idx = 0
+
+            while self.running and self.is_auto_scanning:
+                time.sleep(0.04)
+                now = time.time()
+                elapsed = now - start_time
+                step_idx += 1
+                self.auto_scan_remaining = max(0.0, scan_duration - elapsed)
+
+                if self.obstacle_distance is not None and self.obstacle_distance <= 0.15:
+                    print("🛑 [AUTO SCAN 360°] Phát hiện vật cản sát mũi xe <= 15cm -> Dừng an toàn!")
+                    break
+
+                if (now - self.last_manual_drive_time < 0.50):
+                    print("🛑 [AUTO SCAN 360°] Người dùng can thiệp lái tay -> Dừng quét tự động.")
+                    break
+
+                # Khi đã quay được trên 82% hành trình -> Kích hoạt dò khớp ảnh xuất phát
+                if elapsed >= scan_duration * 0.82 and anchor_gray is not None and self.camera:
+                    curr_frame = getattr(self, 'latest_raw_bgr', None)
+                    if curr_frame is not None:
+                        dx, dy, resp = self.camera.match_visual_keyframe(curr_frame, anchor_gray)
+                        if resp >= 0.28 and abs(dx) <= 2.5:
+                            print(f"🎯 [AUTO SCAN 360°] Smooth Loop Closure thành công! (dx={dx:.1f}px, conf={resp:.2f}) -> Dừng ngay tại góc ban đầu.")
+                            break
+
+                if elapsed >= scan_duration:
+                    print(f"🎉 [AUTO SCAN 360°] Đã hoàn thành 1 vòng quay chậm đều 360° ({scan_duration:.1f}s)!")
+                    break
+
+                # Điều chế xung nhịp êm ái: 1 nhịp chạy, 1 nhịp trượt
+                is_drive = (step_idx % 2 == 0)
+                if self.motors:
+                    if is_drive:
+                        if hasattr(self.motors, 'spin_in_place'):
+                            self.motors.spin_in_place(duty=target_pwm, direction=1)
+                        else:
+                            self.motors.set_cmd_vel(0.0, target_pwm / 0.45)
+                    else:
+                        self.motors.stop()
+
+                # Cập nhật góc robot_yaw theo tiến độ quay
+                with self.lock:
+                    fraction = min(1.0, elapsed / scan_duration)
+                    self.robot_yaw = start_yaw + fraction * (2.0 * math.pi)
+                    self.robot_yaw = math.atan2(math.sin(self.robot_yaw), math.cos(self.robot_yaw))
 
         with self.lock:
             self.is_auto_scanning = False
             self.current_w = 0.0
             self.auto_scan_remaining = 0.0
-            self.robot_yaw = start_yaw  # Chốt cứng chuẩn xác góc ban đầu ngoài đời thực!
+            self.robot_yaw = start_yaw  # Chốt cứng góc quay về ban đầu!
         if self.motors:
             self.motors.stop()
         if HAS_ROS and self.ros_cmd_pub:
             t = Twist()
             self.ros_cmd_pub.publish(t)
-
-
 
 
     def reset_map(self):

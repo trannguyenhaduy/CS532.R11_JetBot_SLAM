@@ -36,85 +36,6 @@ except ImportError:
     ROSFloat32 = object
     ROSString = object
 
-class VisualHeadingTracker:
-    """
-    Bộ bám vết góc quay thời gian thực (Closed-Loop Visual Gyroscope)
-    Sử dụng Pyramidal Lucas-Kanade Optical Flow (Shi-Tomasi Features)
-    - Xử lý trên ảnh grayscale thu nhỏ (320x180) siêu tốc (~1.2 - 1.5ms trên CPU Jetson Nano)
-    - Loại bỏ ngoại lai (Outlier rejection): Lọc rung lắc dọc |dy| < 8px, lấy trung vị (median) của dx
-    - Công thức góc vi phân: d_theta = atan2(dx_median, f_x) (với f_x = 232.8 px ở HFOV 69 độ của OAK-D S2)
-    - Tích lũy liên tục góc quay accumulated_yaw (rad) để phục vụ quay 360 độ vòng kín chuẩn xác 100%.
-    """
-    def __init__(self, hfov_deg=69.0, width=320, height=180):
-        self.width = width
-        self.height = height
-        self.fx = (width / 2.0) / math.tan(math.radians(hfov_deg / 2.0))
-        self.prev_gray = None
-        self.prev_pts = None
-        self.accumulated_yaw = 0.0
-        self.min_features = 12
-        self.max_features = 100
-        self.deadband_px = 0.20
-        self.max_px_per_frame = 65.0
-
-    def reset_accumulated(self):
-        self.accumulated_yaw = 0.0
-
-    def update(self, bgr_img):
-        if bgr_img is None:
-            return 0.0
-        try:
-            small = cv2.resize(bgr_img, (self.width, self.height), interpolation=cv2.INTER_AREA)
-            gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
-
-            if self.prev_gray is None or self.prev_pts is None or len(self.prev_pts) < self.min_features:
-                self.prev_gray = gray
-                self.prev_pts = cv2.goodFeaturesToTrack(
-                    gray, maxCorners=self.max_features, qualityLevel=0.01, minDistance=6
-                )
-                return 0.0
-
-            curr_pts, status, _ = cv2.calcOpticalFlowPyrLK(
-                self.prev_gray, gray, self.prev_pts, None,
-                winSize=(21, 21), maxLevel=3,
-                criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 20, 0.03)
-            )
-
-            delta_yaw = 0.0
-            if curr_pts is not None and status is not None:
-                good_prev = self.prev_pts[status == 1]
-                good_curr = curr_pts[status == 1]
-
-                if len(good_curr) >= 4:
-                    dxs = good_curr[:, 0] - good_prev[:, 0]
-                    dys = good_curr[:, 1] - good_prev[:, 1]
-
-                    valid_mask = np.abs(dys) < 8.0
-                    if np.sum(valid_mask) >= 3:
-                        valid_dx = dxs[valid_mask]
-                        dx_median = float(np.median(valid_dx))
-
-                        if self.deadband_px <= abs(dx_median) <= self.max_px_per_frame:
-                            delta_yaw = math.atan2(dx_median, self.fx)
-                            self.accumulated_yaw += delta_yaw
-
-                    self.prev_pts = good_curr.reshape(-1, 1, 2)
-                else:
-                    self.prev_pts = None
-
-            self.prev_gray = gray
-            if self.prev_pts is None or len(self.prev_pts) < self.min_features:
-                new_pts = cv2.goodFeaturesToTrack(
-                    gray, maxCorners=self.max_features, qualityLevel=0.01, minDistance=6
-                )
-                self.prev_pts = new_pts
-
-            return delta_yaw
-        except Exception:
-            return 0.0
-
-
-
 class CameraStreamer:
     """
     Module Quản lý luồng Camera OAK-D S2 & Webcam Laptop (Thành viên 2).
@@ -143,9 +64,6 @@ class CameraStreamer:
         self.fy = 450.0
         self.cx = 320.0
         self.cy = 200.0
-
-        # Bộ bám vết góc quay thời gian thực (Closed-Loop Visual Gyroscope)
-        self.heading_tracker = VisualHeadingTracker()
 
         # Chế độ khung hình mặc định: 'ai' (Cam thường có detect người & khoảng cách), 'thermal' (Camera nhiệt)
         self.view_mode = 'ai'
@@ -804,24 +722,38 @@ class CameraStreamer:
         return self.latest_jpeg
 
     def estimate_visual_rotation(self, bgr_img):
-        """Ước lượng góc quay ngang delta_yaw từ thị giác (Visual Gyroscope bằng Lucas-Kanade Optical Flow)
-        Hoạt động cực nhanh (~1.5ms), đo chính xác góc quay của xe kể cả khi người dùng
+        """Ước lượng góc quay ngang delta_yaw từ thị giác (Visual Gyroscope / Phase Correlation)
+        Hoạt động cực nhanh (~0.3ms), đo chính xác góc quay của xe kể cả khi người dùng
         dùng tay xoay JetBot hoặc khi bánh xe bị trượt trên sàn gạch men!
         """
-        if self.heading_tracker is None or bgr_img is None:
+        if bgr_img is None:
             return 0.0
-        return self.heading_tracker.update(bgr_img)
+        try:
+            h, w = bgr_img.shape[:2]
+            # Downsample về 160x90 grayscale để tính toán siêu tốc < 0.3ms
+            small = cv2.resize(bgr_img, (160, 90), interpolation=cv2.INTER_AREA)
+            gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY).astype(np.float32)
 
-    def get_visual_accumulated_yaw(self):
-        """Lấy tổng góc quay đã tích lũy (rad) kể từ lần reset gần nhất"""
-        if self.heading_tracker:
-            return self.heading_tracker.accumulated_yaw
+            if not hasattr(self, '_prev_vis_gray') or self._prev_vis_gray is None or self._prev_vis_gray.shape != gray.shape:
+                self._prev_vis_gray = gray
+                return 0.0
+
+            shift, response = cv2.phaseCorrelate(self._prev_vis_gray, gray)
+            self._prev_vis_gray = gray
+
+            # Chỉ chấp nhận nếu độ tin cậy tương quan cao
+            if response > 0.30:
+                dx = shift[0]
+                # Bỏ qua rung lắc vi mô (< 0.5 pixel) và bước nhảy quá lớn (> 50 pixel)
+                if 0.5 <= abs(dx) <= 50.0:
+                    # fx tương ứng ở độ phân giải 160px với FOV 75 độ
+                    fx_small = 160.0 / (2.0 * math.tan(math.radians(75.0) / 2.0))
+                    # Khi xe quay trái, cảnh dạt sang phải (dx > 0) -> delta_yaw > 0 (CCW)
+                    delta_yaw = math.atan2(dx, fx_small)
+                    return delta_yaw
+        except Exception:
+            pass
         return 0.0
-
-    def reset_visual_accumulated_yaw(self):
-        """Đặt lại bộ đếm tích lũy góc quay về 0.0"""
-        if self.heading_tracker:
-            self.heading_tracker.reset_accumulated()
 
     def get_visual_keyframe(self, bgr_img=None):
         """Trích xuất ảnh mốc chuẩn (Anchor Keyframe) 160x90 float32 grayscale để khóa vòng lặp (Loop Closure)"""
