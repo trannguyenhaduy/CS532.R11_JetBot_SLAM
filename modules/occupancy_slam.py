@@ -232,9 +232,6 @@ class OccupancySLAM:
             self.grid[free_indices] = 128
             self.miss_counts[free_indices] += 1
 
-        # 4. Tự động gom cụm các điểm cản thành Bounding Box (UNKNOWN / OBSTACLE)
-        self._cluster_obstacle_points(rx, ry, points_3d)
-
         if has_new_obstacle or (self.total_scans_processed % 3 == 0):
             self.version += 1
 
@@ -668,9 +665,7 @@ if __name__ == '__main__':
     lms = slam.get_confirmed_landmarks()
     print(f"  ├─ Số vật thể đã ghim: {len(lms)} (Gồm: {[o['name'] for o in lms]})")
     chair_lm = next((o for o in lms if o['name'] == 'CHAIR'), None)
-    unknown_lm = next((o for o in lms if o['name'] == 'UNKNOWN'), None)
     assert chair_lm is not None and chair_lm['pinned'] is True, "Lỗi: Cái ghế chưa được ghim cố định!"
-    assert unknown_lm is not None, "Lỗi: Cụm cản UNKNOWN chưa được quét và ghim!"
 
     payload = slam.get_payload_for_web()
     print(f"  ├─ Ô tự do (Free): {payload['free_cells']}, Ô tường (Occ): {payload['occ_cells']}")

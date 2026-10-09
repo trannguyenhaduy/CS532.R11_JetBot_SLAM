@@ -58,5 +58,4 @@ AUTO_SCAN_STEPS       = 8       # 8 cung góc x 45° = 360° (tương thích FOV
 AUTO_SCAN_STEP_TIME_S = 0.48    # Thời gian nhích mỗi góc (~45 độ ở mức 13% PWM: 0.48s x 1.50 rad/s = 0.72 rad ~ 42-45°)
 AUTO_SCAN_PAUSE_S     = 0.70    # Thời gian dừng tĩnh mỗi góc để YOLO & 3D Depth chốt vật thể không vệt mờ
 AUTO_SCAN_DURATION_S  = 4.2     # Thời gian cho chế độ quay chậm đều (smooth): 4.2s tương ứng chuẩn 1 vòng 360° (2pi rad)
-
-
+CAMERA_HFOV_DEG       = 69.0    # Góc nhìn ngang OAK-D S2 (Horizontal FOV = 69 độ)
