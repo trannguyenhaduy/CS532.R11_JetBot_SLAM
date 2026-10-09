@@ -103,6 +103,16 @@ class CameraStreamer:
         self.imu_accumulated_yaw = 0.0
         self._last_raw_imu_yaw = None
 
+        # Khóa vòng lặp thị giác & Con quay hình ảnh (Visual Gyroscope & Anchor Loop Closure)
+        self.anchor_registered = False
+        self.anchor_template = None
+        self.anchor_orig_x = 80
+        self.anchor_orig_y = 60
+        self.anchor_timestamp = 0.0
+        self.visual_accumulated_yaw = 0.0
+        self._last_track_gray = None
+        self._prev_vis_gray = None
+
         # Đồng bộ luồng phát hình ảnh độ trễ thấp (Zero Latency Event & ID)
         import threading
         self.frame_id = 0
@@ -815,7 +825,6 @@ class CameraStreamer:
             return 0.0
         try:
             h, w = bgr_img.shape[:2]
-            # Downsample về 160x90 grayscale để tính toán siêu tốc < 0.3ms
             small = cv2.resize(bgr_img, (160, 90), interpolation=cv2.INTER_AREA)
             gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY).astype(np.float32)
 
@@ -826,19 +835,103 @@ class CameraStreamer:
             shift, response = cv2.phaseCorrelate(self._prev_vis_gray, gray)
             self._prev_vis_gray = gray
 
-            # Chỉ chấp nhận nếu độ tin cậy tương quan cao
-            if response > 0.30:
+            if response >= 0.18:
                 dx = shift[0]
-                # Bỏ qua rung lắc vi mô (< 0.5 pixel) và bước nhảy quá lớn (> 50 pixel)
-                if 0.5 <= abs(dx) <= 50.0:
-                    # fx tương ứng ở độ phân giải 160px với FOV 75 độ
+                if 0.3 <= abs(dx) <= 40.0:
                     fx_small = 160.0 / (2.0 * math.tan(math.radians(75.0) / 2.0))
-                    # Khi xe quay trái, cảnh dạt sang phải (dx > 0) -> delta_yaw > 0 (CCW)
                     delta_yaw = math.atan2(dx, fx_small)
-                    return delta_yaw
+                    return float(delta_yaw)
         except Exception:
             pass
         return 0.0
+
+    def register_anchor_keyframe(self, bgr_img=None):
+        """Đăng ký khung hình mốc (Anchor Keyframe) trước khi bắt đầu quay 360 độ:
+        - Trích xuất template mẫu đặc trưng tại tâm cảm biến (160x120 trên ảnh 320x240).
+        - Khởi tạo mốc góc quay và ảnh tham chiếu tracking liên tục.
+        """
+        if bgr_img is None:
+            bgr_img = getattr(self, '_cached_oak_frame', None) or getattr(self, '_cached_frame', None)
+        if bgr_img is None:
+            return False
+        try:
+            h, w = bgr_img.shape[:2]
+            small = cv2.resize(bgr_img, (320, 240), interpolation=cv2.INTER_AREA) if (w != 320 or h != 240) else bgr_img
+            gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY) if len(small.shape) == 3 else small
+
+            tx, ty, tw, th = 80, 60, 160, 120
+            self.anchor_template = gray[ty:ty+th, tx:tx+tw].copy()
+            self.anchor_orig_x = tx
+            self.anchor_orig_y = ty
+            self.anchor_registered = True
+            self.anchor_timestamp = time.time()
+            self.visual_accumulated_yaw = 0.0
+            self._last_track_gray = cv2.resize(gray, (160, 90), interpolation=cv2.INTER_AREA).astype(np.float32)
+            print(f"📸 [CAMERA] Đã khóa khung hình mốc Anchor Keyframe ({tw}x{th}) tại tâm cảm biến OAK-D!")
+            return True
+        except Exception as e:
+            print(f"⚠️ [CAMERA] Lỗi đăng ký Anchor Keyframe: {e}")
+            return False
+
+    def track_visual_rotation(self, bgr_img):
+        """Theo dõi liên tục góc quay qua từng frame (Visual Odometry ở 30 FPS):
+        Trả về (delta_yaw_rad, accumulated_yaw_rad)
+        """
+        if bgr_img is None:
+            return 0.0, float(self.visual_accumulated_yaw)
+        try:
+            h, w = bgr_img.shape[:2]
+            small = cv2.resize(bgr_img, (160, 90), interpolation=cv2.INTER_AREA) if (w != 160 or h != 90) else bgr_img
+            curr_gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY).astype(np.float32) if len(small.shape) == 3 else small.astype(np.float32)
+
+            if self._last_track_gray is None or self._last_track_gray.shape != curr_gray.shape:
+                self._last_track_gray = curr_gray
+                return 0.0, float(self.visual_accumulated_yaw)
+
+            shift, resp = cv2.phaseCorrelate(self._last_track_gray, curr_gray)
+            self._last_track_gray = curr_gray
+            dx = shift[0]
+            if resp >= 0.15 and 0.2 <= abs(dx) <= 40.0:
+                fx_small = 160.0 / (2.0 * math.tan(math.radians(75.0) / 2.0))
+                delta_yaw = math.atan2(dx, fx_small)
+                self.visual_accumulated_yaw += delta_yaw
+                return float(delta_yaw), float(self.visual_accumulated_yaw)
+        except Exception:
+            pass
+        return 0.0, float(self.visual_accumulated_yaw)
+
+    def check_anchor_loop_closure(self, bgr_img, min_turned_rad=4.5):
+        """So khớp ảnh hiện tại với khung hình mốc Anchor bằng Normalized Cross-Correlation:
+        - Có bộ lọc Departure Guard: Bỏ qua trong 2 giây đầu và khi góc quay < 260° (4.5 rad).
+        - Khi góc quay đạt ngưỡng, quét tìm vị trí xuất hiện của template trong khung hình.
+        - Trả về: (is_matched, match_score, offset_x)
+          + is_matched = True khi score >= 0.62 và độ lệch vị trí ngang |offset_x| <= 12px.
+        """
+        if not self.anchor_registered or self.anchor_template is None:
+            return False, 0.0, 999.0
+
+        elapsed = time.time() - self.anchor_timestamp
+        if abs(self.visual_accumulated_yaw) < min_turned_rad and elapsed < 2.0:
+            return False, 0.0, 999.0
+
+        if bgr_img is None:
+            return False, 0.0, 999.0
+
+        try:
+            h, w = bgr_img.shape[:2]
+            small = cv2.resize(bgr_img, (320, 240), interpolation=cv2.INTER_AREA) if (w != 320 or h != 240) else bgr_img
+            curr_gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY) if len(small.shape) == 3 else small
+
+            res = cv2.matchTemplate(curr_gray, self.anchor_template, cv2.TM_CCOEFF_NORMED)
+            _, max_val, _, max_loc = cv2.minMaxLoc(res)
+
+            offset_x = max_loc[0] - self.anchor_orig_x
+            offset_y = max_loc[1] - self.anchor_orig_y
+
+            is_matched = bool(max_val >= 0.62 and abs(offset_x) <= 12 and abs(offset_y) <= 18)
+            return is_matched, float(max_val), float(offset_x)
+        except Exception:
+            return False, 0.0, 999.0
 
     def reset_imu_heading(self):
         """Đặt lại mốc góc quay tích phân IMU về 0 rad để đo cung quay mới"""

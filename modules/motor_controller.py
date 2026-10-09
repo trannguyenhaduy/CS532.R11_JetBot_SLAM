@@ -368,14 +368,25 @@ class MotorController:
             if self.is_connected and self.driver:
                 self.driver.stop()
 
-    def active_brake(self, reverse_duty: float = 0.14, pulse_ms: int = 35):
-        """Phát một xung đảo chiều cực ngắn (~35ms) để triệt tiêu tức thì quán tính trượt trớn khi dừng xe"""
+    def active_brake(self, reverse_duty: float = 0.14, pulse_ms: int = 35, spin_direction: int = 0):
+        """Phát một xung đảo chiều cực ngắn (~35-40ms) để triệt tiêu tức thì quán tính trượt trớn khi dừng xe:
+        - spin_direction == 0: Hãm quán tính chuyển động tịnh tiến (lùi 2 bánh).
+        - spin_direction != 0: Hãm quán tính quay tròn tại chỗ (đảo ngược chiều quay của 2 bánh).
+        """
         with self.lock:
             if self.is_connected and self.driver:
                 try:
                     self.driver.stop()
                     rev = max(0.08, min(0.20, float(reverse_duty)))
-                    self.driver.set_motors(-rev, -rev)
+                    if spin_direction != 0:
+                        p_l = rev if spin_direction > 0 else -rev
+                        p_r = -rev if spin_direction > 0 else rev
+                        if self.invert_left: p_l = -p_l
+                        if self.invert_right: p_r = -p_r
+                        if self.swap_motors: p_l, p_r = p_r, p_l
+                        self.driver.set_motors(p_l, p_r)
+                    else:
+                        self.driver.set_motors(-rev, -rev)
                     time.sleep(pulse_ms / 1000.0)
                 except Exception:
                     pass

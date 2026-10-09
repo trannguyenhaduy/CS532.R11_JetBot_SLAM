@@ -51,11 +51,12 @@ DEPTH_SKIP_FRAMES = 5       # Chỉ tính mây điểm 3D 1 trong 5 frame (~3 Hz
 DEPTH_DOWNSAMPLE_STEP = 25  # Bước nhảy lấy mẫu ma trận điểm ảnh (pixel)
 IMAGE_SKIP_FRAMES = 2       # Bỏ qua 1/2 frame video để nhẹ CPU encode JPEG
 
-# ─── THÔNG SỐ TỰ QUÉT 360 ĐỘ & ĐỊNH HƯỚNG QUÁN TÍNH IMU (CLOSED-LOOP 360° SCAN) ───
-AUTO_SCAN_MODE        = "smooth" # Chế độ quay chậm đều duy nhất theo chuẩn vòng kín IMU
-AUTO_SCAN_SPEED_PWM   = 0.12     # Mức xung PWM quay đều êm dịu (12% PWM) chống nhòe camera
-AUTO_SCAN_CREEP_PWM   = 0.09     # Mức xung PWM bò chậm khi đến gần 360° (còn 45°) để dừng chuẩn xác
-AUTO_SCAN_TARGET_DEG  = 360.0    # Góc mục tiêu chuẩn 1 vòng tròn 360 độ (2*pi rad)
-AUTO_SCAN_DURATION_S  = 4.8      # Thời gian dự phòng khi không có IMU (được bù điện áp pin qua INA219)
+# ─── THÔNG SỐ TỰ QUÉT 360 ĐỘ & ĐỊNH HƯỚNG THỊ GIÁC CAMERA (VISUAL ANCHOR 360° SCAN) ───
+AUTO_SCAN_MODE        = "visual_anchor" # Tự động đánh dấu khung hình mốc & quay chậm đều khép vòng lặp Camera
+AUTO_SCAN_SPEED_PWM   = 0.12            # Mức xung PWM quay đều êm dịu (12% PWM) chống nhòe camera
+AUTO_SCAN_CREEP_PWM   = 0.09            # Mức xung PWM bò chậm khi đến gần 360° (score >= 0.50) để hãm đà quán tính
+AUTO_SCAN_TARGET_DEG  = 360.0           # Góc mục tiêu chuẩn 1 vòng tròn 360 độ (2*pi rad)
+AUTO_SCAN_DURATION_S  = 4.8             # Thời gian dự phòng khi pin 11.1V (tự bù áp theo INA219)
+
 
 

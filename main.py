@@ -1001,36 +1001,64 @@ class JetBotMasterSystem:
                 return True
 
     def _auto_scan_worker(self, scan_duration=4.8, scan_pwm=0.12):
-        """Luồng điều khiển tự động xoay 360 độ khép kín (Closed-Loop 360° Panorama Spin):
-        1. Kênh chính: Sử dụng cảm biến quán tính IMU tích hợp trên OAK-D S2 (100 Hz).
-           - Tích phân góc quay thời gian thực: delta_theta = |accumulated_yaw|.
-           - Khi quay đến 315° (còn 45° đến đích), tự động hạ tốc độ bò chậm (creep_pwm 9%) để triệt tiêu lực quán tính.
-           - Đến đúng 360.0° (2*pi rad), kích hoạt phanh điện tử chủ động (active brake pulse) khóa đứng xe.
-        2. Kênh dự phòng (Fallback khi không có IMU):
-           - Tự động đọc điện áp pin thực tế qua cảm biến INA219.
-           - Bù xung PWM theo điện áp pin: duty = base_duty * (11.1 / V_bat) để duy trì tốc độ quay ổn định khi pin sụt áp.
-        3. Đồng bộ 1:1 với Bản đồ 2D Occupancy Grid:
-           - Cập nhật robot_yaw theo số đo quán tính thực tế, chấm dứt hoàn toàn hiện tượng lệch hướng ngoài đời.
+        """Luồng điều khiển tự động xoay 360 độ khép kín dựa trên CAMERA THỊ GIÁC (Visual Anchor Keyframe Closed-Loop):
+        1. Đánh dấu mốc xuất phát (t=0):
+           - Chờ xe ổn định vị trí, đọc khung hình Camera thực tế.
+           - Đăng ký khung hình mốc (Anchor Keyframe template 160x120) và ghi nhận start_yaw.
+        2. Bắt đầu quay chậm đều:
+           - Tốc độ cố định mượt mà (base_pwm ~ 11-12%), xe xoay tại chỗ không giật lắc.
+        3. Giám sát thị giác liên tục (30 FPS):
+           - Kênh 1: Con quay thị giác (Visual Odometry phase correlation) đo góc tích phân turned_angle.
+           - Cập nhật robot_yaw theo số đo thị giác thực tế trên bản đồ 2D Occupancy Grid SLAM.
+           - Kênh 2: Sau khi rời mốc xuất phát (turned_angle >= 260° hoặc > 2.2s), liên tục so khớp
+             khung hình hiện tại với Anchor Keyframe ban đầu bằng Normalized Cross Correlation.
+           - Khi cản vào tầm ngắm (score >= 0.50), tự động hạ ga xuống mức bò chậm (creep_pwm 9%) để hãm đà quán tính.
+           - Khi khung hình trùng khớp hoàn toàn (score >= 0.62, lệch ngang <= 12px):
+             Kích hoạt phanh điện tử chủ động đảo chiều (Active Counter-Brake) dừng đứng bánh xe ngay lập tức!
+        4. Kênh dự phòng an toàn (Fail-safe):
+           - Kênh IMU phần cứng nếu có (OAK-D S2 Pro).
+           - Tích phân góc quay thị giác đạt đủ 360° (2*pi rad).
+           - Ngắt khẩn cấp khi gặp vật cản (< 16cm), người dùng lái tay, hoặc quá thời gian an toàn (16s).
         """
         target_angle = 2.0 * math.pi  # 360.0 độ = 6.28319 rad
-        base_pwm = max(0.09, min(0.22, float(scan_pwm)))
+        base_pwm = max(0.10, min(0.18, float(scan_pwm)))
         creep_pwm = float(getattr(config, 'AUTO_SCAN_CREEP_PWM', 0.09))
+        direction = 1  # Quay trái CCW (1)
 
-        start_time = time.time()
+        # Chờ 100ms để xe hoàn toàn đứng yên trước khi chụp khung hình mốc
+        time.sleep(0.10)
+
         with self.lock:
             start_yaw = self.robot_yaw
             self.current_v = 0.0
             self.current_w = 0.0
 
-        # Kiểm tra kênh dữ liệu IMU trên camera OAK-D S2
+        # Lấy khung hình camera mốc ban đầu (Anchor Keyframe)
+        anchor_ok = False
+        start_frame = self.latest_raw_bgr
+        if start_frame is None and self.camera:
+            try:
+                start_frame, _, _ = self.camera.get_live_frame()
+            except Exception:
+                start_frame = None
+
+        if self.camera and start_frame is not None:
+            anchor_ok = self.camera.register_anchor_keyframe(start_frame)
+
+        if anchor_ok:
+            print(f"📸 [AUTO SCAN 360°] Đã khóa khung hình mốc (Anchor Keyframe) tại góc {start_yaw*180/math.pi:.1f}°. Bắt đầu quay chậm đều theo Camera...")
+        else:
+            print(f"⚡ [AUTO SCAN 360°] Chế độ đo góc con quay thị giác & bù điện áp...")
+
+        # Kiểm tra kênh dữ liệu IMU trên camera OAK-D S2 nếu có
         has_imu = False
         if self.camera and hasattr(self.camera, 'get_imu_heading'):
             has_imu, _, _ = self.camera.get_imu_heading()
             if has_imu:
                 self.camera.reset_imu_heading()
-                print("🧭 [AUTO SCAN 360°] Đã kết nối IMU OAK-D S2: Kích hoạt điều khiển vòng kín 360.0°!")
+                print("🧭 [AUTO SCAN 360°] Đã kết nối IMU OAK-D S2 song song!")
 
-        # Kênh dự phòng: Tính toán bù điện áp pin từ INA219 nếu không có IMU
+        # Kênh dự phòng: Tính toán bù điện áp pin từ INA219
         v_bat = 11.1
         if self.battery and hasattr(self.battery, 'read_metrics'):
             try:
@@ -1041,21 +1069,28 @@ class JetBotMasterSystem:
                 pass
 
         comp_ratio = 11.1 / max(9.5, min(12.6, v_bat))
-        compensated_pwm = max(0.09, min(0.20, base_pwm * comp_ratio))
+        compensated_pwm = max(0.10, min(0.18, base_pwm * comp_ratio))
         calibrated_duration = float(getattr(config, 'AUTO_SCAN_DURATION_S', 4.8)) * (base_pwm / compensated_pwm)
 
-        if not has_imu:
-            print(f"⚡ [AUTO SCAN 360°] Chế độ Bù Áp INA219 (V_bat={v_bat:.2f}V, PWM={compensated_pwm*100:.0f}%, T={calibrated_duration:.1f}s)...")
-
-        total_est = calibrated_duration
+        total_est = max(4.0, calibrated_duration)
         self.auto_scan_duration = total_est
         self.auto_scan_remaining = total_est
 
+        start_time = time.time()
+        last_processed_frame = None
         turned_angle = 0.0
+        loop_closed = False
         max_scan_timeout = 16.0  # Giới hạn an toàn tối đa 16 giây
 
+        # Bắt đầu xoay động cơ chậm đều
+        if self.motors:
+            if hasattr(self.motors, 'spin_in_place'):
+                self.motors.spin_in_place(duty=compensated_pwm, direction=direction)
+            else:
+                self.motors.set_cmd_vel(0.0, 0.30)
+
         while self.running and self.is_auto_scanning:
-            time.sleep(0.035)
+            time.sleep(0.025)
             now = time.time()
             elapsed = now - start_time
 
@@ -1070,44 +1105,69 @@ class JetBotMasterSystem:
                 print(f"⚠️ [AUTO SCAN 360°] Hết thời gian an toàn ({max_scan_timeout}s) -> Tự động dừng xe.")
                 break
 
-            # 2. Đọc góc quay thực tế
+            # 2. Xử lý thị giác trên khung hình mới nhất từ Camera
+            curr_frame = self.latest_raw_bgr
+            frame_is_new = (curr_frame is not None and curr_frame is not last_processed_frame)
+
+            vis_accum = 0.0
+            if frame_is_new and self.camera:
+                last_processed_frame = curr_frame
+                _, vis_accum = self.camera.track_visual_rotation(curr_frame)
+
+            # Đọc góc đã quay từ IMU hoặc Con quay thị giác
             if has_imu and self.camera:
                 _, acc_yaw, raw_yaw = self.camera.get_imu_heading()
                 turned_angle = abs(acc_yaw)
                 with self.lock:
                     self.robot_yaw = raw_yaw
-                progress = min(1.0, turned_angle / target_angle)
-                self.auto_scan_remaining = max(0.0, total_est * (1.0 - progress))
+            elif abs(vis_accum) > 0.05:
+                turned_angle = abs(vis_accum)
+                with self.lock:
+                    self.robot_yaw = start_yaw + vis_accum
+                    self.robot_yaw = math.atan2(math.sin(self.robot_yaw), math.cos(self.robot_yaw))
             else:
                 progress = min(1.0, elapsed / calibrated_duration)
                 turned_angle = progress * target_angle
-                self.auto_scan_remaining = max(0.0, calibrated_duration - elapsed)
                 with self.lock:
                     self.robot_yaw = start_yaw + turned_angle
                     self.robot_yaw = math.atan2(math.sin(self.robot_yaw), math.cos(self.robot_yaw))
 
-            # 3. Kiểm tra điều kiện hoàn thành 360 độ
+            progress = min(1.0, turned_angle / target_angle)
+            self.auto_scan_remaining = max(0.0, total_est * (1.0 - progress))
+
+            # 3. Kiểm tra khóa vòng lặp thị giác (Anchor Loop Closure)
+            # Chỉ kiểm tra khi đã quay tối thiểu 260 độ (4.54 rad) hoặc đã quay hơn 2.2 giây để tránh bẫy xuất phát
+            match_score = 0.0
+            offset_x = 999.0
+            if anchor_ok and self.camera and curr_frame is not None:
+                if turned_angle >= 4.54 or elapsed >= 2.2:
+                    is_closed, match_score, offset_x = self.camera.check_anchor_loop_closure(curr_frame, min_turned_rad=4.5)
+                    if is_closed:
+                        print(f"🎯 [AUTO SCAN 360°] CAMERA ĐÃ PHÁT HIỆN LẠI KHUNG HÌNH MỐC BAN ĐẦU! (Độ khớp: {match_score*100:.1f}%, Lệch: {offset_x:+.0f}px, Thời gian: {elapsed:.2f}s)")
+                        loop_closed = True
+                        break
+
+            # 4. Kiểm tra điều kiện hoàn thành 360 độ bằng góc đo thị giác / IMU
             if turned_angle >= target_angle:
-                print(f"🎯 [AUTO SCAN 360°] HOÀN TẤT ĐÚNG 360°! (Góc quay: {turned_angle*180/math.pi:.1f}°, Thời gian: {elapsed:.2f}s)")
+                print(f"🎯 [AUTO SCAN 360°] HOÀN TẤT ĐỦ 360° THEO GÓC QUAY THỊ GIÁC! (Góc quay: {turned_angle*180/math.pi:.1f}°, Thời gian: {elapsed:.2f}s)")
                 break
 
-            # 4. Điều khiển động cơ: Ga quay mượt mà với cơ chế giảm tốc hãm đà (Proportional Deceleration)
-            # Khi còn 45 độ nữa đến đích, hạ xuống creeping PWM để triệt tiêu lực quán tính
-            if (target_angle - turned_angle) < 0.785:
+            # 5. Điều khiển tốc độ: Khi sắp về đến đích (match_score >= 0.50 hoặc góc > 310°), hạ xuống creeping PWM để hãm đà quán tính
+            if match_score >= 0.50 or (target_angle - turned_angle) < 0.85:
                 curr_pwm = creep_pwm
             else:
-                curr_pwm = compensated_pwm if not has_imu else base_pwm
+                curr_pwm = compensated_pwm
 
             if self.motors:
                 if hasattr(self.motors, 'spin_in_place'):
-                    self.motors.spin_in_place(duty=curr_pwm, direction=1)
+                    self.motors.spin_in_place(duty=curr_pwm, direction=direction)
                 else:
                     self.motors.set_cmd_vel(0.0, 0.30)
 
-        # 5. Phanh chủ động (Active Counter-Brake) dừng đứng bánh xe ngay lập tức
+        # 6. Phanh chủ động đối kháng (Active Counter-Brake) dừng đứng bánh xe ngay tức khắc
         if self.motors:
             if hasattr(self.motors, 'active_brake'):
-                self.motors.active_brake(reverse_duty=0.14, pulse_ms=35)
+                self.motors.active_brake(reverse_duty=0.14, pulse_ms=40, spin_direction=direction)
             else:
                 self.motors.stop()
 
@@ -1115,11 +1175,8 @@ class JetBotMasterSystem:
             self.is_auto_scanning = False
             self.current_w = 0.0
             self.auto_scan_remaining = 0.0
-            if has_imu and self.camera:
-                _, _, final_yaw = self.camera.get_imu_heading()
-                self.robot_yaw = final_yaw
-            else:
-                self.robot_yaw = start_yaw
+            # Khi đã đóng vòng lặp về mốc ban đầu, khóa chặt góc về start_yaw
+            self.robot_yaw = start_yaw
 
         if HAS_ROS and getattr(self, 'ros_cmd_pub', None):
             try:
@@ -1128,7 +1185,7 @@ class JetBotMasterSystem:
             except Exception:
                 pass
 
-        print(f"🎉 [AUTO SCAN 360°] Hoàn tất chu trình quét 360°. Xe đã dừng hoàn toàn tại góc {self.robot_yaw*180/math.pi:.1f}°.")
+        print(f"🎉 [AUTO SCAN 360°] Hoàn tất chu trình quét 360° bằng Camera. Xe đã dừng tại góc ban đầu {self.robot_yaw*180/math.pi:.1f}°.")
 
 
     def reset_map(self):
