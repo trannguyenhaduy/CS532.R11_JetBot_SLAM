@@ -20,7 +20,7 @@ ENABLE_YOLO         = True   # Bật/Tắt module lọc nhận diện 3D Spatial
 ENABLE_FOLLOWER     = False  # Bật/Tắt module tự hành bám người (MẶC ĐỊNH TẮT ĐỂ ƯU TIÊN LÁI TAY)
 ENABLE_MAPPER       = True   # Bật/Tắt module bản đồ ngữ nghĩa 3D
 ENABLE_WEB          = True   # Bật/Tắt trạm điều khiển Web Cockpit (Port 8080)
-ENABLE_SAFETY_BRAKE = True   # Bật tính năng phanh khẩn cấp Virtual Bumper (< 18cm)
+ENABLE_SAFETY_BRAKE = False  # Tạm thời TẮT phanh khẩn cấp theo yêu cầu người dùng (tránh lỗi file detect ngắt quay xe)
 
 # ─── THÔNG SỐ TRẠM ĐIỀU KHIỂN WEB ─────────────────────────────────────────────
 WEB_PORT = 8080

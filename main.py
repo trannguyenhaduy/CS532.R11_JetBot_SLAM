@@ -29,6 +29,7 @@ YOLO     = ON   # 4. AI NHẬN DIỆN: BẬT (Giai đoạn 3 - Bộ lọc đối
 FOLLOWER = OFF  # 5. BÁM NGƯỜI: Tắt (Tạm thời bỏ qua theo yêu cầu để làm sau)
 MAPPER   = ON   # 6. BẢN ĐỒ 3D: BẬT (Giai đoạn 5 - Lập bản đồ ngữ nghĩa Semantic SLAM)
 WEB      = ON   # 7. WEB COCKPIT: BẬT (Mở cổng 8080 để lái xe bằng phím W-A-S-D)
+BRAKE    = OFF  # 8. PHANH KHẨN CẤP: TẮT TẠM THỜI (Tránh lỗi file detect phát hiện nhầm làm ngắt quay xe)
 # ══════════════════════════════════════════════════════════════════════════════
 
 def to_bool(val):
@@ -138,7 +139,7 @@ class JetBotMasterSystem:
                 invert_linear=getattr(self.flags, 'invert_linear', getattr(config, 'INVERT_LINEAR', False)),
                 invert_left=getattr(config, 'INVERT_LEFT_MOTOR', False),
                 invert_right=getattr(config, 'INVERT_RIGHT_MOTOR', False),
-                enable_brake=getattr(config, 'ENABLE_SAFETY_BRAKE', True)
+                enable_brake=bool(getattr(self.flags, 'brake', getattr(config, 'ENABLE_SAFETY_BRAKE', False)))
             )
 
         # 2. Khởi tạo Module Pin
@@ -168,11 +169,14 @@ class JetBotMasterSystem:
             print("🎯 [HRI] Đã kích hoạt tính năng Tự hành Bám người!")
 
         # 6. Khởi tạo Module Phanh khẩn cấp & Cản ảo 3D (Độc lập, dễ kiểm thử)
+        brake_active = bool(getattr(self.flags, 'brake', getattr(config, 'ENABLE_SAFETY_BRAKE', False)))
         self.safety_brake = EmergencyBrake(
             brake_dist_m=getattr(config, 'SAFETY_BRAKE_DIST_M', 0.20),
             warning_dist_m=getattr(config, 'SAFETY_WARNING_DIST_M', 0.40),
-            is_enabled=getattr(config, 'ENABLE_SAFETY_BRAKE', True)
+            is_enabled=brake_active
         )
+        if not brake_active:
+            print("🛡️ [SAFETY] Phanh khẩn cấp: TẠM THỜI TẮT (Cho phép xe quay/di chuyển tự do không bị ngắt quãng)")
 
         # 7. Khởi tạo Module Bản đồ Chiếm dụng 2D Tích Lũy Tĩnh & Ghim Vật Thể (Occupancy SLAM)
         self.mapper = OccupancySLAM(size_m=10.0, resolution=0.05) if self.flags.mapper else None
@@ -577,11 +581,11 @@ class JetBotMasterSystem:
                 obs_cm = f"{self.obstacle_distance*100:.1f} cm" if self.obstacle_distance is not None else "< 20cm"
                 print(f"🚨 [PHANH KHẨN CẤP] Cản cách {obs_cm} (< {threshold_cm}cm) -> Đã ngắt tiến, chỉ cho phép lùi/quay!")
 
-        # 2. Can thiệp phanh khẩn cấp cứng:
-        # Nếu cản nguy hiểm (<= 20cm) và đang nhấn TIẾN -> Khóa lệnh tiến, chỉ cho phép lùi (v < 0) hoặc quay (w != 0)
-        if (v > 0.01) and (self.obstacle_distance is not None and self.obstacle_distance <= brake_thresh):
-            v = 0.0
-            print(f"🛑 [KHÓA LỆNH TIẾN] Cản cách {self.obstacle_distance*100:.1f} cm (<= {int(brake_thresh*100)}cm). Cho phép LÙI hoặc QUAY để thoát cản!")
+        # 2. Can thiệp phanh khẩn cấp cứng (chỉ khi tính năng phanh khẩn cấp được bật):
+        if self.safety_brake and getattr(self.safety_brake, 'is_enabled', False):
+            if (v > 0.01) and (self.obstacle_distance is not None and self.obstacle_distance <= brake_thresh):
+                v = 0.0
+                print(f"🛑 [KHÓA LỆNH TIẾN] Cản cách {self.obstacle_distance*100:.1f} cm (<= {int(brake_thresh*100)}cm). Cho phép LÙI hoặc QUAY để thoát cản!")
 
         # 3. Cập nhật vận tốc tức thời cho vòng lặp Dead-Reckoning
         with self.lock:
@@ -1094,10 +1098,11 @@ class JetBotMasterSystem:
             now = time.time()
             elapsed = now - start_time
 
-            # 1. Chốt chặn an toàn: Vật cản sát mũi xe hoặc người dùng lái tay
-            if self.obstacle_distance is not None and self.obstacle_distance <= 0.16:
-                print(f"🛑 [AUTO SCAN 360°] Phát hiện vật cản sát mũi xe ({self.obstacle_distance*100:.0f}cm) -> Dừng an toàn!")
-                break
+            # 1. Chốt chặn an toàn: Vật cản sát mũi xe (chỉ kích hoạt khi phanh khẩn cấp được bật) hoặc người dùng lái tay
+            if self.safety_brake and getattr(self.safety_brake, 'is_enabled', False):
+                if self.obstacle_distance is not None and self.obstacle_distance <= 0.16:
+                    print(f"🛑 [AUTO SCAN 360°] Phát hiện vật cản sát mũi xe ({self.obstacle_distance*100:.0f}cm) -> Dừng an toàn!")
+                    break
             if (now - self.last_manual_drive_time < 0.40):
                 print("🛑 [AUTO SCAN 360°] Người dùng can thiệp lái tay -> Dừng quét tự động.")
                 break
@@ -1234,6 +1239,10 @@ def parse_arguments():
     parser.add_argument('--no-mapper', action='store_false', dest='mapper')
     parser.add_argument('--web', action='store_true', dest='web', default=None)
     parser.add_argument('--no-web', action='store_false', dest='web')
+    parser.add_argument('--brake', action='store_true', dest='brake', default=None,
+                        help="Bật tính năng phanh khẩn cấp tự động Virtual Bumper")
+    parser.add_argument('--no-brake', action='store_false', dest='brake',
+                        help="Tạm thời tắt phanh khẩn cấp để tránh lỗi detect làm ngắt quay xe")
     args = parser.parse_args()
 
     # Mặc định lấy theo biến khai báo ON/OFF ở đầu file main.py & config:
@@ -1246,6 +1255,7 @@ def parse_arguments():
     if args.follower is None: args.follower = to_bool(FOLLOWER)
     if args.mapper is None: args.mapper = to_bool(MAPPER)
     if args.web is None: args.web = to_bool(WEB)
+    if args.brake is None: args.brake = to_bool(BRAKE) if 'BRAKE' in globals() else getattr(config, 'ENABLE_SAFETY_BRAKE', False)
     return args
 
 
@@ -1268,7 +1278,7 @@ def main():
     print(f"  ├─ Đo Pin (INA219 0x41):    {'BẬT' if args.battery else 'TẮT'}")
     print(f"  ├─ Camera OAK-D S2:         {'BẬT (Trực tiếp USB & Tự động phát ROS Topics)' if args.camera else 'TẮT'}")
     print(f"  ├─ Spatial AI:              {'BẬT (HOG People Detector & 3D Depth Spatial Clustering)' if args.yolo else 'TẮT'}")
-    print(f"  ├─ Phanh khẩn cấp:          BẬT (< 25cm khóa tiến, cho phép lùi/quay)")
+    print(f"  ├─ Phanh khẩn cấp:          {'BẬT (< 20cm)' if args.brake else 'TẮT (Tạm thời tắt để phục vụ test quay xe)'}")
     print(f"  ├─ Bám người (Follower):    {'BẬT' if args.follower else 'TẮT (Ưu tiên lái tay)'}")
     print(f"  ├─ Bản đồ ngữ nghĩa 3D:     {'BẬT' if args.mapper else 'TẮT'}")
     print(f"  └─ Web Cockpit (Port 8080): {'BẬT (http://0.0.0.0:8080)' if args.web else 'TẮT'}")
