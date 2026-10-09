@@ -94,14 +94,10 @@ class CameraStreamer:
         self._cached_oak_frame = None
         self.latest_vpu_detections = []
 
-        # Cảm biến quán tính IMU tích hợp trên OAK-D S2 (BNO086 / BMI270)
-        self._oak_q_imu = None
-        self.has_imu = False
-        self.latest_imu_yaw = 0.0
-        self.latest_imu_gyro_z = 0.0
-        self.latest_imu_quat = None
-        self.imu_accumulated_yaw = 0.0
-        self._last_raw_imu_yaw = None
+        # Đồng bộ luồng phát hình ảnh độ trễ thấp (Zero Latency Event & ID)
+        import threading
+        self.frame_id = 0
+        self.new_frame_event = threading.Event()
 
         # Khóa vòng lặp thị giác & Con quay hình ảnh (Visual Gyroscope & Anchor Loop Closure)
         self.anchor_registered = False
@@ -113,10 +109,10 @@ class CameraStreamer:
         self._last_track_gray = None
         self._prev_vis_gray = None
 
-        # Đồng bộ luồng phát hình ảnh độ trễ thấp (Zero Latency Event & ID)
-        import threading
-        self.frame_id = 0
-        self.new_frame_event = threading.Event()
+        # Cảm biến quán tính IMU phần cứng (nếu có)
+        self.has_imu = False
+        self.latest_imu_yaw = 0.0
+        self.imu_accumulated_yaw = 0.0
 
         # Cache tính toán Camera Nhiệt siêu tốc (< 2.5ms, FPS > 30)
         self._spatial_heat_cache = None
@@ -200,19 +196,6 @@ class CameraStreamer:
                     cam_rgb.setFps(30)
                     self._oak_q_rgb = cam_rgb.preview.createOutputQueue(maxSize=1, blocking=False)
 
-                # Thử kích hoạt IMU trên DepthAI v3
-                try:
-                    imu_node = pipeline.create(dai.node.IMU)
-                    if hasattr(dai, 'IMUSensor') and hasattr(dai.IMUSensor, 'GAME_ROTATION_VECTOR'):
-                        imu_node.enableIMUSensor(dai.IMUSensor.GAME_ROTATION_VECTOR, 100)
-                    elif hasattr(dai, 'IMUSensor') and hasattr(dai.IMUSensor, 'ROTATION_VECTOR'):
-                        imu_node.enableIMUSensor(dai.IMUSensor.ROTATION_VECTOR, 100)
-                    self._oak_q_imu = imu_node.out.createOutputQueue(maxSize=10, blocking=False)
-                    self.has_imu = True
-                except Exception:
-                    self._oak_q_imu = None
-                    self.has_imu = False
-
                 pipeline.start()
                 self._oak_pipeline = pipeline
                 self.is_oak_connected = True
@@ -256,13 +239,9 @@ class CameraStreamer:
                     print(f"⚠️ [OAK-D USB] Bỏ qua Stereo Depth: {ex_stereo}")
                     has_stereo = False
 
-                # Tích hợp mô hình VPU Spatial Detection Network nếu có sẵn blob trên Jetson Nano hoặc PC
+                # Tích hợp mô hình VPU Spatial Detection Network nếu có sẵn blob trên Jetson Nano
                 has_vpu_nn = False
-                res_blob = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "resources", "mobilenet-ssd.blob")
-                cache_blob = os.path.join(os.path.expanduser("~"), ".cache", "blobconverter", "mobilenet-ssd_openvino_2022.1_6shave.blob")
                 blob_candidates = [
-                    res_blob,
-                    cache_blob,
                     "/home/jetbot/catkin_ws/src/depthai-ros/depthai_examples/resources/mobilenet-ssd_openvino_2021.2_6shave.blob",
                 ]
                 chosen_blob = None
@@ -270,12 +249,6 @@ class CameraStreamer:
                     if os.path.exists(b_path):
                         chosen_blob = b_path
                         break
-                if chosen_blob is None:
-                    try:
-                        import blobconverter
-                        chosen_blob = blobconverter.from_zoo(name="mobilenet-ssd", shaves=6)
-                    except Exception:
-                        pass
 
                 if chosen_blob is not None and has_stereo:
                     try:
@@ -284,8 +257,8 @@ class CameraStreamer:
                         spatial_nn.setConfidenceThreshold(0.25)
                         spatial_nn.input.setBlocking(False)
                         spatial_nn.setBoundingBoxScaleFactor(0.5)
-                        spatial_nn.setDepthLowerThreshold(60)    # 6cm (hỗ trợ cản áp sát)
-                        spatial_nn.setDepthUpperThreshold(2000)  # 2m (chống loạn camera)
+                        spatial_nn.setDepthLowerThreshold(100)   # 10cm
+                        spatial_nn.setDepthUpperThreshold(5000)  # 5m
 
                         manip = pipeline.create(dai.node.ImageManip)
                         manip.initialConfig.setResize(300, 300)
@@ -305,30 +278,11 @@ class CameraStreamer:
                         print(f"ℹ️ [OAK-D VPU] Bỏ qua nạp VPU NN ({ex_nn}), sử dụng thị giác tiêu chuẩn.")
                         has_vpu_nn = False
 
-                # Tích hợp cảm biến quán tính IMU phần cứng trên OAK-D S2 (BNO086 / BMI270)
-                has_imu = False
-                try:
-                    imu = pipeline.create(dai.node.IMU)
-                    if hasattr(dai, 'IMUSensor') and hasattr(dai.IMUSensor, 'GAME_ROTATION_VECTOR'):
-                        imu.enableIMUSensor(dai.IMUSensor.GAME_ROTATION_VECTOR, 100)
-                    elif hasattr(dai, 'IMUSensor') and hasattr(dai.IMUSensor, 'ROTATION_VECTOR'):
-                        imu.enableIMUSensor(dai.IMUSensor.ROTATION_VECTOR, 100)
-                    if hasattr(dai, 'IMUSensor') and hasattr(dai.IMUSensor, 'GYROSCOPE_CALIBRATED'):
-                        imu.enableIMUSensor(dai.IMUSensor.GYROSCOPE_CALIBRATED, 100)
-                    imu.setBatchReportThreshold(1)
-                    imu.setMaxBatchReports(10)
-                    xout_imu = pipeline.create(dai.node.XLinkOut)
-                    xout_imu.setStreamName("imu")
-                    imu.out.link(xout_imu.input)
-                    has_imu = True
-                except Exception as ex_imu:
-                    has_imu = False
-
                 try:
                     device = dai.Device(pipeline)
                 except Exception as ex_dev:
-                    if has_vpu_nn or has_imu:
-                        print(f"⚠️ [OAK-D VPU/IMU] Thử lại pipeline cơ bản ({ex_dev}). Khởi chạy RGB + Stereo Depth thuần túy!")
+                    if has_vpu_nn:
+                        print(f"⚠️ [OAK-D VPU] Runtime không khớp blob VPU ({ex_dev}). Khởi chạy RGB + Stereo Depth thuần túy!")
                         pipeline = dai.Pipeline()
                         cam_rgb = pipeline.create(dai.node.ColorCamera)
                         cam_rgb.setPreviewSize(640, 480)
@@ -357,7 +311,6 @@ class CameraStreamer:
                             stereo.depth.link(xout_raw_depth.input)
                         device = dai.Device(pipeline)
                         has_vpu_nn = False
-                        has_imu = False
                     else:
                         raise ex_dev
 
@@ -371,18 +324,6 @@ class CameraStreamer:
                     self._oak_q_nn = device.getOutputQueue(name="nn", maxSize=1, blocking=False)
                 else:
                     self._oak_q_nn = None
-                if has_imu:
-                    try:
-                        self._oak_q_imu = device.getOutputQueue(name="imu", maxSize=10, blocking=False)
-                        self.has_imu = True
-                        print("🧭 [OAK-D IMU] Đã kích hoạt Cảm biến Quán tính IMU tích hợp (100 Hz Yaw Tracker)!")
-                    except Exception:
-                        self._oak_q_imu = None
-                        self.has_imu = False
-                else:
-                    self._oak_q_imu = None
-                    self.has_imu = False
-
                 self.is_oak_connected = True
                 print("✅ [OAK-D USB] Đã kích hoạt Camera OAK-D S2 trực tiếp trên Jetson Nano thành công!")
                 return True
@@ -424,8 +365,6 @@ class CameraStreamer:
                 pass
             self._cap = None
         self._oak_q_nn = None
-        self._oak_q_imu = None
-        self.has_imu = False
         self._cached_oak_frame = None
         self.is_oak_connected = False
 
@@ -437,7 +376,6 @@ class CameraStreamer:
             in_rgb = self._oak_q_rgb.tryGet() if self._oak_q_rgb else None
             in_depth = self._oak_q_raw_depth.tryGet() if self._oak_q_raw_depth else None
             in_nn = self._oak_q_nn.tryGet() if getattr(self, '_oak_q_nn', None) else None
-            in_imu = self._oak_q_imu.tryGet() if getattr(self, '_oak_q_imu', None) else None
 
             frame = None
             if in_rgb is not None:
@@ -450,34 +388,6 @@ class CameraStreamer:
             if depth is not None:
                 self.latest_oak_depth = depth
 
-            # Đọc cảm biến quán tính IMU tích hợp trên OAK-D S2
-            if in_imu is not None and hasattr(in_imu, 'packets'):
-                for pkt in in_imu.packets:
-                    rv = getattr(pkt, 'rotationVector', None) or getattr(pkt, 'gameRotationVector', None)
-                    if rv is not None:
-                        qx = float(getattr(rv, 'i', getattr(rv, 'x', 0.0)))
-                        qy = float(getattr(rv, 'j', getattr(rv, 'y', 0.0)))
-                        qz = float(getattr(rv, 'k', getattr(rv, 'z', 0.0)))
-                        qw = float(getattr(rv, 'real', getattr(rv, 'w', 1.0)))
-                        self.latest_imu_quat = (qw, qx, qy, qz)
-
-                        # Quy đổi Quaternion sang góc Yaw Euler quanh trục Z thẳng đứng
-                        siny = 2.0 * (qw * qz + qx * qy)
-                        cosy = 1.0 - 2.0 * (qy * qy + qz * qz)
-                        curr_raw_yaw = math.atan2(siny, cosy)
-                        self.latest_imu_yaw = curr_raw_yaw
-
-                        # Tích phân góc quay không giới hạn (Unwrapped continuous yaw)
-                        if self._last_raw_imu_yaw is not None:
-                            dyaw = curr_raw_yaw - self._last_raw_imu_yaw
-                            dyaw = math.atan2(math.sin(dyaw), math.cos(dyaw))
-                            self.imu_accumulated_yaw += dyaw
-                        self._last_raw_imu_yaw = curr_raw_yaw
-
-                    gyro = getattr(pkt, 'gyroscope', None)
-                    if gyro is not None:
-                        self.latest_imu_gyro_z = float(getattr(gyro, 'z', 0.0))
-
             # Xử lý kết quả nhận diện từ chip VPU OAK-D
             if in_nn is not None and hasattr(in_nn, 'detections'):
                 vpu_dets = []
@@ -486,12 +396,6 @@ class CameraStreamer:
                     x_m = round(float(d.spatialCoordinates.x) / 1000.0, 2)
                     y_m = round(float(d.spatialCoordinates.y) / 1000.0, 2)
                     z_m = round(float(d.spatialCoordinates.z) / 1000.0, 2)
-                    if z_m < 0.06:
-                        z_m = 0.15
-                    # Giới hạn bán kính 2.0m chống loạn camera
-                    if z_m > 2.0 or (x_m * x_m + z_m * z_m > 4.0):
-                        continue
-
                     bx = max(0, min(640, int(d.xmin * 640)))
                     by = max(0, min(480, int(d.ymin * 480)))
                     bw = max(10, min(640 - bx, int((d.xmax - d.xmin) * 640)))
@@ -585,20 +489,12 @@ class CameraStreamer:
                 cap = cv2.VideoCapture(0)
 
             if cap.isOpened():
-                try:
-                    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'))
-                except Exception:
-                    pass
                 cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
                 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
                 cap.set(cv2.CAP_PROP_FPS, 30)
-                try:
-                    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-                except Exception:
-                    pass
                 self._cap = cap
                 self._cap_failed = False
-                print("📹 [WEBCAM] Đã kết nối Webcam Laptop (MJPG 30 FPS, Zero-Latency Buffer) thành công!")
+                print("📹 [WEBCAM] Đã kết nối Webcam Laptop thành công!")
                 return self._cap
             else:
                 cap.release()
@@ -641,8 +537,12 @@ class CameraStreamer:
             oak_frame, oak_depth = self.read_oak_frame()
             if oak_frame is not None:
                 return oak_frame, (oak_depth if oak_depth is not None else self.latest_oak_depth), "OAK-D S2 (USB LIVE)"
+            elif getattr(self, '_cached_oak_frame', None) is not None:
+                # OAK-D đang chờ frame kế tiếp trong chu kỳ 30 FPS:
+                # Trả về cached frame để AI inference và an toàn không bị gián đoạn
+                return self._cached_oak_frame, self.latest_oak_depth, "OAK-D S2 (USB LIVE)"
             else:
-                return None, self.latest_oak_depth, "OAK-D S2 (USB LIVE)"
+                return None, self.latest_oak_depth, "OAK-D S2 (CONNECTING)"
 
         # Chỉ khi OAK-D không cắm hoặc mất kết nối hoàn toàn mới dùng Webcam Laptop
         lap_frame = self.read_laptop_frame()
@@ -997,7 +897,7 @@ class CameraStreamer:
         scan_pts = []
         for u in u_cols:
             col_z = v_slice[:, u].astype(np.float32) / 1000.0
-            valid_mask = (col_z >= 0.06) & (col_z <= 2.0)
+            valid_mask = (col_z > 0.15) & (col_z < 3.5)
             if not np.any(valid_mask):
                 continue
 

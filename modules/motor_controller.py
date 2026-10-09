@@ -183,7 +183,7 @@ class MotorController:
     """Bộ điều khiển động cơ vi sai với Phanh an toàn, Watchdog & Đảo kênh chuẩn Waveshare"""
     def __init__(self, bus_num=1, addr=0x60, wheel_sep=0.12, max_v=0.35, max_w=1.20, brake_dist=0.35,
                  swap_motors=False, invert_linear=False, invert_left=False, invert_right=False,
-                 enable_brake=False):
+                 enable_brake=True):
         self.wheel_sep = wheel_sep
         self.max_v = max_v
         self.max_w = max_w

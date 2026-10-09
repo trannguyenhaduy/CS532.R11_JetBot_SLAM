@@ -29,7 +29,7 @@ YOLO     = ON   # 4. AI NHẬN DIỆN: BẬT (Giai đoạn 3 - Bộ lọc đối
 FOLLOWER = OFF  # 5. BÁM NGƯỜI: Tắt (Tạm thời bỏ qua theo yêu cầu để làm sau)
 MAPPER   = ON   # 6. BẢN ĐỒ 3D: BẬT (Giai đoạn 5 - Lập bản đồ ngữ nghĩa Semantic SLAM)
 WEB      = ON   # 7. WEB COCKPIT: BẬT (Mở cổng 8080 để lái xe bằng phím W-A-S-D)
-BRAKE    = OFF  # 8. PHANH KHẨN CẤP: TẮT TẠM THỜI (Tránh lỗi file detect phát hiện nhầm làm ngắt quay xe)
+BRAKE    = ON   # 8. PHANH KHẨN CẤP: BẬT (Virtual Bumper cản < 20cm khóa tiến)
 # ══════════════════════════════════════════════════════════════════════════════
 
 def to_bool(val):
@@ -1278,7 +1278,7 @@ def main():
     print(f"  ├─ Đo Pin (INA219 0x41):    {'BẬT' if args.battery else 'TẮT'}")
     print(f"  ├─ Camera OAK-D S2:         {'BẬT (Trực tiếp USB & Tự động phát ROS Topics)' if args.camera else 'TẮT'}")
     print(f"  ├─ Spatial AI:              {'BẬT (HOG People Detector & 3D Depth Spatial Clustering)' if args.yolo else 'TẮT'}")
-    print(f"  ├─ Phanh khẩn cấp:          {'BẬT (< 20cm)' if args.brake else 'TẮT (Tạm thời tắt để phục vụ test quay xe)'}")
+    print(f"  ├─ Phanh khẩn cấp:          {'BẬT (< 20cm khóa tiến, cho phép lùi/quay)' if args.brake else 'TẮT'}")
     print(f"  ├─ Bám người (Follower):    {'BẬT' if args.follower else 'TẮT (Ưu tiên lái tay)'}")
     print(f"  ├─ Bản đồ ngữ nghĩa 3D:     {'BẬT' if args.mapper else 'TẮT'}")
     print(f"  └─ Web Cockpit (Port 8080): {'BẬT (http://0.0.0.0:8080)' if args.web else 'TẮT'}")
