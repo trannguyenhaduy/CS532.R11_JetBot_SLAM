@@ -1,128 +1,534 @@
 <!DOCTYPE html>
 <html lang="vi">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>JetBot 3D Semantic SLAM Cockpit</title>
-  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet">
+  <link
+    href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Rajdhani:wght@500;600;700&display=swap"
+    rel="stylesheet">
   <!-- Three.js + OrbitControls -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
   <style>
     :root {
-      --bg: #07090e; --card-bg: rgba(14, 20, 32, 0.8); --border: rgba(0, 240, 255, 0.25);
-      --cyan: #00f0ff; --emerald: #00ffa3; --amber: #ffb800; --rose: #ff2a6d; --purple: #b537f2;
-      --text: #e0f2fe; --dim: #64748b;
+      --bg: #07090e;
+      --card-bg: rgba(14, 20, 32, 0.8);
+      --border: rgba(0, 240, 255, 0.25);
+      --cyan: #00f0ff;
+      --emerald: #00ffa3;
+      --amber: #ffb800;
+      --rose: #ff2a6d;
+      --purple: #b537f2;
+      --text: #e0f2fe;
+      --dim: #64748b;
     }
-    * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+    }
+
     body {
-      background: var(--bg); color: var(--text); font-family: 'Rajdhani', sans-serif;
-      min-height: 100vh; overflow-x: hidden;
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Rajdhani', sans-serif;
+      min-height: 100vh;
+      overflow-x: hidden;
       background-image: radial-gradient(ellipse at 15% 20%, rgba(0, 240, 255, 0.08) 0%, transparent 40%);
     }
+
     header {
-      padding: 10px 24px; display: flex; justify-content: space-between; align-items: center;
-      border-bottom: 1px solid var(--border); backdrop-filter: blur(12px); background: rgba(7, 9, 14, 0.9);
-      position: sticky; top: 0; z-index: 100;
+      padding: 10px 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid var(--border);
+      backdrop-filter: blur(12px);
+      background: rgba(7, 9, 14, 0.9);
+      position: sticky;
+      top: 0;
+      z-index: 100;
     }
+
     .brand {
-      display: flex; align-items: center; gap: 10px; font-family: 'Orbitron', monospace; font-size: 1.15rem;
-      font-weight: 900; color: var(--cyan); text-shadow: 0 0 16px rgba(0, 240, 255, 0.5);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-family: 'Orbitron', monospace;
+      font-size: 1.15rem;
+      font-weight: 900;
+      color: var(--cyan);
+      text-shadow: 0 0 16px rgba(0, 240, 255, 0.5);
     }
-    .pulse-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--emerald); box-shadow: 0 0 10px var(--emerald); animation: pulse 1.8s infinite; }
-    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
-    .telemetry { display: flex; gap: 12px; }
-    .stat-box { background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 4px 12px; text-align: center; }
-    .stat-label { font-size: 0.6rem; color: var(--dim); text-transform: uppercase; }
-    .stat-val { font-family: 'Orbitron', monospace; font-size: 0.95rem; font-weight: 700; color: #fff; }
-    
-    .batt-box { min-width: 215px; text-align: left; padding: 4px 10px; }
-    .batt-header { display: flex; justify-content: space-between; align-items: center; }
-    .batt-badge { font-size: 0.6rem; padding: 1px 6px; border-radius: 4px; font-weight: 700; background: rgba(0, 255, 163, 0.15); color: var(--emerald); border: 1px solid var(--emerald); }
-    .batt-badge.low { background: rgba(255, 184, 0, 0.2); color: var(--amber); border-color: var(--amber); }
-    .batt-badge.critical { background: rgba(255, 42, 109, 0.2); color: var(--rose); border-color: var(--rose); animation: pulse 0.8s infinite; }
-    .batt-sub { font-size: 0.62rem; color: var(--dim); margin-top: 1px; font-family: 'Space Grotesk', sans-serif; white-space: nowrap; }
-    .batt-bar-bg { width: 100%; height: 5px; background: rgba(255,255,255,0.08); border-radius: 3px; overflow: hidden; margin-top: 3px; }
-    .batt-bar-fill { height: 100%; width: 100%; background: var(--emerald); border-radius: 3px; transition: width 0.3s ease, background 0.3s ease; }
-    
-    .grid { display: grid; grid-template-columns: 1.2fr 0.8fr; gap: 16px; padding: 16px; max-width: 1600px; margin: 0 auto; }
-    @media (max-width: 1000px) { .grid { grid-template-columns: 1fr; } }
-    .card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; }
+
+    .pulse-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--emerald);
+      box-shadow: 0 0 10px var(--emerald);
+      animation: pulse 1.8s infinite;
+    }
+
+    @keyframes pulse {
+
+      0%,
+      100% {
+        opacity: 1;
+      }
+
+      50% {
+        opacity: 0.3;
+      }
+    }
+
+    .telemetry {
+      display: flex;
+      gap: 12px;
+    }
+
+    .stat-box {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 4px 12px;
+      text-align: center;
+    }
+
+    .stat-label {
+      font-size: 0.6rem;
+      color: var(--dim);
+      text-transform: uppercase;
+    }
+
+    .stat-val {
+      font-family: 'Orbitron', monospace;
+      font-size: 0.95rem;
+      font-weight: 700;
+      color: #fff;
+    }
+
+    .batt-box {
+      min-width: 215px;
+      text-align: left;
+      padding: 4px 10px;
+    }
+
+    .batt-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .batt-badge {
+      font-size: 0.6rem;
+      padding: 1px 6px;
+      border-radius: 4px;
+      font-weight: 700;
+      background: rgba(0, 255, 163, 0.15);
+      color: var(--emerald);
+      border: 1px solid var(--emerald);
+    }
+
+    .batt-badge.low {
+      background: rgba(255, 184, 0, 0.2);
+      color: var(--amber);
+      border-color: var(--amber);
+    }
+
+    .batt-badge.critical {
+      background: rgba(255, 42, 109, 0.2);
+      color: var(--rose);
+      border-color: var(--rose);
+      animation: pulse 0.8s infinite;
+    }
+
+    .batt-sub {
+      font-size: 0.62rem;
+      color: var(--dim);
+      margin-top: 1px;
+      font-family: 'Space Grotesk', sans-serif;
+      white-space: nowrap;
+    }
+
+    .batt-bar-bg {
+      width: 100%;
+      height: 5px;
+      background: rgba(255, 255, 255, 0.08);
+      border-radius: 3px;
+      overflow: hidden;
+      margin-top: 3px;
+    }
+
+    .batt-bar-fill {
+      height: 100%;
+      width: 100%;
+      background: var(--emerald);
+      border-radius: 3px;
+      transition: width 0.3s ease, background 0.3s ease;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1.2fr 0.8fr;
+      gap: 16px;
+      padding: 16px;
+      max-width: 1600px;
+      margin: 0 auto;
+    }
+
+    @media (max-width: 1000px) {
+      .grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
     .card-hdr {
-      padding: 10px 16px; border-bottom: 1px solid rgba(255,255,255,0.06);
-      display: flex; justify-content: space-between; align-items: center;
-      font-family: 'Orbitron', monospace; font-size: 0.85rem; color: var(--cyan);
+      padding: 10px 16px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-family: 'Orbitron', monospace;
+      font-size: 0.85rem;
+      color: var(--cyan);
     }
+
     .tab-btn {
-      background: rgba(0, 240, 255, 0.1); border: 1px solid var(--cyan); color: var(--cyan);
-      padding: 3px 10px; border-radius: 4px; font-size: 0.75rem; cursor: pointer; margin-left: 6px;
+      background: rgba(0, 240, 255, 0.1);
+      border: 1px solid var(--cyan);
+      color: var(--cyan);
+      padding: 3px 10px;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      cursor: pointer;
+      margin-left: 6px;
     }
-    .tab-btn.active { background: var(--cyan); color: #000; font-weight: 700; }
-    
-    .viewport { position: relative; width: 100%; height: 420px; background: #000; overflow: hidden; }
-    .viewport img { width: 100%; height: 100%; object-fit: contain; }
-    #three-viewport { width: 100%; height: 100%; cursor: grab; }
-    #three-viewport:active { cursor: grabbing; }
-    .canvas-map { width: 100%; height: 100%; background: #070b12; cursor: grab; display: block; touch-action: none; }
-    .canvas-map:active { cursor: grabbing; }
+
+    .tab-btn.active {
+      background: var(--cyan);
+      color: #000;
+      font-weight: 700;
+    }
+
+    /* Thanh trượt tốc độ bước - Range Input */
+    input[type=range]#step-speed-slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: var(--amber);
+      border: 2px solid #070b12;
+      box-shadow: 0 0 8px rgba(255, 184, 0, 0.7);
+      cursor: pointer;
+      transition: box-shadow 0.15s;
+    }
+
+    input[type=range]#step-speed-slider::-webkit-slider-thumb:hover {
+      box-shadow: 0 0 14px rgba(255, 184, 0, 1.0);
+    }
+
+    input[type=range]#step-speed-slider::-moz-range-thumb {
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: var(--amber);
+      border: 2px solid #070b12;
+      box-shadow: 0 0 8px rgba(255, 184, 0, 0.7);
+      cursor: pointer;
+    }
+
+    .viewport {
+      position: relative;
+      width: 100%;
+      height: 420px;
+      background: #000;
+      overflow: hidden;
+    }
+
+    .viewport img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+    }
+
+    #three-viewport {
+      width: 100%;
+      height: 100%;
+      cursor: grab;
+    }
+
+    #three-viewport:active {
+      cursor: grabbing;
+    }
+
+    .canvas-map {
+      width: 100%;
+      height: 100%;
+      background: #070b12;
+      cursor: grab;
+      display: block;
+      touch-action: none;
+    }
+
+    .canvas-map:active {
+      cursor: grabbing;
+    }
+
     .hud {
-      position: absolute; top: 10px; left: 10px; z-index: 10;
-      background: rgba(0,0,0,0.7); border: 1px solid var(--cyan); border-radius: 6px;
-      padding: 4px 10px; font-family: 'Orbitron', monospace; font-size: 0.75rem; color: var(--cyan);
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      z-index: 10;
+      background: rgba(0, 0, 0, 0.7);
+      border: 1px solid var(--cyan);
+      border-radius: 6px;
+      padding: 4px 10px;
+      font-family: 'Orbitron', monospace;
+      font-size: 0.75rem;
+      color: var(--cyan);
     }
+
     .hud-tip {
-      position: absolute; bottom: 10px; left: 10px; z-index: 10;
-      background: rgba(0,0,0,0.75); border-radius: 4px; padding: 4px 8px;
-      font-size: 0.7rem; color: var(--dim);
+      position: absolute;
+      bottom: 10px;
+      left: 10px;
+      z-index: 10;
+      background: rgba(0, 0, 0, 0.75);
+      border-radius: 4px;
+      padding: 4px 8px;
+      font-size: 0.7rem;
+      color: var(--dim);
     }
 
-    .bottom-grid { display: grid; grid-template-columns: 0.8fr 1fr 1.3fr; gap: 16px; padding: 0 16px 16px; max-width: 1600px; margin: 0 auto; }
-    @media (max-width: 1100px) { .bottom-grid { grid-template-columns: 1fr; } }
-    .dpad-container { display: flex; flex-direction: column; align-items: center; padding: 14px; gap: 6px; }
-    .dpad-row { display: flex; gap: 6px; }
-    .btn-drive { width: 70px; height: 50px; background: rgba(0, 240, 255, 0.08); border: 1px solid var(--cyan); border-radius: 8px; color: var(--cyan); font-size: 1.3rem; cursor: pointer; }
-    .btn-drive:active { background: var(--cyan); color: #000; box-shadow: 0 0 16px var(--cyan); }
-    .btn-stop { border-color: var(--rose); color: var(--rose); background: rgba(255,42,109,0.1); }
-    .radar-box { padding: 12px; display: flex; flex-direction: column; gap: 6px; max-height: 190px; overflow-y: auto; }
+    .bottom-grid {
+      display: grid;
+      grid-template-columns: 0.95fr 0.95fr 0.95fr 1.15fr;
+      gap: 14px;
+      padding: 0 16px 16px;
+      max-width: 1680px;
+      margin: 0 auto;
+    }
+
+    @media (max-width: 1300px) {
+      .bottom-grid {
+        grid-template-columns: 1fr 1fr;
+      }
+    }
+
+    @media (max-width: 800px) {
+      .bottom-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .dpad-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 14px;
+      gap: 6px;
+    }
+
+    .dpad-row {
+      display: flex;
+      gap: 6px;
+    }
+
+    .btn-drive {
+      width: 70px;
+      height: 50px;
+      background: rgba(0, 240, 255, 0.08);
+      border: 1px solid var(--cyan);
+      border-radius: 8px;
+      color: var(--cyan);
+      font-size: 1.3rem;
+      cursor: pointer;
+    }
+
+    .btn-drive:active {
+      background: var(--cyan);
+      color: #000;
+      box-shadow: 0 0 16px var(--cyan);
+    }
+
+    .btn-stop {
+      border-color: var(--rose);
+      color: var(--rose);
+      background: rgba(255, 42, 109, 0.1);
+    }
+
+    .radar-box {
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      max-height: 190px;
+      overflow-y: auto;
+    }
+
     .radar-item {
-      display: flex; justify-content: space-between; padding: 6px 10px; border-radius: 4px;
-      background: rgba(255,255,255,0.03); border-left: 3px solid var(--emerald); font-family: 'Orbitron', monospace; font-size: 0.8rem;
+      display: flex;
+      justify-content: space-between;
+      padding: 6px 10px;
+      border-radius: 4px;
+      background: rgba(255, 255, 255, 0.03);
+      border-left: 3px solid var(--emerald);
+      font-family: 'Orbitron', monospace;
+      font-size: 0.8rem;
     }
-    
-    /* Benchmark Scorecard Styles & 3 Member Evaluations */
-    .eval-tabs { display: flex; gap: 4px; }
-    .eval-tab-btn {
-      background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.18);
-      border-radius: 4px; padding: 2px 7px; color: var(--dim); font-size: 0.68rem;
-      font-family: 'Space Grotesk', sans-serif; font-weight: 600; cursor: pointer; transition: all 0.2s;
-    }
-    .eval-tab-btn:hover { color: #fff; background: rgba(255,255,255,0.12); }
-    .eval-tab-btn.active { color: var(--cyan); border-color: var(--cyan); background: rgba(0, 240, 255, 0.18); font-weight: 700; }
-    .eval-card-block {
-      background: rgba(255,255,255,0.02); border-radius: 6px; padding: 8px 10px;
-      display: flex; flex-direction: column; gap: 6px; transition: all 0.3s;
-    }
-    .eval-block-tv1 { border-left: 3px solid var(--cyan); }
-    .eval-block-tv2 { border-left: 3px solid var(--emerald); }
-    .eval-block-tv3 { border-left: 3px solid var(--purple); }
 
-    .bench-box { padding: 10px; display: flex; flex-direction: column; gap: 8px; }
-    .bench-row { display: grid; grid-template-columns: 140px 1fr 65px; align-items: center; gap: 8px; font-size: 0.75rem; }
-    .bench-lbl { color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
-    .bench-bar-bg { width: 100%; height: 7px; background: rgba(255,255,255,0.06); border-radius: 4px; overflow: hidden; }
-    .bench-bar-fill { height: 100%; transition: width 0.35s ease; border-radius: 4px; }
-    .bench-val { font-family: 'Orbitron', monospace; font-weight: 700; color: #fff; text-align: right; white-space: nowrap; font-size: 0.8rem; }
-    .bench-sub { font-size: 0.65rem; color: var(--dim); margin-top: -3px; margin-bottom: 2px; font-family: 'Space Grotesk', sans-serif; letter-spacing: 0.2px; padding-left: 2px; }
-    .bench-badge { padding: 2px 7px; border-radius: 4px; font-size: 0.70rem; font-weight: 700; background: rgba(0, 255, 163, 0.15); color: var(--emerald); border: 1px solid var(--emerald); }
-    .bench-alert { background: rgba(0, 240, 255, 0.08); border-left: 3px solid var(--cyan); padding: 5px 8px; border-radius: 4px; font-size: 0.70rem; line-height: 1.3; }
+    /* Benchmark Scorecard Styles & 3 Member Evaluations */
+    .eval-tabs {
+      display: flex;
+      gap: 4px;
+    }
+
+    .eval-tab-btn {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 4px;
+      padding: 2px 7px;
+      color: var(--dim);
+      font-size: 0.68rem;
+      font-family: 'Space Grotesk', sans-serif;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .eval-tab-btn:hover {
+      color: #fff;
+      background: rgba(255, 255, 255, 0.12);
+    }
+
+    .eval-tab-btn.active {
+      color: var(--cyan);
+      border-color: var(--cyan);
+      background: rgba(0, 240, 255, 0.18);
+      font-weight: 700;
+    }
+
+    .eval-card-block {
+      background: rgba(255, 255, 255, 0.02);
+      border-radius: 6px;
+      padding: 8px 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      transition: all 0.3s;
+    }
+
+    .eval-block-tv1 {
+      border-left: 3px solid var(--cyan);
+    }
+
+    .eval-block-tv2 {
+      border-left: 3px solid var(--emerald);
+    }
+
+    .eval-block-tv3 {
+      border-left: 3px solid var(--purple);
+    }
+
+    .bench-box {
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .bench-row {
+      display: grid;
+      grid-template-columns: 140px 1fr 65px;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.75rem;
+    }
+
+    .bench-lbl {
+      color: var(--dim);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      font-weight: 600;
+    }
+
+    .bench-bar-bg {
+      width: 100%;
+      height: 7px;
+      background: rgba(255, 255, 255, 0.06);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+
+    .bench-bar-fill {
+      height: 100%;
+      transition: width 0.35s ease;
+      border-radius: 4px;
+    }
+
+    .bench-val {
+      font-family: 'Orbitron', monospace;
+      font-weight: 700;
+      color: #fff;
+      text-align: right;
+      white-space: nowrap;
+      font-size: 0.8rem;
+    }
+
+    .bench-sub {
+      font-size: 0.65rem;
+      color: var(--dim);
+      margin-top: -3px;
+      margin-bottom: 2px;
+      font-family: 'Space Grotesk', sans-serif;
+      letter-spacing: 0.2px;
+      padding-left: 2px;
+    }
+
+    .bench-badge {
+      padding: 2px 7px;
+      border-radius: 4px;
+      font-size: 0.70rem;
+      font-weight: 700;
+      background: rgba(0, 255, 163, 0.15);
+      color: var(--emerald);
+      border: 1px solid var(--emerald);
+    }
+
+    .bench-alert {
+      background: rgba(0, 240, 255, 0.08);
+      border-left: 3px solid var(--cyan);
+      padding: 5px 8px;
+      border-radius: 4px;
+      font-size: 0.70rem;
+      line-height: 1.3;
+    }
   </style>
 </head>
+
 <body>
   <header>
     <div class="brand">
       <div class="pulse-dot"></div>
       JETBOT 3D SEMANTIC SLAM
-      <span id="sys-version-tag" style="font-size:0.68rem; margin-left:8px; padding:2px 8px; border-radius:4px; background:rgba(0,240,255,0.15); border:1px solid var(--cyan); color:var(--cyan); font-weight:700; font-family:'Rajdhani',sans-serif; letter-spacing:0.5px;">v2.4.0-SAFETY-DUAL-ROS</span>
+      <span id="sys-version-tag"
+        style="font-size:0.68rem; margin-left:8px; padding:2px 8px; border-radius:4px; background:rgba(0,240,255,0.15); border:1px solid var(--cyan); color:var(--cyan); font-weight:700; font-family:'Rajdhani',sans-serif; letter-spacing:0.5px;">v2.4.0-SAFETY-DUAL-ROS</span>
     </div>
     <div class="telemetry">
       <div class="stat-box batt-box" id="batt-container">
@@ -132,10 +538,22 @@
         </div>
         <div class="stat-val" id="batt-val">12.18 V (88%)</div>
         <div class="batt-sub" id="batt-sub">4.06V/c · 0.85A (10.4W) · ~2h 42m</div>
-        <div class="batt-bar-bg"><div class="batt-bar-fill" id="batt-bar-fill" style="width: 88%;"></div></div>
+        <div class="batt-bar-bg">
+          <div class="batt-bar-fill" id="batt-bar-fill" style="width: 88%;"></div>
+        </div>
       </div>
-      <div class="stat-box"><div class="stat-label">TỌA ĐỘ 3D (X, Y, θ)</div><div class="stat-val" id="pose-val">0.0, 0.0, 0°</div></div>
-      <div class="stat-box"><div class="stat-label">ĐIỂM 3D SLAM</div><div class="stat-val" id="pts-count" style="color:var(--emerald);">0 PTS</div></div>
+      <div class="stat-box">
+        <div class="stat-label">TỌA ĐỘ 3D (X, Y, θ)</div>
+        <div class="stat-val" id="pose-val">0.0, 0.0, 0°</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-label">ĐIỂM 3D SLAM</div>
+        <div class="stat-val" id="pts-count" style="color:var(--emerald);">0 PTS</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-label">NGUỒN ODOMETRY</div>
+        <div class="stat-val" id="odom-source-val" style="color:var(--cyan); font-size:0.85rem;">--</div>
+      </div>
     </div>
   </header>
 
@@ -147,24 +565,39 @@
         <div style="display:flex; gap:5px; align-items:center;">
           <button class="tab-btn active" id="btn-view-2d" onclick="switchView('2d')">2D GRID</button>
           <button class="tab-btn" id="btn-view-3d" onclick="switchView('3d')">3D VIEW</button>
-          <button class="tab-btn" id="btn-auto-scan" style="border-color:var(--cyan); color:var(--cyan); font-weight:700;" onclick="toggleAutoScan()" title="JetBot tự xoay chậm đều đúng 360 độ (vòng kín IMU) để quét toàn cảnh phòng">🔄 TỰ QUÉT 360°</button>
-          <button class="tab-btn" style="border-color:var(--amber); color:var(--amber);" onclick="resetMapCamera()" title="Căn giữa góc nhìn">🎯 CĂN GIỮA</button>
-          <button class="tab-btn" style="border-color:var(--emerald); color:var(--emerald);" onclick="saveMap()" title="Lưu bản đồ hiện tại">💾 LƯU BẢN ĐỒ</button>
-          <button class="tab-btn" style="border-color:var(--rose); color:var(--rose);" onclick="resetMap()" title="Xóa trắng bản đồ để tạo mới">🧹 XÓA BẢN ĐỒ</button>
+          <button class="tab-btn" id="btn-auto-scan"
+            style="border-color:var(--cyan); color:var(--cyan); font-weight:700;" onclick="toggleAutoScan()"
+            title="JetBot tự xoay chậm đều đúng 360 độ (vòng kín IMU) để quét toàn cảnh phòng">🔄 TỰ QUÉT 360°</button>
+          <button class="tab-btn" style="border-color:var(--amber); color:var(--amber);" onclick="resetMapCamera()"
+            title="Căn giữa góc nhìn">🎯 CĂN GIỮA</button>
+          <button class="tab-btn" style="border-color:var(--emerald); color:var(--emerald);" onclick="saveMap()"
+            title="Lưu bản đồ hiện tại">💾 LƯU BẢN ĐỒ</button>
+          <button class="tab-btn" style="border-color:var(--rose); color:var(--rose);" onclick="resetMap()"
+            title="Xóa trắng bản đồ để tạo mới">🧹 XÓA BẢN ĐỒ</button>
         </div>
       </div>
       <div class="viewport" id="map-viewport-container">
         <canvas id="map-canvas" class="canvas-map" style="display:block;"></canvas>
         <div id="three-viewport" style="display:none;"></div>
         <div class="hud" id="hud-info">2D OCCUPANCY GRID MAP & LASERSCAN</div>
-        <div class="hud-tip" id="hud-tip-text">💡 Kéo chuột: Di chuyển bản đồ | Cuộn: Phóng to / Thu nhỏ | Reset Cam: Căn giữa JetBot</div>
-        
+        <div class="hud-tip" id="hud-tip-text">💡 Kéo chuột: Di chuyển bản đồ | Cuộn: Phóng to / Thu nhỏ | Reset Cam:
+          Căn giữa JetBot</div>
+
         <!-- On-canvas quick controls for 2D Map -->
-        <div id="map-overlay-controls" style="position:absolute; right:12px; bottom:30px; display:flex; flex-direction:column; gap:5px; z-index:15;">
-          <button class="tab-btn" onclick="zoom2D(1.2)" style="padding:4px 8px; font-weight:bold; font-size:12px; background:rgba(10,14,23,0.85);" title="Phóng to">➕</button>
-          <button class="tab-btn" onclick="zoom2D(0.83)" style="padding:4px 8px; font-weight:bold; font-size:12px; background:rgba(10,14,23,0.85);" title="Thu nhỏ">➖</button>
-          <button class="tab-btn" id="btn-map-auto-scan" onclick="toggleAutoScan()" style="padding:4px 8px; font-size:11px; background:rgba(10,14,23,0.85); color:var(--cyan); border-color:var(--cyan); font-weight:bold;" title="JetBot tự xoay chậm đều 360° để quét bản đồ">🔄 QUÉT 360°</button>
-          <button class="tab-btn" id="btn-follow-toggle" onclick="toggleFollowRobot()" style="padding:4px 8px; font-size:11px; background:rgba(10,14,23,0.85); color:var(--cyan); border-color:var(--cyan);" title="Khóa tâm bám theo Robot">🎯 BÁM XE: BẬT</button>
+        <div id="map-overlay-controls"
+          style="position:absolute; right:12px; bottom:30px; display:flex; flex-direction:column; gap:5px; z-index:15;">
+          <button class="tab-btn" onclick="zoom2D(1.2)"
+            style="padding:4px 8px; font-weight:bold; font-size:12px; background:rgba(10,14,23,0.85);"
+            title="Phóng to">➕</button>
+          <button class="tab-btn" onclick="zoom2D(0.83)"
+            style="padding:4px 8px; font-weight:bold; font-size:12px; background:rgba(10,14,23,0.85);"
+            title="Thu nhỏ">➖</button>
+          <button class="tab-btn" id="btn-map-auto-scan" onclick="toggleAutoScan()"
+            style="padding:4px 8px; font-size:11px; background:rgba(10,14,23,0.85); color:var(--cyan); border-color:var(--cyan); font-weight:bold;"
+            title="JetBot tự xoay chậm đều 360° để quét bản đồ">🔄 QUÉT 360°</button>
+          <button class="tab-btn" id="btn-follow-toggle" onclick="toggleFollowRobot()"
+            style="padding:4px 8px; font-size:11px; background:rgba(10,14,23,0.85); color:var(--dim); border-color:var(--border);"
+            title="Khóa tâm camera bản đồ 2D theo vị trí JetBot (KHÔNG PHẢI xe bám theo người)">🔓 TÂM XE: TẮT (TỰ DO)</button>
         </div>
       </div>
     </div>
@@ -177,12 +610,14 @@
           <button class="tab-btn active" id="btn-cam-ai" onclick="switchCamMode('ai')">1. CAM AI</button>
           <button class="tab-btn" id="btn-cam-thermal" onclick="switchCamMode('thermal')">2. CAM NHIỆT</button>
         </div>
-        <span id="cam-source-badge" style="color:var(--emerald); font-size:0.75rem; white-space:nowrap; margin-left:auto;">LIVE STREAM</span>
+        <span id="cam-source-badge"
+          style="color:var(--emerald); font-size:0.75rem; white-space:nowrap; margin-left:auto;">LIVE STREAM</span>
       </div>
       <div class="viewport">
         <img id="cam-stream" src="/stream.mjpg" alt="Cho camera...">
         <!-- HUD CHẾ ĐỘ & FPS (Góc trên bên phải) -->
-        <div class="hud" id="cam-hud" style="position:absolute; top:12px; right:14px; left:auto; background:rgba(7,9,14,0.85); border:1px solid rgba(0,240,255,0.4); border-radius:8px; padding:6px 12px; font-family:'Orbitron',monospace; font-size:0.75rem; color:var(--cyan); backdrop-filter:blur(8px); pointer-events:none; z-index:10; box-shadow: 0 4px 15px rgba(0,0,0,0.5);">
+        <div class="hud" id="cam-hud"
+          style="position:absolute; top:12px; right:14px; left:auto; background:rgba(7,9,14,0.85); border:1px solid rgba(0,240,255,0.4); border-radius:8px; padding:6px 12px; font-family:'Orbitron',monospace; font-size:0.75rem; color:var(--cyan); backdrop-filter:blur(8px); pointer-events:none; z-index:10; box-shadow: 0 4px 15px rgba(0,0,0,0.5);">
           1. CAM AI · 25.0 FPS
         </div>
       </div>
@@ -192,29 +627,256 @@
   <div class="bottom-grid">
     <!-- Teleop Controls -->
     <div class="card">
+      <div class="card-hdr"
+        style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:4px;">
+        <div style="display:flex; gap:6px; align-items:center;">
+          <span style="font-weight:700;">ĐIỀU KHIỂN</span>
+          <button class="tab-btn active" id="btn-mode-wasd" onclick="switchControlMode('wasd')">🎮 WASD</button>
+          <button class="tab-btn" id="btn-mode-step" onclick="switchControlMode('step')"
+            style="color:var(--emerald); border-color:var(--emerald);">📏 BƯỚC (CM & ĐỘ)</button>
+        </div>
+        <div>
+          <button class="tab-btn active" id="btn-soft-stop-toggle" onclick="toggleSoftStop()"
+            style="font-size:0.68rem; padding:3px 9px; border-color:var(--cyan); color:var(--cyan); font-weight:700; background:rgba(0,240,255,0.12); cursor:pointer;"
+            title="Chuyển đổi giữa Dừng từ từ (êm, chống trôi xe) và Dừng tức thì (ngắt gấp)">
+            🛑 HÃM TỐC: TỪ TỪ (MỀM)
+          </button>
+        </div>
+      </div>
+
+      <!-- ════ THANH TỐC ĐỘ HỆ THỐNG ĐỒNG NHẤT (ÁP DỤNG CHO CẢ LÁI TAY WASD & BƯỚC ĐỊNH LƯỢNG) ════ -->
+      <div style="background:rgba(255,184,0,0.03); border-bottom:1px solid rgba(255,184,0,0.15); padding:6px 12px 8px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:5px;">
+          <span style="font-size:0.72rem; color:var(--amber); font-weight:700;">⚡ TỐC ĐỘ HỆ THỐNG</span>
+          <div style="display:flex; align-items:center; gap:5px;">
+            <span id="step-spd-pct-label"
+              style="font-size:0.80rem; color:var(--emerald); font-weight:800; font-family:'Orbitron',monospace; min-width:36px; text-align:right;">10%</span>
+            <span style="font-size:0.68rem; color:var(--dim);">PWM</span>
+          </div>
+        </div>
+        <!-- Thanh trượt -->
+        <div style="position:relative; padding:0 2px;">
+          <input type="range" id="step-speed-slider" min="6" max="40" value="10" step="1"
+            oninput="onStepSpeedChange(this.value)"
+            style="width:100%; height:6px; border-radius:3px; outline:none; border:none;
+                   -webkit-appearance:none; appearance:none; cursor:pointer;
+                   background: linear-gradient(to right, var(--emerald) 0%, var(--emerald) 11.8%, rgba(255,184,0,0.15) 11.8%, rgba(255,184,0,0.15) 100%);">
+        </div>
+        <!-- Nhãn min/max & Chips -->
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-top:3px;">
+          <span style="font-size:0.60rem; color:var(--emerald);">6% (Rùa bò)</span>
+          <div style="display:flex; gap:3px; flex-wrap:wrap; justify-content:center;">
+            <button class="tab-btn" id="step-spd-chip-6" onclick="setStepSpeed(6)"
+              style="padding:1px 5px; font-size:0.60rem; border-color:rgba(0,255,163,0.35); color:var(--emerald);">6%</button>
+            <button class="tab-btn" id="step-spd-chip-8" onclick="setStepSpeed(8)"
+              style="padding:1px 5px; font-size:0.60rem; border-color:rgba(0,255,163,0.35); color:var(--emerald);">8%</button>
+            <button class="tab-btn active" id="step-spd-chip-10" onclick="setStepSpeed(10)"
+              style="padding:1px 5px; font-size:0.60rem; border-color:var(--emerald); color:var(--emerald); font-weight:bold;">10%</button>
+            <button class="tab-btn" id="step-spd-chip-12" onclick="setStepSpeed(12)"
+              style="padding:1px 5px; font-size:0.60rem; border-color:rgba(255,184,0,0.35); color:var(--dim);">12%</button>
+            <button class="tab-btn" id="step-spd-chip-15" onclick="setStepSpeed(15)"
+              style="padding:1px 5px; font-size:0.60rem; border-color:rgba(255,184,0,0.35); color:var(--dim);">15%</button>
+            <button class="tab-btn" id="step-spd-chip-20" onclick="setStepSpeed(20)"
+              style="padding:1px 5px; font-size:0.60rem; border-color:rgba(255,184,0,0.35); color:var(--dim);">20%</button>
+            <button class="tab-btn" id="step-spd-chip-30" onclick="setStepSpeed(30)"
+              style="padding:1px 5px; font-size:0.60rem; border-color:rgba(255,184,0,0.35); color:var(--dim);">30%</button>
+            <button class="tab-btn" id="step-spd-chip-40" onclick="setStepSpeed(40)"
+              style="padding:1px 5px; font-size:0.60rem; border-color:rgba(255,50,50,0.45); color:var(--rose);">40%⚠</button>
+          </div>
+          <span style="font-size:0.60rem; color:var(--rose);">40%</span>
+        </div>
+        <!-- Chú thích tốc độ thực tế -->
+        <div id="step-spd-note" style="text-align:center; font-size:0.62rem; color:var(--dim); margin-top:3px;">
+          ≈ 0.10 m/s tiến/lùi (10% PWM) · 76.6°/s quay (tự bù lực 11% PWM)
+        </div>
+      </div>
+
+      <!-- 1. CHẾ ĐỘ LÁI TAY LIÊN TỤC WASD -->
+      <div id="wasd-ctrl-container">
+        <div id="brake-status-banner"
+          style="margin:8px 12px 0; padding:6px 12px; border-radius:6px; font-size:0.75rem; text-align:center; font-weight:700; border:1px solid var(--emerald); color:var(--emerald); background:rgba(0, 255, 163, 0.1);">
+          [AN TOAN] DUONG THOANG (CU LY: -- CM)
+        </div>
+        <div style="display:flex; justify-content:center; gap:6px; margin:6px 12px 0;">
+          <button class="tab-btn" id="btn-teleop-auto-scan" onclick="toggleAutoScan()"
+            style="padding:3px 12px; font-size:0.72rem; cursor:pointer; border-color:var(--cyan); color:var(--cyan); font-weight:bold; background:rgba(0,240,255,0.12);"
+            title="JetBot tự xoay chậm đều đúng 360 độ (vòng kín IMU)">🔄 TỰ QUÉT 360°</button>
+        </div>
+        <div class="dpad-container">
+          <div class="dpad-row"><button class="btn-drive" id="btn-up" onmousedown="sendDrive(speedLinear,0)"
+              onmouseup="emergencyStop()" ontouchstart="sendDrive(speedLinear,0)"
+              ontouchend="emergencyStop()">▲</button></div>
+          <div class="dpad-row">
+            <button class="btn-drive" id="btn-left" onmousedown="sendDrive(0,speedAngular)" onmouseup="emergencyStop()"
+              ontouchstart="sendDrive(0,speedAngular)" ontouchend="emergencyStop()">◀</button>
+            <button class="btn-drive btn-stop" id="btn-stop" onclick="emergencyStop()">■ DỪNG</button>
+            <button class="btn-drive" id="btn-right" onmousedown="sendDrive(0,-speedAngular)"
+              onmouseup="emergencyStop()" ontouchstart="sendDrive(0,-speedAngular)"
+              ontouchend="emergencyStop()">▶</button>
+          </div>
+          <div class="dpad-row"><button class="btn-drive" id="btn-down" onmousedown="sendDrive(-speedLinear,0)"
+              onmouseup="emergencyStop()" ontouchstart="sendDrive(-speedLinear,0)"
+              ontouchend="emergencyStop()">▼</button></div>
+        </div>
+      </div>
+
+      <!-- 2. CHẾ ĐỘ ĐIỀU KHIỂN BƯỚC ĐỊNH LƯỢNG CHUẨN XÁC (METRIC STEP TELEOP) -->
+      <div id="step-ctrl-container" style="display:none; padding:8px 12px 10px;">
+
+        <!-- Khung nhập số cm Tiến / Lùi -->
+        <div
+          style="background:rgba(255,255,255,0.02); border:1px solid rgba(0,240,255,0.18); border-radius:8px; padding:6px 10px; margin-bottom:6px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+            <span style="font-size:0.72rem; color:var(--cyan); font-weight:700;">TIẾN / LÙI (CENTIMET)</span>
+            <div style="display:flex; align-items:center; gap:4px;">
+              <input type="number" id="step-dist-input" value="20" min="1" max="500" oninput="updateStepLabels()"
+                style="width:55px; background:#070b12; border:1px solid var(--cyan); color:#fff; border-radius:4px; padding:2px 4px; font-family:'Orbitron',monospace; font-size:0.8rem; text-align:center;">
+              <span style="font-size:0.70rem; color:var(--dim);">cm</span>
+            </div>
+          </div>
+          <div style="display:flex; gap:3px; justify-content:center; flex-wrap:wrap;">
+            <button class="tab-btn" id="chip-dist-1" onclick="setStepDist(1)"
+              style="padding:1px 5px; font-size:0.65rem;">1cm</button>
+            <button class="tab-btn" id="chip-dist-2" onclick="setStepDist(2)"
+              style="padding:1px 5px; font-size:0.65rem;">2cm</button>
+            <button class="tab-btn" id="chip-dist-5" onclick="setStepDist(5)"
+              style="padding:1px 5px; font-size:0.65rem;">5cm</button>
+            <button class="tab-btn" id="chip-dist-10" onclick="setStepDist(10)"
+              style="padding:1px 5px; font-size:0.65rem;">10cm</button>
+            <button class="tab-btn active" id="chip-dist-20" onclick="setStepDist(20)"
+              style="padding:1px 5px; font-size:0.65rem;">20cm</button>
+            <button class="tab-btn" id="chip-dist-30" onclick="setStepDist(30)"
+              style="padding:1px 5px; font-size:0.65rem;">30cm</button>
+            <button class="tab-btn" id="chip-dist-40" onclick="setStepDist(40)"
+              style="padding:1px 5px; font-size:0.65rem;">40cm</button>
+            <button class="tab-btn" id="chip-dist-50" onclick="setStepDist(50)"
+              style="padding:1px 5px; font-size:0.65rem;">50cm</button>
+            <button class="tab-btn" id="chip-dist-60" onclick="setStepDist(60)"
+              style="padding:1px 5px; font-size:0.65rem;">60cm</button>
+            <button class="tab-btn" id="chip-dist-70" onclick="setStepDist(70)"
+              style="padding:1px 5px; font-size:0.65rem;">70cm</button>
+            <button class="tab-btn" id="chip-dist-80" onclick="setStepDist(80)"
+              style="padding:1px 5px; font-size:0.65rem;">80cm</button>
+            <button class="tab-btn" id="chip-dist-100" onclick="setStepDist(100)"
+              style="padding:1px 5px; font-size:0.65rem;">100cm</button>
+          </div>
+        </div>
+
+        <!-- Khung nhập số độ Quay Trái / Phải -->
+        <div
+          style="background:rgba(255,255,255,0.02); border:1px solid rgba(0,255,163,0.18); border-radius:8px; padding:6px 10px; margin-bottom:6px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+            <span style="font-size:0.72rem; color:var(--emerald); font-weight:700;">GÓC QUAY (ĐỘ °)</span>
+            <div style="display:flex; align-items:center; gap:4px;">
+              <input type="number" id="step-deg-input" value="45" min="1" max="360" oninput="updateStepLabels()"
+                style="width:55px; background:#070b12; border:1px solid var(--emerald); color:#fff; border-radius:4px; padding:2px 4px; font-family:'Orbitron',monospace; font-size:0.8rem; text-align:center;">
+              <span style="font-size:0.70rem; color:var(--dim);">độ</span>
+            </div>
+          </div>
+          <div style="display:flex; gap:3px; justify-content:center; flex-wrap:wrap;">
+            <button class="tab-btn" id="chip-deg-15" onclick="setStepDeg(15)"
+              style="padding:1px 5px; font-size:0.65rem;">15°</button>
+            <button class="tab-btn" id="chip-deg-30" onclick="setStepDeg(30)"
+              style="padding:1px 5px; font-size:0.65rem;">30°</button>
+            <button class="tab-btn active" id="chip-deg-45" onclick="setStepDeg(45)"
+              style="padding:1px 5px; font-size:0.65rem;">45°</button>
+            <button class="tab-btn" id="chip-deg-60" onclick="setStepDeg(60)"
+              style="padding:1px 5px; font-size:0.65rem;">60°</button>
+            <button class="tab-btn" id="chip-deg-90" onclick="setStepDeg(90)"
+              style="padding:1px 5px; font-size:0.65rem;">90°</button>
+            <button class="tab-btn" id="chip-deg-120" onclick="setStepDeg(120)"
+              style="padding:1px 5px; font-size:0.65rem;">120°</button>
+            <button class="tab-btn" id="chip-deg-180" onclick="setStepDeg(180)"
+              style="padding:1px 5px; font-size:0.65rem;">180°</button>
+            <button class="tab-btn" id="chip-deg-225" onclick="setStepDeg(225)"
+              style="padding:1px 5px; font-size:0.65rem;">225°</button>
+            <button class="tab-btn" id="chip-deg-270" onclick="setStepDeg(270)"
+              style="padding:1px 5px; font-size:0.65rem;">270°</button>
+            <button class="tab-btn" id="chip-deg-315" onclick="setStepDeg(315)"
+              style="padding:1px 5px; font-size:0.65rem;">315°</button>
+            <button class="tab-btn" id="chip-deg-360" onclick="setStepDeg(360)"
+              style="padding:1px 5px; font-size:0.65rem;">360°</button>
+          </div>
+        </div>
+
+
+
+        <!-- Banner trạng thái thực thi bước -->
+        <div id="step-status-banner"
+          style="margin-bottom:6px; padding:5px 8px; border-radius:6px; font-size:0.70rem; text-align:center; font-weight:700; border:1px solid var(--border); color:var(--cyan); background:rgba(0, 240, 255, 0.08);">
+          [SẴN SÀNG] SẴN SÀNG THỰC THI BƯỚC ĐỊNH LƯỢNG
+        </div>
+
+        <!-- D-Pad Bước Hành Động -->
+        <div class="dpad-container" style="padding:2px; gap:4px;">
+          <div class="dpad-row">
+            <button class="btn-drive" id="btn-step-fwd" onclick="executeStep('linear','forward')"
+              style="width:140px; height:40px; font-size:0.78rem; font-weight:700;">▲ TIẾN 20CM</button>
+          </div>
+          <div class="dpad-row">
+            <button class="btn-drive" id="btn-step-left" onclick="executeStep('turn','left')"
+              style="width:85px; height:40px; font-size:0.74rem; font-weight:700;">↺ TRÁI 45°</button>
+            <button class="btn-drive btn-stop" id="btn-step-stop" onclick="cancelStep()"
+              style="width:65px; height:40px; font-size:0.74rem; font-weight:700;">■ HỦY</button>
+            <button class="btn-drive" id="btn-step-right" onclick="executeStep('turn','right')"
+              style="width:85px; height:40px; font-size:0.74rem; font-weight:700;">↻ PHẢI 45°</button>
+          </div>
+          <div class="dpad-row">
+            <button class="btn-drive" id="btn-step-back" onclick="executeStep('linear','backward')"
+              style="width:140px; height:40px; font-size:0.78rem; font-weight:700;">▼ LÙI 20CM</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 🏁 ĐỒNG HỒ HÀNH TRÌNH CHUYẾN ĐI & HIỆU CHUẨN THƯỚC (TRIP ODOMETER) -->
+    <div class="card" id="card-trip-odometer">
       <div class="card-hdr" style="display:flex; justify-content:space-between; align-items:center;">
-        <span>DIEU KHIEN XE (W, A, S, D)</span>
-        <button id="btn-toggle-follower" class="tab-btn" onclick="toggleFollower()" style="border-color:var(--dim); color:var(--dim); font-size:0.72rem; padding:3px 8px; cursor:pointer;">
-          BAM NGUOI: TAT (BO QUA)
+        <span style="display:flex; align-items:center; gap:6px;">
+          <span>🏁</span> HÀNH TRÌNH XE (TRIP ODOMETER)
+        </span>
+        <button class="tab-btn" id="btn-reset-trip" onclick="resetTripOdometer()"
+          style="border-color:var(--amber); color:var(--amber); font-weight:700;"
+          title="Đưa toàn bộ số đo quãng đường và góc quay chuyến đi về 0">
+          🔄 RESET VỀ 0
         </button>
       </div>
-      <div id="brake-status-banner" style="margin:8px 12px 0; padding:6px 12px; border-radius:6px; font-size:0.75rem; text-align:center; font-weight:700; border:1px solid var(--emerald); color:var(--emerald); background:rgba(0, 255, 163, 0.1);">
-        [AN TOAN] DUONG THOANG (CU LY: -- CM)
-      </div>
-      <div style="display:flex; justify-content:center; gap:6px; margin:8px 12px 0; flex-wrap:wrap;">
-        <button class="tab-btn" id="spd-slow" onclick="setSpeed(0.15, 1.20, 'slow')" style="padding:3px 8px; font-size:0.72rem; cursor:pointer;">Cham (15%)</button>
-        <button class="tab-btn active" id="spd-norm" onclick="setSpeed(0.20, 1.58, 'norm')" style="padding:3px 8px; font-size:0.72rem; cursor:pointer; font-weight:bold;">Chuan (20%)</button>
-        <button class="tab-btn" id="spd-fast" onclick="setSpeed(0.25, 1.90, 'fast')" style="padding:3px 8px; font-size:0.72rem; cursor:pointer;">Nhanh (25%)</button>
-        <button class="tab-btn" id="btn-teleop-auto-scan" onclick="toggleAutoScan()" style="padding:3px 10px; font-size:0.72rem; cursor:pointer; border-color:var(--cyan); color:var(--cyan); font-weight:bold; background:rgba(0,240,255,0.12);" title="JetBot tự xoay chậm đều đúng 360 độ (vòng kín IMU)">🔄 QUÉT 360°</button>
-      </div>
-      <div class="dpad-container">
-        <div class="dpad-row"><button class="btn-drive" id="btn-up" onmousedown="sendDrive(speedLinear,0)" onmouseup="emergencyStop()" ontouchstart="sendDrive(speedLinear,0)" ontouchend="emergencyStop()">▲</button></div>
-        <div class="dpad-row">
-          <button class="btn-drive" id="btn-left" onmousedown="sendDrive(0,speedAngular)" onmouseup="emergencyStop()" ontouchstart="sendDrive(0,speedAngular)" ontouchend="emergencyStop()">◀</button>
-          <button class="btn-drive btn-stop" id="btn-stop" onclick="emergencyStop()">■ DỪNG</button>
-          <button class="btn-drive" id="btn-right" onmousedown="sendDrive(0,-speedAngular)" onmouseup="emergencyStop()" ontouchstart="sendDrive(0,-speedAngular)" ontouchend="emergencyStop()">▶</button>
+
+      <div style="padding:10px 14px; display:flex; flex-direction:column; gap:8px;">
+        <!-- Cụm hiển thị chính: Quãng đường di chuyển lớn -->
+        <div
+          style="background:rgba(0, 240, 255, 0.04); border:1px solid rgba(0, 240, 255, 0.25); border-radius:8px; padding:8px 12px; text-align:center;">
+          <div style="font-size:0.68rem; color:var(--dim); text-transform:uppercase; letter-spacing:0.5px;">QUÃNG ĐƯỜNG
+            MÁY ĐO (TRIP DISTANCE)</div>
+          <div id="trip-dist-main"
+            style="font-family:'Orbitron',monospace; font-size:1.85rem; font-weight:900; color:var(--cyan); text-shadow:0 0 16px rgba(0,240,255,0.4); margin:2px 0;">
+            0.0 cm
+          </div>
+          <div
+            style="display:flex; justify-content:space-around; align-items:center; font-size:0.68rem; color:var(--dim); border-top:1px solid rgba(255,255,255,0.06); padding-top:4px; margin-top:2px;">
+            <span>Chuẩn mét: <b id="trip-dist-m" style="color:#fff; font-family:'Orbitron',monospace;">0.000
+                m</b></span>
+            <span>Vận tốc tức thời: <b id="trip-cur-v"
+                style="color:var(--emerald); font-family:'Orbitron',monospace;">0.0 cm/s</b></span>
+          </div>
         </div>
-        <div class="dpad-row"><button class="btn-drive" id="btn-down" onmousedown="sendDrive(-speedLinear,0)" onmouseup="emergencyStop()" ontouchstart="sendDrive(-speedLinear,0)" ontouchend="emergencyStop()">▼</button></div>
+
+        <!-- Lưới 3 thông số phụ -->
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">
+          <div
+            style="background:rgba(255,255,255,0.02); border:1px solid rgba(255,255,255,0.08); border-radius:6px; padding:6px 8px;">
+            <div style="font-size:0.62rem; color:var(--dim);">GÓC QUAY TÍCH LŨY</div>
+            <div id="trip-turn-deg"
+              style="font-family:'Orbitron',monospace; font-size:1.05rem; font-weight:700; color:var(--emerald);">0.0°
+            </div>
+          </div>
+          <div
+            style="background:rgba(255,255,255,0.02); border:1px solid rgba(255,255,255,0.08); border-radius:6px; padding:6px 8px;">
+            <div style="font-size:0.62rem; color:var(--dim);">THỜI GIAN LĂN BÁNH</div>
+            <div id="trip-active-time"
+              style="font-family:'Orbitron',monospace; font-size:1.05rem; font-weight:700; color:var(--amber);">0.00 s
+            </div>
+        </div>
       </div>
     </div>
 
@@ -245,89 +907,115 @@
         <!-- 🔵 PHẦN 1: ĐÁNH GIÁ THÀNH VIÊN 1 (ĐIỀU KHIỂN & PHẦN CỨNG) -->
         <div class="eval-card-block eval-block-tv1" id="panel-tv1">
           <div style="display:flex; justify-content:space-between; align-items:center;">
-            <span style="font-weight:700; color:var(--cyan); font-size:0.75rem;">🔵 TV1: ĐIỀU KHIỂN & SỨC KHỎE PHẦN CỨNG</span>
-            <span id="badge-tv1" class="bench-badge" style="border-color:var(--cyan); color:var(--cyan); background:rgba(0,240,255,0.12);">29/30 · XUẤT SẮC</span>
+            <span style="font-weight:700; color:var(--cyan); font-size:0.75rem;">🔵 TV1: ĐIỀU KHIỂN & SỨC KHỎE PHẦN
+              CỨNG</span>
+            <span id="badge-tv1" class="bench-badge"
+              style="border-color:var(--cyan); color:var(--cyan); background:rgba(0,240,255,0.12);">29/30 · XUẤT
+              SẮC</span>
           </div>
           <div class="bench-row">
             <span class="bench-lbl">1. Sức khỏe Jetson/Pin</span>
-            <div class="bench-bar-bg"><div class="bench-bar-fill" id="bar-tv1-hw" style="width: 93%; background: var(--cyan);"></div></div>
+            <div class="bench-bar-bg">
+              <div class="bench-bar-fill" id="bar-tv1-hw" style="width: 93%; background: var(--cyan);"></div>
+            </div>
             <span class="bench-val" id="val-tv1-hw">14/15</span>
           </div>
           <div class="bench-sub" id="sub-tv1-hw">CPU: --% · RAM: --GB · Pin INA219: --V</div>
 
           <div class="bench-row">
             <span class="bench-lbl">2. Phanh ảo Virtual Bumper</span>
-            <div class="bench-bar-bg"><div class="bench-bar-fill" id="bar-tv1-motion" style="width: 100%; background: var(--emerald);"></div></div>
+            <div class="bench-bar-bg">
+              <div class="bench-bar-fill" id="bar-tv1-motion" style="width: 100%; background: var(--emerald);"></div>
+            </div>
             <span class="bench-val" id="val-tv1-motion">15/15</span>
           </div>
           <div class="bench-sub" id="sub-tv1-motion">Virtual Bumper: VÙNG AN TOÀN (Cự ly cản: --m)</div>
 
           <div class="bench-alert" style="border-left-color:var(--cyan);">
-            <span style="color:var(--cyan); font-weight:700;">📡 Chẩn đoán TV1:</span> <span id="diag-tv1-txt">Hệ thống động cơ & nguồn điện INA219 ổn định.</span>
+            <span style="color:var(--cyan); font-weight:700;">📡 Chẩn đoán TV1:</span> <span id="diag-tv1-txt">Hệ thống
+              động cơ & nguồn điện INA219 ổn định.</span>
           </div>
         </div>
 
         <!-- 🟢 PHẦN 2: THÔNG SỐ THỰC TẾ THÀNH VIÊN 2 (THỊ GIÁC BIÊN & SPATIAL AI - KHÔNG CHẤM ĐIỂM) -->
         <div class="eval-card-block eval-block-tv2" id="panel-tv2">
           <div style="display:flex; justify-content:space-between; align-items:center;">
-            <span style="font-weight:700; color:var(--emerald); font-size:0.75rem;">🟢 TV2: THÔNG SỐ THỰC TẾ CAMERA & SPATIAL AI</span>
+            <span style="font-weight:700; color:var(--emerald); font-size:0.75rem;">🟢 TV2: THÔNG SỐ THỰC TẾ CAMERA &
+              SPATIAL AI</span>
             <span id="cam-status-badge" class="bench-badge">HOẠT ĐỘNG TỐT</span>
           </div>
           <div class="bench-row">
             <span class="bench-lbl">1. Tốc độ Camera (FPS)</span>
-            <div class="bench-bar-bg"><div class="bench-bar-fill" id="bar-cam-fps" style="width: 0%; background: var(--cyan);"></div></div>
+            <div class="bench-bar-bg">
+              <div class="bench-bar-fill" id="bar-cam-fps" style="width: 0%; background: var(--cyan);"></div>
+            </div>
             <span class="bench-val" id="val-cam-fps">-- FPS</span>
           </div>
           <div class="bench-sub" id="sub-cam-fps">Chu kỳ đo thực tế: -- / 15.0 FPS</div>
 
           <div class="bench-row">
             <span class="bench-lbl">2. Độ nét ảnh / Depth</span>
-            <div class="bench-bar-bg"><div class="bench-bar-fill" id="bar-cam-clarity" style="width: 0%; background: var(--emerald);"></div></div>
+            <div class="bench-bar-bg">
+              <div class="bench-bar-fill" id="bar-cam-clarity" style="width: 0%; background: var(--emerald);"></div>
+            </div>
             <span class="bench-val" id="val-cam-clarity">--%</span>
           </div>
           <div class="bench-sub" id="sub-cam-clarity">Độ nét quang học / Stereo Depth: --%</div>
 
           <div class="bench-row">
             <span class="bench-lbl">3. Mục tiêu 5 Lớp TV2</span>
-            <div class="bench-bar-bg"><div class="bench-bar-fill" id="bar-cam-target" style="width: 0%; background: var(--purple);"></div></div>
+            <div class="bench-bar-bg">
+              <div class="bench-bar-fill" id="bar-cam-target" style="width: 0%; background: var(--purple);"></div>
+            </div>
             <span class="bench-val" id="val-cam-target">0 VẬT THỂ</span>
           </div>
           <div class="bench-sub" id="sub-cam-target">Chưa phát hiện mục tiêu trong vùng quét</div>
 
           <div class="bench-row">
             <span class="bench-lbl">4. Cự ly Vật cản Trước</span>
-            <div class="bench-bar-bg"><div class="bench-bar-fill" id="bar-cam-dist" style="width: 0%; background: var(--amber);"></div></div>
+            <div class="bench-bar-bg">
+              <div class="bench-bar-fill" id="bar-cam-dist" style="width: 0%; background: var(--amber);"></div>
+            </div>
             <span class="bench-val" id="val-cam-dist">-- MÉT</span>
           </div>
           <div class="bench-sub" id="sub-cam-dist">Topic /obstacle_distance: -- mét</div>
 
           <div class="bench-alert" style="border-left-color:var(--emerald);">
-            <span style="color:var(--emerald); font-weight:700;">📡 Trạng thái TV2:</span> <span id="cam-diag-txt">Đang thu thập thông số camera thời gian thực...</span>
+            <span style="color:var(--emerald); font-weight:700;">📡 Trạng thái TV2:</span> <span id="cam-diag-txt">Đang
+              thu thập thông số camera thời gian thực...</span>
           </div>
         </div>
 
         <!-- 🟣 PHẦN 3: ĐÁNH GIÁ THÀNH VIÊN 3 (VISUAL SLAM & BẢN ĐỒ NGỮ NGHĨA 3D) -->
         <div class="eval-card-block eval-block-tv3" id="panel-tv3">
           <div style="display:flex; justify-content:space-between; align-items:center;">
-            <span style="font-weight:700; color:var(--purple); font-size:0.75rem;">🟣 TV3: VISUAL SLAM & BẢN ĐỒ NGỮ NGHĨA 3D</span>
-            <span id="badge-tv3" class="bench-badge" style="border-color:var(--purple); color:var(--purple); background:rgba(180,74,255,0.15);">50/60 · XUẤT SẮC</span>
+            <span style="font-weight:700; color:var(--purple); font-size:0.75rem;">🟣 TV3: VISUAL SLAM & BẢN ĐỒ NGỮ
+              NGHĨA 3D</span>
+            <span id="badge-tv3" class="bench-badge"
+              style="border-color:var(--purple); color:var(--purple); background:rgba(180,74,255,0.15);">50/60 · XUẤT
+              SẮC</span>
           </div>
           <div class="bench-row">
             <span class="bench-lbl">1. Visual SLAM (RTAB-Map)</span>
-            <div class="bench-bar-bg"><div class="bench-bar-fill" id="bar-tv3-slam" style="width: 80%; background: var(--cyan);"></div></div>
+            <div class="bench-bar-bg">
+              <div class="bench-bar-fill" id="bar-tv3-slam" style="width: 80%; background: var(--cyan);"></div>
+            </div>
             <span class="bench-val" id="val-tv3-slam">28/35</span>
           </div>
           <div class="bench-sub" id="sub-tv3-slam">VO: -- Hz · Mây điểm: -- pts · Cây TF2 liên tục</div>
 
           <div class="bench-row">
             <span class="bench-lbl">2. Bản đồ Ngữ nghĩa 3D</span>
-            <div class="bench-bar-bg"><div class="bench-bar-fill" id="bar-tv3-sem" style="width: 88%; background: var(--purple);"></div></div>
+            <div class="bench-bar-bg">
+              <div class="bench-bar-fill" id="bar-tv3-sem" style="width: 88%; background: var(--purple);"></div>
+            </div>
             <span class="bench-val" id="val-tv3-sem">22/25</span>
           </div>
           <div class="bench-sub" id="sub-tv3-sem">Đã cắm cờ ngữ nghĩa: -- vật thể 3D</div>
 
           <div class="bench-alert" style="border-left-color:var(--purple);">
-            <span style="color:var(--purple); font-weight:700;">📡 Chẩn đoán TV3:</span> <span id="diag-tv3-txt">Bản đồ RTAB-Map và cây tọa độ TF2 hoạt động chuẩn xác.</span>
+            <span style="color:var(--purple); font-weight:700;">📡 Chẩn đoán TV3:</span> <span id="diag-tv3-txt">Bản đồ
+              RTAB-Map và cây tọa độ TF2 hoạt động chuẩn xác.</span>
           </div>
         </div>
 
@@ -450,7 +1138,7 @@
     let mapPanX = 0; // Độ lệch tọa độ thế giới (mét) theo trục X
     let mapPanY = 0; // Độ lệch tọa độ thế giới (mét) theo trục Y
     let mapZoom = 1.0; // Hệ số thu phóng (0.4x đến 5.0x)
-    let followRobot = true; // Tự động khóa tâm bám theo Robot
+    let followRobot = false; // Tự động khóa tâm camera theo Robot (Mặc định TẮT tự do)
     let isDraggingMap = false;
     let dragStartX = 0, dragStartY = 0;
     let dragStartPanX = 0, dragStartPanY = 0;
@@ -465,7 +1153,7 @@
           mapPanY = 0;
         }
         mapZoom = 1.0;
-        followRobot = true;
+        followRobot = false;
         updateFollowBtn();
         if (lastStateData) draw2DMap(lastStateData);
       } else {
@@ -488,7 +1176,7 @@
       if (btn) {
         btn.style.color = followRobot ? 'var(--cyan)' : 'var(--dim)';
         btn.style.borderColor = followRobot ? 'var(--cyan)' : 'var(--border)';
-        btn.innerText = followRobot ? '🎯 BÁM XE: BẬT' : '🔓 TỰ DO: TẮT';
+        btn.innerText = followRobot ? '🎯 TÂM XE: BẬT' : '🔓 TÂM XE: TẮT (TỰ DO)';
       }
     }
 
@@ -504,7 +1192,7 @@
       document.getElementById('three-viewport').style.display = mode === '3d' ? 'block' : 'none';
       document.getElementById('map-canvas').style.display = mode === '2d' ? 'block' : 'none';
       document.getElementById('hud-info').innerText = mode === '3d' ? '3D POINT CLOUD & MÔ HÌNH ROBOT' : '2D OCCUPANCY GRID MAP & LASERSCAN';
-      
+
       const tip = document.getElementById('hud-tip-text') || document.querySelector('.hud-tip');
       if (tip) {
         tip.innerText = mode === '3d'
@@ -513,7 +1201,7 @@
       }
       const overlay = document.getElementById('map-overlay-controls');
       if (overlay) overlay.style.display = mode === '2d' ? 'flex' : 'none';
-      
+
       if (mode === '2d' && lastStateData) {
         setTimeout(() => draw2DMap(lastStateData), 20);
       }
@@ -642,7 +1330,7 @@
 
         // Thang đo tỉ lệ (Scale): 1 mét thực tế = bao nhiêu pixel trên canvas
         const safeZoom = (typeof mapZoom === 'number' && mapZoom > 0.1) ? mapZoom : 1.0;
-        const baseScale = Math.min(W, H) / 7.0; 
+        const baseScale = Math.min(W, H) / 7.0;
         const scale = Math.max(10.0, baseScale * safeZoom);
         const centerX = W / 2.0;
         const centerY = H / 2.0;
@@ -761,7 +1449,7 @@
           for (let i = 0; i < d.points_3d.length; i++) {
             const pt = d.points_3d[i];
             const px = pt[0], py = pt[1], pz = pt[2] || 0.2;
-            
+
             // Lọc điểm vật cản thực sự ở tầm độ cao thân xe (0.05m đến 0.85m), bỏ qua mặt sàn và trần
             if (pz < 0.05 || pz > 0.85) continue;
 
@@ -850,53 +1538,78 @@
           landmarks.forEach(obj => {
             const cp = worldToCanvas(obj.x, obj.y);
             const isPerson = (obj.id === 0 || obj.name === 'PERSON');
-            const isPinned = (obj.pinned === true || (obj.seen && obj.seen >= 3));
-            const primaryColor = isPerson ? '#ff2a6d' : (isPinned ? '#00f0ff' : '#ffb800');
-            const fillColor = isPerson ? 'rgba(255, 42, 109, 0.18)' : (isPinned ? 'rgba(0, 240, 255, 0.16)' : 'rgba(255, 184, 0, 0.16)');
+            const isPinned = (obj.pinned === true || (obj.seen && obj.seen >= 2));
+
+            // VIỀN ĐỎ DẠ QUANG CHO TOÀN BỘ VẬT CẢN (THEO YÊU CẦU: QUÉT ĐƯỢC LÀ HIỆN VIỀN ĐỎ SẮC NÉT TRÊN MAP)
+            const primaryColor = isPerson ? '#ff2a6d' : (isPinned ? '#ff0033' : '#ff3366');
+            const fillColor = isPerson ? 'rgba(255, 42, 109, 0.22)' : (isPinned ? 'rgba(255, 0, 51, 0.25)' : 'rgba(255, 51, 102, 0.16)');
 
             // Kích thước thực tế vật thể tính theo mét (chiều rộng & chiều sâu)
-            const w_m = (obj.width !== undefined && obj.width > 0) ? obj.width : 0.45;
-            const d_m = (obj.depth !== undefined && obj.depth > 0) ? obj.depth : 0.45;
-            const boxW = Math.max(16, w_m * scale);
-            const boxD = Math.max(16, d_m * scale);
+            const w_m = (obj.width !== undefined && obj.width > 0) ? obj.width : 0.40;
+            const d_m = (obj.depth !== undefined && obj.depth > 0) ? obj.depth : 0.40;
+            const boxW = Math.max(18, w_m * scale);
+            const boxD = Math.max(18, d_m * scale);
 
             mapCtx.save();
-            // A. Lớp phủ mờ diện tích chiếm dụng (Bounding Box Fill)
+            // A. Lớp phủ mờ diện tích chiếm dụng màu ĐỎ (Bounding Box Red Fill)
             mapCtx.fillStyle = fillColor;
-            mapCtx.fillRect(cp.x - boxW/2, cp.y - boxD/2, boxW, boxD);
+            mapCtx.fillRect(cp.x - boxW / 2, cp.y - boxD / 2, boxW, boxD);
 
-            // B. Viền khung hộp bao kỹ thuật (Bounding Box Stroke)
+            // B. Viền khung hộp bao kỹ thuật màu ĐỎ phát quang (Glowing Red Stroke)
             mapCtx.strokeStyle = primaryColor;
-            mapCtx.lineWidth = 1.6;
+            mapCtx.lineWidth = isPinned ? 2.2 : 1.6;
             mapCtx.shadowColor = primaryColor;
-            mapCtx.shadowBlur = isPinned ? 8 : 4;
-            mapCtx.strokeRect(cp.x - boxW/2, cp.y - boxD/2, boxW, boxD);
+            mapCtx.shadowBlur = isPinned ? 10 : 5;
+            mapCtx.strokeRect(cp.x - boxW / 2, cp.y - boxD / 2, boxW, boxD);
 
-            // C. Hồng tâm tâm vật thể (+)
-            mapCtx.shadowBlur = 0;
-            mapCtx.lineWidth = 1.2;
+            // B2. Bốn góc vuông Tactical Tech Red Brackets rực rỡ
+            const cLen = Math.min(10, Math.max(5, boxW * 0.25));
+            mapCtx.lineWidth = 2.5;
+            mapCtx.shadowBlur = 6;
             mapCtx.beginPath();
-            mapCtx.moveTo(cp.x - 4, cp.y); mapCtx.lineTo(cp.x + 4, cp.y);
-            mapCtx.moveTo(cp.x, cp.y - 4); mapCtx.lineTo(cp.x, cp.y + 4);
+            // Góc trên-trái
+            mapCtx.moveTo(cp.x - boxW / 2, cp.y - boxD / 2 + cLen);
+            mapCtx.lineTo(cp.x - boxW / 2, cp.y - boxD / 2);
+            mapCtx.lineTo(cp.x - boxW / 2 + cLen, cp.y - boxD / 2);
+            // Góc trên-phải
+            mapCtx.moveTo(cp.x + boxW / 2 - cLen, cp.y - boxD / 2);
+            mapCtx.lineTo(cp.x + boxW / 2, cp.y - boxD / 2);
+            mapCtx.lineTo(cp.x + boxW / 2, cp.y - boxD / 2 + cLen);
+            // Góc dưới-trái
+            mapCtx.moveTo(cp.x - boxW / 2, cp.y + boxD / 2 - cLen);
+            mapCtx.lineTo(cp.x - boxW / 2, cp.y + boxD / 2);
+            mapCtx.lineTo(cp.x - boxW / 2 + cLen, cp.y + boxD / 2);
+            // Góc dưới-phải
+            mapCtx.moveTo(cp.x + boxW / 2 - cLen, cp.y + boxD / 2);
+            mapCtx.lineTo(cp.x + boxW / 2, cp.y + boxD / 2);
+            mapCtx.lineTo(cp.x + boxW / 2, cp.y + boxD / 2 - cLen);
             mapCtx.stroke();
 
-            // D. Nhãn định danh kỹ thuật chuẩn Aerospace (Không dùng icon emoji ghim/hộp)
+            // C. Hồng tâm tâm vật thể (+) màu đỏ sáng
+            mapCtx.shadowBlur = 0;
+            mapCtx.lineWidth = 1.4;
+            mapCtx.beginPath();
+            mapCtx.moveTo(cp.x - 5, cp.y); mapCtx.lineTo(cp.x + 5, cp.y);
+            mapCtx.moveTo(cp.x, cp.y - 5); mapCtx.lineTo(cp.x, cp.y + 5);
+            mapCtx.stroke();
+
+            // D. Nhãn định danh kỹ thuật chuẩn Aerospace viền ĐỎ
             const distToRob = Math.hypot(obj.x - rx, obj.y - ry).toFixed(2);
             const tagText = `[${obj.name} · ${distToRob}m]`;
             mapCtx.font = 'bold 9px Orbitron, monospace';
             const tagW = mapCtx.measureText(tagText).width;
             const tagH = 13;
-            const tagX = cp.x - tagW/2 - 5;
-            const tagY = cp.y - boxD/2 - tagH - 4;
+            const tagX = cp.x - tagW / 2 - 5;
+            const tagY = cp.y - boxD / 2 - tagH - 4;
 
-            // Hộp nền nhãn đen viền tương phản
-            mapCtx.fillStyle = 'rgba(7, 11, 18, 0.92)';
+            // Hộp nền nhãn đen viền ĐỎ tương phản cao
+            mapCtx.fillStyle = 'rgba(12, 4, 7, 0.94)';
             mapCtx.fillRect(tagX, tagY, tagW + 10, tagH);
             mapCtx.strokeStyle = primaryColor;
-            mapCtx.lineWidth = 1;
+            mapCtx.lineWidth = 1.2;
             mapCtx.strokeRect(tagX, tagY, tagW + 10, tagH);
 
-            // Chữ nhãn kỹ thuật
+            // Chữ nhãn kỹ thuật màu ĐỎ rực
             mapCtx.fillStyle = primaryColor;
             mapCtx.fillText(tagText, tagX + 5, tagY + 9.5);
             mapCtx.restore();
@@ -969,11 +1682,11 @@
         mapCtx.strokeStyle = '#00f0ff';
         mapCtx.lineWidth = 1;
         // Bánh trái
-        mapCtx.fillRect(-wheelL/2, -robBodyW/2 - wheelW + 1, wheelL, wheelW);
-        mapCtx.strokeRect(-wheelL/2, -robBodyW/2 - wheelW + 1, wheelL, wheelW);
+        mapCtx.fillRect(-wheelL / 2, -robBodyW / 2 - wheelW + 1, wheelL, wheelW);
+        mapCtx.strokeRect(-wheelL / 2, -robBodyW / 2 - wheelW + 1, wheelL, wheelW);
         // Bánh phải
-        mapCtx.fillRect(-wheelL/2, robBodyW/2 - 1, wheelL, wheelW);
-        mapCtx.strokeRect(-wheelL/2, robBodyW/2 - 1, wheelL, wheelW);
+        mapCtx.fillRect(-wheelL / 2, robBodyW / 2 - 1, wheelL, wheelW);
+        mapCtx.strokeRect(-wheelL / 2, robBodyW / 2 - 1, wheelL, wheelW);
 
         // Thân xe (Chassis)
         mapCtx.fillStyle = 'rgba(12, 22, 38, 0.9)';
@@ -983,9 +1696,9 @@
         mapCtx.shadowBlur = 10;
         mapCtx.beginPath();
         if (mapCtx.roundRect) {
-          mapCtx.roundRect(-robBodyL/2, -robBodyW/2, robBodyL, robBodyW, 4);
+          mapCtx.roundRect(-robBodyL / 2, -robBodyW / 2, robBodyL, robBodyW, 4);
         } else {
-          mapCtx.rect(-robBodyL/2, -robBodyW/2, robBodyL, robBodyW);
+          mapCtx.rect(-robBodyL / 2, -robBodyW / 2, robBodyL, robBodyW);
         }
         mapCtx.fill();
         mapCtx.stroke();
@@ -993,16 +1706,16 @@
         // Mũi tên định hướng phát sáng
         mapCtx.fillStyle = '#00ffa3';
         mapCtx.beginPath();
-        mapCtx.moveTo(robBodyL/2 + 6, 0);
-        mapCtx.lineTo(robBodyL/4, -robBodyW/3.5);
-        mapCtx.lineTo(robBodyL/3, 0);
-        mapCtx.lineTo(robBodyL/4, robBodyW/3.5);
+        mapCtx.moveTo(robBodyL / 2 + 6, 0);
+        mapCtx.lineTo(robBodyL / 4, -robBodyW / 3.5);
+        mapCtx.lineTo(robBodyL / 3, 0);
+        mapCtx.lineTo(robBodyL / 4, robBodyW / 3.5);
         mapCtx.closePath();
         mapCtx.fill();
 
         // Vị trí Camera OAK-D S2 ở phía mũi xe
         mapCtx.fillStyle = '#ff2a6d';
-        mapCtx.fillRect(robBodyL/2 - 3, -4, 4, 8);
+        mapCtx.fillRect(robBodyL / 2 - 3, -4, 4, 8);
 
         mapCtx.restore();
 
@@ -1026,7 +1739,7 @@
         // 8. Chú giải Bản đồ (HUD Legend Chuẩn RViz & Phân loại Màu Sắc Ngữ Nghĩa)
         mapCtx.font = '10px "Space Grotesk", sans-serif';
         mapCtx.fillStyle = 'rgba(255,255,255,0.85)';
-        mapCtx.fillText('⬜ Mặt Sàn (Floor)  |  ⬛ Tường Vật Cản  |  🔴 Người (Vật Cản Động)  |  🔷 Đồ Vật Tĩnh (Bàn, Ghế...)  |  🔺 JetBot', W - 540, H - 14);
+        mapCtx.fillText('⬜ Mặt Sàn  |  ⬛ Tường  |  🟥 Vật Cản / Chướng Ngại Vật (Viền Đỏ)  |  🔴 Người  |  🔺 JetBot', W - 580, H - 14);
 
         // 9. Telemetry mini box ở góc trên bản đồ
         const degStr = (yaw * 180 / Math.PI).toFixed(0);
@@ -1076,7 +1789,7 @@
 
         document.getElementById('batt-val').innerText = `${bV}V (${bPct}%)`;
         document.getElementById('batt-sub').innerText = `${bCell}V/c · ${bCurr}A (${bPow}W) · ~${remStr}`;
-        
+
         const badgeEl = document.getElementById('batt-badge');
         const fillEl = document.getElementById('batt-bar-fill');
         badgeEl.innerText = bStat;
@@ -1097,6 +1810,18 @@
         document.getElementById('pose-val').innerText = `${d.robot_x.toFixed(2)}, ${d.robot_y.toFixed(2)}, ${deg}°`;
         const numPts = (d.points_3d && Array.isArray(d.points_3d)) ? d.points_3d.length : 0;
         document.getElementById('pts-count').innerText = `${numPts} PTS`;
+
+        if (d.odometry_source) {
+          const elOdom = document.getElementById('odom-source-val');
+          if (elOdom) {
+            elOdom.innerText = d.odometry_source;
+            elOdom.style.color = d.ros_odom_active ? 'var(--emerald)' : (d.imu_active ? 'var(--cyan)' : 'var(--amber)');
+          }
+        }
+
+        if (d.soft_stop_enabled !== undefined) {
+          updateSoftStopUI(d.soft_stop_enabled);
+        }
 
         if (d.system_version) {
           const vTag = document.getElementById('sys-version-tag');
@@ -1121,11 +1846,11 @@
               const count = Math.min(d.points_3d.length, MAX_PTS);
               for (let i = 0; i < count; i++) {
                 const p = d.points_3d[i];
-                positions[i * 3]     = p[0];
+                positions[i * 3] = p[0];
                 positions[i * 3 + 1] = p[1];
                 positions[i * 3 + 2] = p[2];
                 const normH = Math.max(0, Math.min(1, p[2] / 1.2));
-                colors[i * 3]     = normH;
+                colors[i * 3] = normH;
                 colors[i * 3 + 1] = 1.0 - normH;
                 colors[i * 3 + 2] = 1.0;
               }
@@ -1135,7 +1860,7 @@
             }
 
             if (semanticGroup) {
-              while(semanticGroup.children.length > 0) {
+              while (semanticGroup.children.length > 0) {
                 semanticGroup.remove(semanticGroup.children[0]);
               }
               const objs = (d.semantic_objects && d.semantic_objects.length > 0) ? d.semantic_objects : [];
@@ -1161,7 +1886,7 @@
                 });
               }
             }
-          } catch(e) {}
+          } catch (e) { }
         }
 
         lastStateData = d;
@@ -1221,6 +1946,11 @@
           }
         }
 
+        // Cập nhật Đồng hồ hành trình (Trip Odometer)
+        if (d.trip_odometer) {
+          updateTripUI(d.trip_odometer);
+        }
+
         // 5. Cập nhật 2D Map (nếu bật chế độ 2D)
         if (currentView === '2d') {
           draw2DMap(d);
@@ -1239,7 +1969,7 @@
         if (d.detections.length > 0) {
           rl.innerHTML = d.detections.map(det => `
             <div class="radar-item" style="border-color:${det.id === 0 ? 'var(--rose)' : 'var(--emerald)'};">
-              <span style="color:${det.id === 0 ? 'var(--rose)' : 'var(--emerald)'};">${det.name} (${(det.score*100).toFixed(0)}%)</span>
+              <span style="color:${det.id === 0 ? 'var(--rose)' : 'var(--emerald)'};">${det.name} (${(det.score * 100).toFixed(0)}%)</span>
               <span style="color:var(--dim);">X:${det.x}m Y:${det.y}m Cu ly:${det.z}m</span>
             </div>
           `).join('');
@@ -1370,7 +2100,12 @@
         if (d.auto_scanning !== undefined) {
           updateAutoScanBtn(Boolean(d.auto_scanning), d.auto_scan_remaining);
         }
-      } catch (e) {}
+
+        // Cập nhật trạng thái Điều khiển Bước định lượng
+        if (d.step_state) {
+          updateStepStatus(d.step_state);
+        }
+      } catch (e) { }
       setTimeout(pollState, 140);
     }
     pollState();
@@ -1378,7 +2113,7 @@
     // Tự động khôi phục luồng stream nếu mạng gián đoạn
     const camImg = document.getElementById('cam-stream');
     if (camImg) {
-      camImg.onerror = function() {
+      camImg.onerror = function () {
         setTimeout(() => {
           camImg.src = '/stream.mjpg?t=' + Date.now();
         }, 1200);
@@ -1402,7 +2137,7 @@
         else hud.innerText = '1. CAM AI';
       }
 
-      fetch('/api/camera_mode?mode=' + currentCamMode).catch(() => {});
+      fetch('/api/camera_mode?mode=' + currentCamMode).catch(() => { });
     }
 
     // Chuyển đổi Tab Đánh giá 3 Thành viên
@@ -1511,43 +2246,53 @@
       });
     }
 
-    // Chuyển đổi trạng thái Tự hành Bám người HRI
+    // Tính năng Tự hành Bám người HRI: ĐÃ KHÓA CỨNG AN TOÀN
     function toggleFollower() {
-      const btn = document.getElementById('btn-toggle-follower');
-      const isCurrentlyOn = btn && btn.innerText.includes('ĐANG BẬT');
-      // Đổi ngay lập tức giao diện (Optimistic UI)
-      updateFollowerBtn(!isCurrentlyOn);
-      fetch('/api/toggle?flag=follow')
+      console.warn("Tính năng bám người đã bị khóa cứng.");
+    }
+
+    function updateFollowerBtn(enabled) { }
+
+    // 🛑 CHẾ ĐỘ HÃM TỐC: DỪNG TỪ TỪ (SOFT STOP) VS DỪNG TỨC THÌ (HARD STOP)
+    let isSoftStopActive = true;
+    function toggleSoftStop() {
+      fetch('/api/toggle?flag=soft_stop', { cache: 'no-store' })
         .then(r => r.json())
         .then(data => {
-          updateFollowerBtn(data.state);
-        }).catch(e => {
-          updateFollowerBtn(isCurrentlyOn);
+          const enabled = (data && data.status !== undefined) ? Boolean(data.status) : !isSoftStopActive;
+          updateSoftStopUI(enabled);
+        })
+        .catch(err => {
+          console.warn('Lỗi gọi API toggle soft_stop:', err);
+          isSoftStopActive = !isSoftStopActive;
+          updateSoftStopUI(isSoftStopActive);
         });
     }
 
-    function updateFollowerBtn(enabled) {
-      const btn = document.getElementById('btn-toggle-follower');
-      if (!btn) return;
-      if (enabled) {
-        btn.innerText = '🎯 BÁM NGƯỜI: ĐANG BẬT';
-        btn.style.borderColor = 'var(--emerald)';
-        btn.style.color = 'var(--emerald)';
-        btn.style.background = 'rgba(0, 255, 163, 0.18)';
-        btn.style.boxShadow = '0 0 10px rgba(0, 255, 163, 0.4)';
-      } else {
-        btn.innerText = '🎯 BÁM NGƯỜI: TẮT';
-        btn.style.borderColor = 'rgba(255, 255, 255, 0.2)';
-        btn.style.color = 'var(--dim)';
-        btn.style.background = 'transparent';
-        btn.style.boxShadow = 'none';
+    function updateSoftStopUI(enabled) {
+      isSoftStopActive = Boolean(enabled);
+      const btn = document.getElementById('btn-soft-stop-toggle');
+      if (btn) {
+        if (isSoftStopActive) {
+          btn.innerText = '🛑 HÃM TỐC: TỪ TỪ (MỀM)';
+          btn.style.borderColor = 'var(--cyan)';
+          btn.style.color = 'var(--cyan)';
+          btn.style.background = 'rgba(0, 240, 255, 0.12)';
+          btn.title = 'Chế độ DỪNG TỪ TỪ đang BẬT: Hạ dốc êm 180ms khi lái tay, giảm tốc 35% chặng cuối bước cm/độ chống trôi xe';
+        } else {
+          btn.innerText = '⚡ HÃM TỐC: TỨC THÌ (GẤP)';
+          btn.style.borderColor = 'var(--rose)';
+          btn.style.color = 'var(--rose)';
+          btn.style.background = 'rgba(255, 42, 109, 0.12)';
+          btn.title = 'Chế độ DỪNG TỨC THÌ đang BẬT: Cắt động cơ tức thì, xe dừng gấp (có thể bị trượt trớn do quán tính)';
+        }
       }
     }
 
     // Điều khiển động cơ với phản hồi trực quan (Visual Teleop Feedback)
     let driveTimer = null;
-    let speedLinear = 0.20;
-    let speedAngular = 1.58;
+    let speedLinear = 0.10;
+    let speedAngular = 1.337;
     let lastDriveV = 0.0;
 
     function emergencyStop() {
@@ -1556,7 +2301,7 @@
         driveTimer = null;
       }
       lastDriveV = 0.0;
-      fetch('/api/drive?v=0&w=0', { cache: 'no-store' }).catch(() => {});
+      fetch('/api/drive?v=0&w=0', { cache: 'no-store' }).catch(() => { });
       ['btn-up', 'btn-down', 'btn-left', 'btn-right'].forEach(id => setBtnActive(id, false));
       setBtnActive('btn-stop', true);
       setTimeout(() => setBtnActive('btn-stop', false), 250);
@@ -1599,14 +2344,14 @@
         emergencyStop();
         return;
       }
-      fetch('/api/drive?v=' + linear + '&w=' + angular, { cache: 'no-store' }).catch(() => {});
+      fetch('/api/drive?v=' + linear + '&w=' + angular, { cache: 'no-store' }).catch(() => { });
       driveTimer = setInterval(() => {
         const curDist = (lastStateData && lastStateData.obstacle_distance !== undefined && lastStateData.obstacle_distance !== null) ? lastStateData.obstacle_distance : null;
         if (linear > 0 && curDist !== null && curDist <= brakeThreshold) {
           emergencyStop();
           return;
         }
-        fetch('/api/drive?v=' + linear + '&w=' + angular, { cache: 'no-store' }).catch(() => {});
+        fetch('/api/drive?v=' + linear + '&w=' + angular, { cache: 'no-store' }).catch(() => { });
       }, 120);
     }
 
@@ -1619,22 +2364,238 @@
       }
     }
 
+    // ════ CHẾ ĐỘ ĐIỀU KHIỂN BƯỚC ĐỊNH LƯỢNG (METRIC STEP CONTROLLER) ════
+    let currentControlMode = 'wasd'; // 'wasd' hoặc 'step'
+    let stepDistCm = 20;
+    let stepDegVal = 45;
+    let stepSpeedPct = 10;   // % PWM tốc độ: mặc định 10%
+    let isStepExecuting = false;
+
+    function switchControlMode(mode) {
+      currentControlMode = mode;
+      const bWasd = document.getElementById('btn-mode-wasd');
+      const bStep = document.getElementById('btn-mode-step');
+      const wasdBox = document.getElementById('wasd-ctrl-container');
+      const stepBox = document.getElementById('step-ctrl-container');
+
+      if (bWasd) {
+        bWasd.classList.toggle('active', mode === 'wasd');
+        bWasd.style.color = (mode === 'wasd') ? '#000' : 'var(--cyan)';
+      }
+      if (bStep) {
+        bStep.classList.toggle('active', mode === 'step');
+        bStep.style.color = (mode === 'step') ? '#000' : 'var(--emerald)';
+      }
+
+      if (wasdBox) wasdBox.style.display = (mode === 'wasd') ? 'block' : 'none';
+      if (stepBox) stepBox.style.display = (mode === 'step') ? 'block' : 'none';
+
+      if (mode === 'step') {
+        updateStepLabels();
+      } else {
+        emergencyStop();
+      }
+    }
+
+    function setStepDist(cm) {
+      stepDistCm = parseInt(cm) || 20;
+      const inp = document.getElementById('step-dist-input');
+      if (inp) inp.value = stepDistCm;
+      [1, 2, 5, 10, 20, 30, 40, 50, 60, 70, 80, 100].forEach(v => {
+        const chip = document.getElementById('chip-dist-' + v);
+        if (chip) chip.classList.toggle('active', v === stepDistCm);
+      });
+      updateStepLabels();
+    }
+
+    function setStepDeg(deg) {
+      stepDegVal = parseInt(deg) || 45;
+      const inp = document.getElementById('step-deg-input');
+      if (inp) inp.value = stepDegVal;
+      [15, 30, 45, 60, 90, 120, 180, 225, 270, 315, 360].forEach(v => {
+        const chip = document.getElementById('chip-deg-' + v);
+        if (chip) chip.classList.toggle('active', v === stepDegVal);
+      });
+      updateStepLabels();
+    }
+
+    function updateStepLabels() {
+      const inpDist = document.getElementById('step-dist-input');
+      if (inpDist) stepDistCm = Math.max(1, parseInt(inpDist.value) || 20);
+      const inpDeg = document.getElementById('step-deg-input');
+      if (inpDeg) stepDegVal = Math.max(1, parseInt(inpDeg.value) || 45);
+
+      const bFwd = document.getElementById('btn-step-fwd');
+      const bBack = document.getElementById('btn-step-back');
+      const bLeft = document.getElementById('btn-step-left');
+      const bRight = document.getElementById('btn-step-right');
+
+      if (bFwd) bFwd.innerText = `▲ TIẾN ${stepDistCm}CM`;
+      if (bBack) bBack.innerText = `▼ LÙI ${stepDistCm}CM`;
+      if (bLeft) bLeft.innerText = `↺ TRÁI ${stepDegVal}°`;
+      if (bRight) bRight.innerText = `↻ PHẢI ${stepDegVal}°`;
+    }
+
+    // ─── TỐC ĐỘ HỆ THỐNG ĐỒNG NHẤT: Thanh trượt & Chip buttons (Đồng bộ WASD & Bước) ───
+    function onStepSpeedChange(val) {
+      stepSpeedPct = parseInt(val) || 20;
+      // Đồng bộ trực tiếp sang vận tốc lái tay WASD (20% PWM = 0.20 m/s)
+      speedLinear = parseFloat((0.20 * (stepSpeedPct / 20.0)).toFixed(3));
+
+      // ĐỒNG NHẤT 100% VỚI BACKEND (motor_controller & _step_worker):
+      // Chuẩn động cơ JetBot: 13% PWM (0.13) tương ứng 1.58 rad/s (~90.5 deg/s).
+      // Ngưỡng tối thiểu xoay tại chỗ: 11% PWM (0.11). Trần an toàn: 24% PWM (0.24).
+      const rawTurn = 0.13 * (stepSpeedPct / 20.0);
+      const turnDuty = Math.max(0.11, Math.min(0.24, rawTurn));
+      speedAngular = parseFloat((1.58 * (turnDuty / 0.13)).toFixed(3));
+
+      // Cập nhật nhãn phần trăm
+      const lbl = document.getElementById('step-spd-pct-label');
+      if (lbl) lbl.innerText = stepSpeedPct + '%';
+      // Cập nhật gradient thanh trượt
+      const slider = document.getElementById('step-speed-slider');
+      if (slider) {
+        const pct = ((stepSpeedPct - 6) / (40 - 6) * 100).toFixed(1);
+        const col = stepSpeedPct >= 30 ? 'var(--rose)' : (stepSpeedPct >= 15 ? 'var(--amber)' : 'var(--emerald)');
+        slider.style.background = `linear-gradient(to right, ${col} 0%, ${col} ${pct}%, rgba(255,184,0,0.15) ${pct}%, rgba(255,184,0,0.15) 100%)`;
+      }
+      // Cập nhật chú thích tốc độ thực tế
+      const note = document.getElementById('step-spd-note');
+      if (note) {
+        const vMs = (0.20 * stepSpeedPct / 20.0).toFixed(2);
+        const degS = (speedAngular * 180.0 / Math.PI).toFixed(1);
+        const pwmPct = Math.round(turnDuty * 100);
+        note.innerText = `≈ ${vMs} m/s tiến/lùi (${stepSpeedPct}% PWM) · ${degS}°/s quay (tự bù lực ${pwmPct}% PWM)`;
+      }
+      // Tắt active hết rồi bật đúng chip
+      [6, 8, 10, 12, 15, 20, 30, 40].forEach(v => {
+        const chip = document.getElementById('step-spd-chip-' + v);
+        if (!chip) return;
+        const active = (v === stepSpeedPct);
+        chip.classList.toggle('active', active);
+        chip.style.fontWeight = active ? 'bold' : 'normal';
+        if (v === 40) {
+          chip.style.borderColor = active ? 'var(--rose)' : 'rgba(255,50,50,0.35)';
+          chip.style.color = 'var(--rose)';
+        } else if (v <= 10) {
+          chip.style.borderColor = active ? 'var(--emerald)' : 'rgba(0,255,163,0.30)';
+          chip.style.color = active ? 'var(--emerald)' : 'var(--dim)';
+        } else {
+          chip.style.borderColor = active ? 'var(--amber)' : 'rgba(255,184,0,0.30)';
+          chip.style.color = active ? 'var(--amber)' : 'var(--dim)';
+        }
+      });
+    }
+
+    function setStepSpeed(pct) {
+      const slider = document.getElementById('step-speed-slider');
+      if (slider) slider.value = pct;
+      onStepSpeedChange(pct);
+    }
+
+    function executeStep(type, dir) {
+      updateStepLabels();
+      const banner = document.getElementById('step-status-banner');
+      isStepExecuting = true;
+
+      const actName = (type === 'linear')
+        ? (dir === 'forward' ? `TIẾN ${stepDistCm}CM` : `LÙI ${stepDistCm}CM`)
+        : (dir === 'left' ? `QUAY TRÁI ${stepDegVal}°` : `QUAY PHẢI ${stepDegVal}°`);
+
+      if (banner) {
+        banner.style.color = 'var(--emerald)';
+        banner.style.borderColor = 'var(--emerald)';
+        banner.style.background = 'rgba(0, 255, 163, 0.15)';
+        banner.innerText = `⏳ ĐANG THỰC HIỆN: ${actName} @ ${stepSpeedPct}%...`;
+      }
+
+      // Truyền dist_cm và deg RIÊNG BIỆT — backend tự chọn đúng theo type
+      const params = new URLSearchParams({
+        type: type,
+        dir: dir,
+        dist_cm: stepDistCm,
+        deg: stepDegVal,
+        speed_pct: stepSpeedPct
+      });
+
+      fetch('/api/step_move?' + params.toString())
+        .then(r => r.json())
+        .then(data => {
+          if (data.status !== 'OK') {
+            if (banner) {
+              banner.style.color = 'var(--rose)';
+              banner.style.borderColor = 'var(--rose)';
+              banner.innerText = `⚠️ ${data.message || 'Lỗi thực thi bước'}`;
+            }
+          }
+        })
+        .catch(err => {
+          if (banner) {
+            banner.style.color = 'var(--rose)';
+            banner.innerText = `⚠️ Lỗi mạng: ${err.message}`;
+          }
+        });
+    }
+
+    function cancelStep() {
+      fetch('/api/step_cancel').catch(() => { });
+      emergencyStop();
+      const banner = document.getElementById('step-status-banner');
+      if (banner) {
+        banner.style.color = 'var(--amber)';
+        banner.style.borderColor = 'var(--amber)';
+        banner.style.background = 'rgba(255, 184, 0, 0.12)';
+        banner.innerText = `⏹ ĐÃ GỬI LỆNH DỪNG BƯỚC`;
+      }
+    }
+
+    function updateStepStatus(state) {
+      const banner = document.getElementById('step-status-banner');
+      if (!banner) return;
+      if (state.running) {
+        isStepExecuting = true;
+        banner.style.color = 'var(--emerald)';
+        banner.style.borderColor = 'var(--emerald)';
+        banner.style.background = 'rgba(0, 255, 163, 0.15)';
+        banner.innerText = `⏳ ${state.status || 'ĐANG THỰC HIỆN BƯỚC...'}`;
+      } else if (isStepExecuting) {
+        isStepExecuting = false;
+        banner.style.color = 'var(--cyan)';
+        banner.style.borderColor = 'var(--border)';
+        banner.style.background = 'rgba(0, 240, 255, 0.08)';
+        banner.innerText = `✅ ${state.status || 'SẴN SÀNG THỰC THI BƯỚC ĐỊNH LƯỢNG'}`;
+      }
+    }
+
     window.addEventListener('keydown', (e) => {
       if (e.repeat) return;
+      // Bỏ qua nếu đang nhập liệu trong ô input
+      if (e.target.tagName === 'INPUT') return;
+
       const k = e.key.toLowerCase();
       const code = e.code;
-      if (k === 'w' || code === 'KeyW' || k === 'arrowup') { sendDrive(speedLinear, 0); setBtnActive('btn-up', true); }
-      else if (k === 's' || code === 'KeyS' || k === 'arrowdown') { sendDrive(-speedLinear, 0); setBtnActive('btn-down', true); }
-      else if (k === 'a' || code === 'KeyA' || k === 'arrowleft') { sendDrive(0, speedAngular); setBtnActive('btn-left', true); }
-      else if (k === 'd' || code === 'KeyD' || k === 'arrowright') { sendDrive(0, -speedAngular); setBtnActive('btn-right', true); }
-      else if (k === ' ' || k === 'escape' || code === 'Space') { emergencyStop(); }
+
+      if (currentControlMode === 'step') {
+        if (k === 'w' || code === 'KeyW' || k === 'arrowup') { executeStep('linear', 'forward'); }
+        else if (k === 's' || code === 'KeyS' || k === 'arrowdown') { executeStep('linear', 'backward'); }
+        else if (k === 'a' || code === 'KeyA' || k === 'arrowleft') { executeStep('turn', 'left'); }
+        else if (k === 'd' || code === 'KeyD' || k === 'arrowright') { executeStep('turn', 'right'); }
+        else if (k === ' ' || k === 'escape' || code === 'Space') { cancelStep(); }
+      } else {
+        if (k === 'w' || code === 'KeyW' || k === 'arrowup') { sendDrive(speedLinear, 0); setBtnActive('btn-up', true); }
+        else if (k === 's' || code === 'KeyS' || k === 'arrowdown') { sendDrive(-speedLinear, 0); setBtnActive('btn-down', true); }
+        else if (k === 'a' || code === 'KeyA' || k === 'arrowleft') { sendDrive(0, speedAngular); setBtnActive('btn-left', true); }
+        else if (k === 'd' || code === 'KeyD' || k === 'arrowright') { sendDrive(0, -speedAngular); setBtnActive('btn-right', true); }
+        else if (k === ' ' || k === 'escape' || code === 'Space') { emergencyStop(); }
+      }
     });
 
     window.addEventListener('keyup', (e) => {
+      if (currentControlMode === 'step') return;
       const k = e.key.toLowerCase();
       const code = e.code;
-      if (['w','s','a','d','arrowup','arrowdown','arrowleft','arrowright'].includes(k) ||
-          ['KeyW','KeyS','KeyA','KeyD','Space'].includes(code)) {
+      if (['w', 's', 'a', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(k) ||
+        ['KeyW', 'KeyS', 'KeyA', 'KeyD', 'Space'].includes(code)) {
         emergencyStop();
       }
     });
@@ -1648,6 +2609,221 @@
     window.addEventListener('blur', () => {
       if (driveTimer) emergencyStop();
     });
+
+    // ════ ĐỒNG HỒ HÀNH TRÌNH CHUYẾN ĐI (TRIP ODOMETER) ════
+    let latestTripCm = 0.0;
+
+    function updateTripUI(odo) {
+      latestTripCm = odo.distance_cm || 0.0;
+      const elDist = document.getElementById('trip-dist-main');
+      const elDistM = document.getElementById('trip-dist-m');
+      const elCurV = document.getElementById('trip-cur-v');
+      const elTurn = document.getElementById('trip-turn-deg');
+      const elTime = document.getElementById('trip-active-time');
+
+      if (elDist) elDist.innerText = `${latestTripCm.toFixed(1)} cm`;
+      if (elDistM) elDistM.innerText = `${(odo.distance_m || 0).toFixed(3)} m`;
+      if (elCurV) elCurV.innerText = `${(odo.current_v_cm_s || 0).toFixed(1)} cm/s`;
+      if (elTurn) elTurn.innerText = `${(odo.turn_deg || 0).toFixed(1)}°`;
+      if (elTime) elTime.innerText = `${(odo.active_time_s || 0).toFixed(2)} s`;
+    }
+
+    function resetTripOdometer() {
+      fetch('/api/trip_reset', { method: 'POST' })
+        .then(r => r.json())
+        .then(res => {
+          latestTripCm = 0.0;
+          const elDist = document.getElementById('trip-dist-main');
+          if (elDist) elDist.innerText = "0.0 cm";
+          const elDistM = document.getElementById('trip-dist-m');
+          if (elDistM) elDistM.innerText = "0.000 m";
+          const elTurn = document.getElementById('trip-turn-deg');
+          if (elTurn) elTurn.innerText = "0.0°";
+          const elTime = document.getElementById('trip-active-time');
+          if (elTime) elTime.innerText = "0.00 s";
+        })
+        .catch(err => console.warn("Lỗi reset trip:", err));
+    }
+
+    // ════ HTML5 GAMEPAD CONTROLLER API (TƯƠNG THÍCH TELEOPERATION.IPYNB) ════
+    let gamepadIndex = null;
+    let gamepadHoldStart = null;
+    let activeHoldButton = null;
+    let lastGamepadDriveV = 0.0;
+    let lastGamepadDriveW = 0.0;
+    let lastGamepadSendTime = 0;
+
+    window.addEventListener("gamepadconnected", (e) => {
+      console.log("🎮 Gamepad đã kết nối:", e.gamepad.id, "Index:", e.gamepad.index);
+      gamepadIndex = e.gamepad.index;
+      updateGamepadBadge(true, e.gamepad.id);
+    });
+
+    window.addEventListener("gamepaddisconnected", (e) => {
+      console.log("🎮 Gamepad đã ngắt kết nối:", e.gamepad.id);
+      if (gamepadIndex === e.gamepad.index) {
+        gamepadIndex = null;
+        updateGamepadBadge(false);
+      }
+    });
+
+    function updateGamepadBadge(connected, name = '') {
+      const b = document.getElementById('gamepad-status-badge');
+      const nl = document.getElementById('gamepad-name-label');
+      if (b) {
+        if (connected) {
+          b.innerText = 'SẴN SÀNG';
+          b.style.color = 'var(--emerald)';
+          b.style.textShadow = '0 0 8px var(--emerald)';
+        } else {
+          b.innerText = 'CHƯA KẾT NỐI';
+          b.style.color = 'var(--dim)';
+          b.style.textShadow = 'none';
+        }
+      }
+      if (nl) {
+        nl.innerText = connected ? (name ? name.substring(0, 18) : 'Connected') : 'Chưa phát hiện';
+        nl.style.color = connected ? 'var(--cyan)' : 'var(--dim)';
+      }
+    }
+
+    function pollGamepad() {
+      if (gamepadIndex === null) {
+        const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
+        for (let i = 0; i < gamepads.length; i++) {
+          if (gamepads[i]) {
+            gamepadIndex = i;
+            updateGamepadBadge(true, gamepads[i].id);
+            break;
+          }
+        }
+        if (gamepadIndex === null) return;
+      }
+
+      const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
+      const gp = gamepads[gamepadIndex];
+      if (!gp) return;
+
+      const now = performance.now();
+
+      // 1. Đọc Cần Gạt Joystick Analog (Left Stick: axes[0]=X, axes[1]=Y; Right Stick: axes[2]=X)
+      const DEADZONE = 0.12;
+      let rawY = (gp.axes && gp.axes.length > 1) ? gp.axes[1] : 0.0;
+      let rawX = (gp.axes && gp.axes.length > 0) ? gp.axes[0] : 0.0;
+
+      // Nếu có Right stick (axes[2]), ưu tiên dùng Right Stick X để xoay
+      if (gp.axes && gp.axes.length > 2 && Math.abs(gp.axes[2]) > DEADZONE) {
+        rawX = gp.axes[2];
+      }
+
+      let joyY = Math.abs(rawY) > DEADZONE ? rawY : 0.0;
+      let joyX = Math.abs(rawX) > DEADZONE ? rawX : 0.0;
+
+      // 2. Đọc D-Pad & Đo thời gian giữ nút (Hold Duration Measurement)
+      // Standard: btn 12: Up, 13: Down, 14: Left, 15: Right
+      const btnUp = gp.buttons[12] && gp.buttons[12].pressed;
+      const btnDown = gp.buttons[13] && gp.buttons[13].pressed;
+      const btnLeft = gp.buttons[14] && gp.buttons[14].pressed;
+      const btnRight = gp.buttons[15] && gp.buttons[15].pressed;
+
+      let dpadActive = null;
+      if (btnUp) dpadActive = 'UP';
+      else if (btnDown) dpadActive = 'DOWN';
+      else if (btnLeft) dpadActive = 'LEFT';
+      else if (btnRight) dpadActive = 'RIGHT';
+
+      const holdSecEl = document.getElementById('gamepad-hold-sec');
+      const holdCmEl = document.getElementById('gamepad-hold-cm');
+
+      if (dpadActive) {
+        if (activeHoldButton !== dpadActive) {
+          activeHoldButton = dpadActive;
+          gamepadHoldStart = now;
+        }
+        const holdDurationSec = (now - gamepadHoldStart) / 1000.0;
+        const estDist = (speedLinear * holdDurationSec * 100.0).toFixed(1);
+        if (holdSecEl) holdSecEl.innerText = `${holdDurationSec.toFixed(2)}s (${dpadActive})`;
+        if (holdCmEl) holdCmEl.innerText = `${estDist}cm`;
+      } else {
+        if (activeHoldButton) {
+          const totalHold = ((now - gamepadHoldStart) / 1000.0).toFixed(2);
+          const totalCm = (speedLinear * totalHold * 100.0).toFixed(1);
+          if (holdSecEl) holdSecEl.innerText = `${totalHold}s (Xong)`;
+          if (holdCmEl) holdCmEl.innerText = `${totalCm}cm`;
+          activeHoldButton = null;
+          gamepadHoldStart = null;
+        }
+      }
+
+      // 3. Nút Action: B (btn 1) = Phanh; X (btn 2) = Reset Trip; Y (btn 3) = Quét 360; A (btn 0) = Bước
+      if (gp.buttons[1] && gp.buttons[1].pressed) {
+        emergencyStop();
+      }
+      if (gp.buttons[2] && gp.buttons[2].pressed && (!window._gp_btn2_prev)) {
+        resetTripOdometer();
+      }
+      window._gp_btn2_prev = gp.buttons[2] && gp.buttons[2].pressed;
+
+      if (gp.buttons[3] && gp.buttons[3].pressed && (!window._gp_btn3_prev)) {
+        toggleAutoScan();
+      }
+      window._gp_btn3_prev = gp.buttons[3] && gp.buttons[3].pressed;
+
+      // 4. Tính toán vận tốc lái
+      let targetV = 0.0;
+      let targetW = 0.0;
+
+      if (dpadActive === 'UP') targetV = speedLinear;
+      else if (dpadActive === 'DOWN') targetV = -speedLinear;
+      else if (dpadActive === 'LEFT') targetW = speedAngular;
+      else if (dpadActive === 'RIGHT') targetW = -speedAngular;
+      else if (joyY !== 0.0 || joyX !== 0.0) {
+        // -joyY vì đẩy cần joystick lên trước cho giá trị âm trong chuẩn Gamepad API
+        targetV = -joyY * speedLinear;
+        targetW = -joyX * speedAngular;
+      }
+
+      // 5. Gửi lệnh lái (Throttled ~12Hz)
+      const isMoving = (Math.abs(targetV) > 0.01 || Math.abs(targetW) > 0.05);
+      const wasMoving = (Math.abs(lastGamepadDriveV) > 0.01 || Math.abs(lastGamepadDriveW) > 0.05);
+
+      if (isMoving) {
+        const obsDist = (lastStateData && lastStateData.obstacle_distance !== undefined && lastStateData.obstacle_distance !== null) ? lastStateData.obstacle_distance : null;
+        const brakeThreshold = (lastStateData && lastStateData.safety_brake_dist !== undefined) ? lastStateData.safety_brake_dist : 0.25;
+        if (targetV > 0 && obsDist !== null && obsDist <= brakeThreshold) {
+          emergencyStop();
+          lastGamepadDriveV = 0.0;
+          lastGamepadDriveW = 0.0;
+          return;
+        }
+
+        if (now - lastGamepadSendTime >= 85) {
+          lastGamepadSendTime = now;
+          lastGamepadDriveV = targetV;
+          lastGamepadDriveW = targetW;
+          fetch(`/api/drive?v=${targetV.toFixed(3)}&w=${targetW.toFixed(3)}`, { cache: 'no-store' }).catch(() => { });
+        }
+      } else if (wasMoving) {
+        // Nhả cần về giữa -> gửi lệnh 0 (Backend tự kích hoạt giảm tốc êm Soft Decel)
+        lastGamepadDriveV = 0.0;
+        lastGamepadDriveW = 0.0;
+        fetch('/api/drive?v=0&w=0', { cache: 'no-store' }).catch(() => { });
+      }
+    }
+
+    // Khởi động chu kỳ quét Gamepad 30Hz
+    if (typeof navigator !== 'undefined' && navigator.getGamepads) {
+      setInterval(pollGamepad, 33);
+    }
+
+    // Khởi tạo trạng thái mặc định giao diện
+    try {
+      updateFollowBtn();
+      onStepSpeedChange(10);
+    } catch (e) {
+      console.warn('UI init error:', e);
+    }
   </script>
 </body>
+
 </html>

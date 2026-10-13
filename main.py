@@ -25,9 +25,9 @@ MOTOR    = ON   # 1. ĐỘNG CƠ: BẬT (Giai đoạn 1 - Lái xe bằng phím W
 PIN      = ON   # 2. ĐO PIN: BẬT (Giai đoạn 2 - Giám sát pin thời gian thực INA219 0x41)
 BATTERY  = PIN  # (Bí danh tương đương PIN)
 CAMERA   = ON   # 3. CAMERA: BẬT (Giai đoạn 3 - Luồng ảnh màu & đám mây điểm 3D)
-YOLO     = ON   # 4. AI NHẬN DIỆN: BẬT (Giai đoạn 3 - Bộ lọc đối tượng 3D Tiny YOLO)
+YOLO     = OFF  # 4. AI NHẬN DIỆN VẬT THỂ: TẠM TẮT (Sẵn sàng nạp YOLO VPU khi bật ON)
 FOLLOWER = OFF  # 5. BÁM NGƯỜI: Tắt (Tạm thời bỏ qua theo yêu cầu để làm sau)
-MAPPER   = ON   # 6. BẢN ĐỒ 3D: BẬT (Giai đoạn 5 - Lập bản đồ ngữ nghĩa Semantic SLAM)
+MAPPER   = ON   # 6. BẢN ĐỒ 3D / 2D SLAM: BẬT (Giai đoạn 5 - Lập bản đồ Occupancy Grid SLAM)
 WEB      = ON   # 7. WEB COCKPIT: BẬT (Mở cổng 8080 để lái xe bằng phím W-A-S-D)
 BRAKE    = ON   # 8. PHANH KHẨN CẤP: BẬT (Virtual Bumper cản < 20cm khóa tiến)
 # ══════════════════════════════════════════════════════════════════════════════
@@ -60,6 +60,7 @@ from modules.emergency_brake import EmergencyBrake
 from modules.occupancy_slam import OccupancySLAM
 from modules.semantic_mapper import SemanticMapper
 from modules.web_server import WebCockpitServer
+from modules.scan_matcher import CorrelativeScanMatcher2D
 
 # Kiểm tra môi trường ROS
 try:
@@ -122,10 +123,24 @@ class JetBotMasterSystem:
         self.current_w = 0.0
         self.last_cmd_vel_time = 0.0
         self.last_real_ros_odom_time = 0.0
+        self.last_imu_time = 0.0
+        self.has_active_imu = False
         self.is_auto_scanning = False
         self.auto_scan_remaining = 0.0
         self.auto_scan_duration = float(getattr(config, 'AUTO_SCAN_DURATION_S', 16.0))
         self.auto_scan_mode = getattr(config, 'AUTO_SCAN_MODE', 'step')
+        self.is_step_running = False
+        self.step_cancel_requested = False
+        self.step_status_text = "SẴN SÀNG"
+        self.step_progress_pct = 0
+
+        # Bộ đo quãng đường và góc quay chuyến đi (Trip Odometer)
+        self.trip_distance_m = 0.0
+        self.trip_turn_rad = 0.0
+        self.trip_active_time_s = 0.0
+        self.total_distance_m = 0.0
+        self._manual_decel_id = 0
+        self.soft_stop_enabled = getattr(config, 'ENABLE_SOFT_STOP', True)
 
         # 1. Khởi tạo Module Động cơ
         self.motors = None
@@ -162,11 +177,8 @@ class JetBotMasterSystem:
         # 4. Khởi tạo Module Nhận diện AI
         self.yolo = SpatialPerceptionEngine() if self.flags.yolo else None
 
-        # 5. Khởi tạo Module Bám người HRI (Luôn sẵn sàng, mặc định tắt theo Harness 4)
-        self.follower = PersonTracker()
-        self.follower.set_enabled(bool(self.flags.follower))
-        if self.flags.follower:
-            print("🎯 [HRI] Đã kích hoạt tính năng Tự hành Bám người!")
+        # 5. Module Bám người HRI: ĐÃ KHÓA CỨNG VĨNH VIỄN (Triệt tiêu 100% việc tự ý chạy động cơ)
+        self.follower = None
 
         # 6. Khởi tạo Module Phanh khẩn cấp & Cản ảo 3D (Độc lập, dễ kiểm thử)
         brake_active = bool(getattr(self.flags, 'brake', getattr(config, 'ENABLE_SAFETY_BRAKE', False)))
@@ -181,6 +193,16 @@ class JetBotMasterSystem:
         # 7. Khởi tạo Module Bản đồ Chiếm dụng 2D Tích Lũy Tĩnh & Ghim Vật Thể (Occupancy SLAM)
         self.mapper = OccupancySLAM(size_m=10.0, resolution=0.05) if self.flags.mapper else None
 
+        # 7.1. Khởi tạo Bộ so khớp tia Correlative Scan Matcher (CSM - Tự cân bằng vòng kín)
+        self.scan_matcher = None
+        if getattr(config, 'ENABLE_SCAN_MATCHING', True):
+            self.scan_matcher = CorrelativeScanMatcher2D(
+                search_dist_m=getattr(config, 'SCAN_MATCH_SEARCH_DIST_M', 0.08),
+                search_yaw_deg=getattr(config, 'SCAN_MATCH_SEARCH_YAW_DEG', 6.0),
+                min_score=getattr(config, 'SCAN_MATCH_MIN_SCORE', 0.28)
+            )
+        self._last_scan_matched = False
+
         # 8. Khởi tạo Trạm điều khiển Web Cockpit
         self.web = None
         if self.flags.web:
@@ -194,6 +216,9 @@ class JetBotMasterSystem:
             self.web.map_save_cb = self.save_map
             self.web.map_reset_cb = self.reset_map
             self.web.auto_scan_cb = self.toggle_auto_scan
+            self.web.step_move_cb = self.execute_step_move
+            self.web.step_cancel_cb = self.cancel_step_move
+            self.web.trip_reset_cb = self.reset_trip_odometer
             self.web.start()
 
         # Kết nối ROS trong nền nếu có roscore
@@ -299,7 +324,7 @@ class JetBotMasterSystem:
 
     def _update_semantic_mapper(self, detections):
         """Cập nhật các vật thể nhận diện vào Bản đồ Ngữ nghĩa 3D toàn cục (Semantic Mapper)"""
-        if not self.flags.mapper or not self.mapper:
+        if not self.flags.mapper or not self.mapper or not getattr(config, 'ENABLE_SEMANTIC_LANDMARKS', False):
             return
         with self.lock:
             rx, ry, rz, yaw = self.robot_x, self.robot_y, self.robot_z, self.robot_yaw
@@ -442,8 +467,8 @@ class JetBotMasterSystem:
                 print("🎥 [TERMINAL 1 -> 2] Đã nhận luồng hình ảnh màu RGB trực tiếp từ 'camera_ai.launch' thành công!")
 
             # Ước lượng góc quay thị giác thời gian thực (Visual Gyroscope):
-            # CHỈ bù góc khi xe đứng yên (tránh cộng dồn kép với odometry bánh xe hoặc auto scan)
-            if self.camera:
+            # Mặc định TẮT (ENABLE_VISUAL_GYRO=False) để bảo toàn tuyệt đối góc quay Odometry đã hiệu chuẩn chuẩn xác
+            if getattr(config, 'ENABLE_VISUAL_GYRO', False) and self.camera and not getattr(self, 'is_step_running', False):
                 is_moving = (abs(getattr(self, 'current_w', 0.0)) > 0.01 or abs(getattr(self, 'current_v', 0.0)) > 0.01)
                 if not is_moving and not getattr(self, 'is_auto_scanning', False):
                     delta_yaw = self.camera.estimate_visual_rotation(img)
@@ -482,13 +507,7 @@ class JetBotMasterSystem:
             if not getattr(self, '_ros_first_depth_logged', False):
                 self._ros_first_depth_logged = True
                 print("📐 [TERMINAL 1 -> 2] Đã nhận ma trận Stereo Depth từ 'camera_ai.launch'! Hệ thống Phanh Khẩn Cấp đã sẵn sàng.")
-            with self.lock:
-                rx, ry, rz, yaw = self.robot_x, self.robot_y, self.robot_z, self.robot_yaw
-            self.camera.process_depth_frame(depth_np, rx, ry, rz, yaw)
-
-            if self.mapper and self.flags.mapper:
-                self.mapper.update_scan(rx, ry, self.camera.points_3d)
-
+            # 1. Giám sát an toàn tức thời trên TỪNG FRAME (< 0.5ms) để phanh khẩn cấp nhạy 100%:
             if self.safety_brake:
                 dist = self.safety_brake.calculate_clearance(depth_np)
                 self.last_depth_clearance = dist
@@ -497,6 +516,43 @@ class JetBotMasterSystem:
                 dist = self.yolo.calculate_obstacle_distance(depth_np)
                 self.last_depth_clearance = dist
                 self._update_fused_obstacle_clearance()
+
+            # 2. Cập nhật SLAM & CSM ở nhịp 10 Hz chuẩn (mỗi 0.09s):
+            # Tiết kiệm 70% CPU Jetson Nano, giải phóng luồng camera stream đạt tốc độ tối đa!
+            if (now - getattr(self, 'last_ros_slam_time', 0.0)) >= 0.09:
+                self.last_ros_slam_time = now
+                with self.lock:
+                    rx, ry, rz, yaw = self.robot_x, self.robot_y, self.robot_z, self.robot_yaw
+                self.camera.process_depth_frame(depth_np, rx, ry, rz, yaw)
+
+                # Xác định trạng thái xe đang quay tại chỗ (Lái tay WASD, Bước định lượng hoặc Tự quét 360°):
+                is_turning = (abs(getattr(self, 'current_w', 0.0)) > 0.03) or getattr(self, 'is_step_running', False) or getattr(self, 'is_auto_scanning', False)
+
+                # Correlative Scan Matching (CSM - Tự cân bằng tọa độ vòng kín):
+                # CHỈ chạy khi xe KHÔNG quay tại chỗ (tránh CSM kéo giật lùi góc robot_yaw về hướng tường cũ):
+                if not is_turning and self.scan_matcher and getattr(config, 'ENABLE_SCAN_MATCHING', True) and self.mapper:
+                    scan_robot = getattr(self.camera, 'points_robot', None)
+                    if scan_robot:
+                        corr_x, corr_y, corr_yaw, matched, score = self.scan_matcher.align_pose(
+                            rx, ry, yaw, scan_robot, self.mapper.grid,
+                            self.mapper.origin_x, self.mapper.origin_y,
+                            self.mapper.width, self.mapper.height, self.mapper.resolution
+                        )
+                        self._last_scan_matched = matched
+                        if matched:
+                            with self.lock:
+                                self.robot_x = corr_x
+                                self.robot_y = corr_y
+                                self.robot_yaw = corr_yaw
+                                rx, ry, yaw = corr_x, corr_y, corr_yaw
+
+                # Cập nhật bản đồ 2D Occupancy Grid:
+                # - Khi xe đang quay tại chỗ (is_turning=True): TẠM DỪNG bắn tia vào bản đồ tĩnh để triệt tiêu
+                #   hoàn toàn hiện tượng nhòe nan quạt do độ trễ frame.
+                # - Khi xe dừng xoay hoặc chạy thẳng: Cập nhật khung hình tĩnh sắc nét (Keyframe) vào bản đồ.
+                if self.mapper and self.flags.mapper:
+                    if not is_turning:
+                        self.mapper.update_scan(rx, ry, self.camera.points_3d)
         except Exception: pass
 
     def _ros_obstacle_dist_cb(self, msg):
@@ -508,33 +564,65 @@ class JetBotMasterSystem:
         except Exception: pass
 
     def _ros_imu_cb(self, msg):
-        """Nhận góc quay trực tiếp từ cảm biến quán tính IMU (OAK-D hoặc BNO055/MPU6050)"""
+        """Nhận góc quay trực tiếp từ cảm biến quán tính IMU (OAK-D hoặc BNO055/MPU6050)
+        Chỉ nhận khi IMU có bộ lọc AHRS tính góc quay thực tế, loại trừ 100% topic tĩnh/dummy (0,0,0,1)
+        """
         try:
+            # 1. Ưu tiên tuyệt đối góc quay điều khiển khi xe đang thực hiện bước lệnh
+            if getattr(self, 'is_step_running', False):
+                return
+
             q = msg.orientation
             norm_sq = q.x*q.x + q.y*q.y + q.z*q.z + q.w*q.w
             if norm_sq < 0.5:
                 return # Bỏ qua quaternion rỗng hoặc không có dữ liệu
-            if hasattr(msg, 'orientation_covariance') and len(msg.orientation_covariance) > 0 and msg.orientation_covariance[0] < 0:
+
+            # 2. Bỏ qua quaternion mặc định/dummy identity (0, 0, 0, 1) do các driver ROS không có AHRS phát ra
+            if abs(q.x) < 1e-3 and abs(q.y) < 1e-3 and abs(q.z) < 1e-3 and abs(q.w - 1.0) < 1e-3:
                 return
+
+            # 3. Kiểm tra covariance: REP-145 covariance[0] < 0 nghĩa là orientation không khả dụng
+            cov = getattr(msg, 'orientation_covariance', None)
+            if cov is not None and len(cov) >= 9:
+                if cov[0] < 0 or cov[0] > 10.0:
+                    return
+
             siny = 2.0 * (q.w * q.z + q.x * q.y)
             cosy = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
             yaw = math.atan2(siny, cosy)
+
             with self.lock:
                 self.robot_yaw = yaw
-                self.last_real_ros_odom_time = time.time()
+                self.last_imu_time = time.time()
+                self.has_active_imu = True
+                # LƯU Ý: Tuyệt đối KHÔNG gán self.last_real_ros_odom_time ở đây vì IMU góc quay không phải là Odometry vị trí!
         except Exception:
             pass
 
     def _ros_odom_cb(self, msg):
         try:
+            # 1. Không để topic Odometry bên ngoài ghi đè khi xe đang tự thực thi bước lệnh
+            if getattr(self, 'is_step_running', False):
+                return
+
             q = msg.pose.pose.orientation
             norm_sq = q.x*q.x + q.y*q.y + q.z*q.z + q.w*q.w
             if norm_sq < 0.5:
                 return
             p = msg.pose.pose.position
-            # Bỏ qua nếu topic phát dummy tĩnh (0,0,0) liên tục
-            if abs(p.x) < 1e-4 and abs(p.y) < 1e-4 and abs(q.z) < 1e-4:
+
+            # 2. Bỏ qua nếu topic phát dummy tĩnh (0,0,0) hoặc quaternion identity
+            is_dummy_pos = (abs(p.x) < 1e-3 and abs(p.y) < 1e-3 and abs(p.z) < 1e-3)
+            is_dummy_rot = (abs(q.x) < 1e-3 and abs(q.y) < 1e-3 and abs(q.z) < 1e-3 and abs(q.w - 1.0) < 1e-3)
+            if is_dummy_pos and is_dummy_rot:
                 return
+
+            # Kiểm tra covariance: nếu RTAB-Map mất tracking (covariance âm hoặc quá lớn) -> bỏ qua
+            cov = getattr(msg.pose, 'covariance', None)
+            if cov is not None and len(cov) >= 36:
+                if cov[0] < 0 or cov[0] > 100.0:
+                    return
+
             siny = 2.0 * (q.w * q.z + q.x * q.y)
             cosy = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
             yaw = math.atan2(siny, cosy)
@@ -569,6 +657,8 @@ class JetBotMasterSystem:
         self.last_manual_drive_time = time.time()
         if self.is_auto_scanning:
             self.is_auto_scanning = False
+        if getattr(self, 'is_step_running', False):
+            self.cancel_step_move()
         print(f"🎮 [WEB LÁI TAY] Lệnh nhận được: v={v:.2f}, w={w:.2f}")
 
         brake_thresh = getattr(config, 'SAFETY_BRAKE_DIST_M', 0.20)
@@ -587,22 +677,72 @@ class JetBotMasterSystem:
                 v = 0.0
                 print(f"🛑 [KHÓA LỆNH TIẾN] Cản cách {self.obstacle_distance*100:.1f} cm (<= {int(brake_thresh*100)}cm). Cho phép LÙI hoặc QUAY để thoát cản!")
 
-        # 3. Cập nhật vận tốc tức thời cho vòng lặp Dead-Reckoning
+        # 3. Cập nhật vận tốc tức thời và điều khiển động cơ
         with self.lock:
-            self.current_v = v
-            self.current_w = w
-            self.last_cmd_vel_time = time.time()
+            old_v = getattr(self, 'current_v', 0.0)
+            old_w = getattr(self, 'current_w', 0.0)
+            self._manual_decel_id += 1
+            cur_decel_id = self._manual_decel_id
 
-        if self.motors:
-            if abs(v) < 0.01 and abs(w) < 0.01:
-                self.motors.stop()
-            else:
-                self.motors.set_cmd_vel(v, w)
+        is_stop_cmd = (abs(v) < 0.01 and abs(w) < 0.01)
+        was_moving = (abs(old_v) > 0.02 or abs(old_w) > 0.04)
+        soft_decel = getattr(self, 'soft_stop_enabled', getattr(config, 'MANUAL_SOFT_DECEL', True))
+
+        if is_stop_cmd and was_moving and soft_decel and self.motors:
+            # Hạ dốc giảm tốc từ từ trong 180ms để xe dừng êm ái, không bị khựng giật
+            threading.Thread(target=self._manual_soft_decel_worker, args=(old_v, old_w, cur_decel_id), daemon=True).start()
+        else:
+            # ĐỒNG NHẤT 100% VẬN TỐC GÓC VỚI ĐỘNG CƠ (motor_controller & _step_worker):
+            # Khi quay tại chỗ (v=0, w!=0), motor_controller chuẩn hóa duty theo mốc 13% PWM (0.13 = 1.58 rad/s)
+            # và chặn dưới tối thiểu STEP_TURN_MIN_PWM (0.11 = 11% PWM).
+            # Ta đồng bộ ngược lại để current_w và bộ đo hành trình (Trip Odometer/SLAM) nhận chuẩn xác vận tốc thực tế:
+            effective_w = w
+            if abs(v) < 0.01 and abs(w) > 0.01:
+                min_turn = getattr(config, 'STEP_TURN_MIN_PWM', 0.11)
+                turn_duty = max(min_turn, min(0.24, (abs(w) / 1.58) * 0.13))
+                effective_w = (1.58 * (turn_duty / 0.13)) * (1.0 if w > 0 else -1.0)
+
+            with self.lock:
+                self.current_v = v
+                self.current_w = effective_w
+                self.last_cmd_vel_time = time.time()
+
+            if self.motors:
+                if is_stop_cmd:
+                    self.motors.stop()
+                else:
+                    self.motors.set_cmd_vel(v, effective_w)
 
         if HAS_ROS and self.ros_cmd_pub:
             t = Twist()
-            t.linear.x, t.angular.z = v, w
+            t.linear.x, t.angular.z = v, getattr(self, 'current_w', w)
             self.ros_cmd_pub.publish(t)
+
+    def _manual_soft_decel_worker(self, from_v, from_w, decel_id):
+        """Hạ dốc giảm tốc mượt mà khi người dùng nhả phím WASD / cần Gamepad (180ms)"""
+        decel_ms = getattr(config, 'MANUAL_DECEL_TIME_MS', 180)
+        steps = 4
+        dt = (decel_ms / 1000.0) / steps
+        for i in range(1, steps + 1):
+            with self.lock:
+                if self._manual_decel_id != decel_id:
+                    return  # Có lệnh lái mới, hủy ngay quá trình giảm tốc
+                ratio = 1.0 - (i / steps)
+                step_v = from_v * ratio
+                step_w = from_w * ratio
+                self.current_v = step_v
+                self.current_w = step_w
+                self.last_cmd_vel_time = time.time()
+            if self.motors:
+                self.motors.set_cmd_vel(step_v, step_w)
+            time.sleep(dt)
+
+        with self.lock:
+            if self._manual_decel_id == decel_id:
+                self.current_v = 0.0
+                self.current_w = 0.0
+        if self.motors and self._manual_decel_id == decel_id:
+            self.motors.stop()
 
     def _battery_loop(self):
         """Vòng lặp đo pin định kỳ 1 Hz"""
@@ -633,6 +773,10 @@ class JetBotMasterSystem:
             last_t = now
 
             with self.lock:
+                # Nếu đang chạy bước định lượng, việc cập nhật hành trình và tọa độ do _step_worker cập nhật chuẩn xác theo bước lệnh:
+                if getattr(self, 'is_step_running', False):
+                    continue
+
                 # Nếu không nhận thêm lệnh lái trong 0.35s -> coi như đã dừng xe (v=0, w=0)
                 if (now - getattr(self, 'last_cmd_vel_time', 0.0)) > 0.35:
                     self.current_v = 0.0
@@ -642,14 +786,46 @@ class JetBotMasterSystem:
                 w = getattr(self, 'current_w', 0.0)
 
                 if abs(v) > 0.005 or abs(w) > 0.005:
-                    # Tích phân góc quay (Yaw) chuẩn vi phân:
-                    self.robot_yaw += w * dt
-                    # Chuẩn hóa góc quay về [-pi, +pi]
-                    self.robot_yaw = math.atan2(math.sin(self.robot_yaw), math.cos(self.robot_yaw))
+                    # ── ĐỒNG NHẤT HỆ SỐ HIỆU CHUẨN GIỮA LÁI THỦ CÔNG VÀ BƯỚC ĐỊNH LƯỢNG ──
+                    # Dùng chung chính các hệ số SCALE người dùng cấu hình trong config:
+                    if v >= 0:
+                        lin_scale = getattr(config, 'STEP_FORWARD_SCALE', 0.44)
+                    else:
+                        lin_scale = getattr(config, 'STEP_BACKWARD_SCALE', 0.48)
 
-                    # Tích phân tọa độ không gian (X, Y):
-                    self.robot_x += v * dt * math.cos(self.robot_yaw)
-                    self.robot_y += v * dt * math.sin(self.robot_yaw)
+                    if w > 0:  # Quay trái CCW
+                        turn_scale = getattr(config, 'STEP_TURN_LEFT_SCALE', 0.60)
+                    else:      # Quay phải CW
+                        turn_scale = getattr(config, 'STEP_TURN_RIGHT_SCALE', 0.60)
+
+                    lin_scale = max(0.05, float(lin_scale))
+                    turn_scale = max(0.05, float(turn_scale))
+
+                    # Vận tốc thực tế bánh xe lăn/quay trên sàn (được bù trừ bởi hệ số SCALE):
+                    v_real = v / lin_scale
+                    w_real = w / turn_scale
+
+                    # Tích phân quãng đường & góc quay chuyến đi (Trip Odometer) theo vận tốc thực tế:
+                    dist_step = abs(v_real) * dt
+                    rot_step = abs(w_real) * dt
+                    self.total_distance_m += dist_step
+                    self.trip_distance_m += dist_step
+                    self.trip_turn_rad += rot_step
+                    self.trip_active_time_s += dt
+
+                    # KIỂM TRA NGUỒN ODOMETRY THỰC (Ưu tiên tuyệt đối ROS & IMU phần cứng):
+                    has_ros_odom = (now - getattr(self, 'last_real_ros_odom_time', 0.0)) < 0.50
+                    has_real_imu = (now - getattr(self, 'last_imu_time', 0.0)) < 0.50
+
+                    if not has_ros_odom:
+                        # Chỉ tích phân góc quay từ w khi không có cảm biến IMU thực
+                        if not has_real_imu:
+                            self.robot_yaw += w_real * dt
+                            self.robot_yaw = math.atan2(math.sin(self.robot_yaw), math.cos(self.robot_yaw))
+
+                        # Tích phân tọa độ không gian (X, Y) theo vận tốc thực tế
+                        self.robot_x += v_real * dt * math.cos(self.robot_yaw)
+                        self.robot_y += v_real * dt * math.sin(self.robot_yaw)
 
                     # Cập nhật vết lịch sử đường đi (path history) khi di chuyển đủ 2cm
                     if not self.path_history or (
@@ -660,28 +836,9 @@ class JetBotMasterSystem:
                             self.path_history.pop(0)
 
     def _control_loop(self):
-        """Vòng lặp bám người HRI (10 Hz) với cơ chế nhường quyền lái tay"""
-        last_log = 0.0
+        """Vòng lặp tự hành - ĐÃ KHÓA CỨNG AN TOÀN (Tuyệt đối không can thiệp động cơ)"""
         while self.running:
-            if self.follower and self.follower.is_enabled:
-                # Ưu tiên lái tay: Nếu vừa bấm phím lái trong 1.0 giây, tạm ngừng follower
-                if (time.time() - self.last_manual_drive_time > 1.0):
-                    with self.lock: dets = list(self.detections)
-                    v, w = self.follower.compute_command(dets)
-                    if v is not None and w is not None:
-                        with self.lock:
-                            self.current_v = v
-                            self.current_w = w
-                            self.last_cmd_vel_time = time.time()
-                        if (abs(v) > 0.01 or abs(w) > 0.01) and (time.time() - last_log > 0.6):
-                            last_log = time.time()
-                            print(f"🎯 [HRI BÁM NGƯỜI] Điều khiển theo mục tiêu: v={v:.2f} m/s, w={w:.2f} rad/s")
-                        if self.motors: self.motors.set_cmd_vel(v, w)
-                        if HAS_ROS and self.ros_cmd_pub:
-                            t = Twist()
-                            t.linear.x, t.angular.z = v, w
-                            self.ros_cmd_pub.publish(t)
-            time.sleep(0.1)
+            time.sleep(0.5)
 
     def _ai_inference_loop(self):
         """Luồng suy luận AI bất đồng bộ (Zero-Latency Async Worker):
@@ -732,6 +889,7 @@ class JetBotMasterSystem:
                 mock_pts.append([round(float(x), 2), -2.0, round(float(z), 2)])
 
         last_sim_time = 0.0
+        last_slam_time = 0.0
 
         while self.running:
             if not self.flags.camera or not self.camera:
@@ -760,13 +918,8 @@ class JetBotMasterSystem:
                     self._update_fused_obstacle_clearance()
                 if live_depth is not None:
                     self.latest_depth_np = live_depth
-                    with self.lock:
-                        rx, ry, rz, yaw = self.robot_x, self.robot_y, self.robot_z, self.robot_yaw
-                    self.camera.process_depth_frame(live_depth, rx, ry, rz, yaw)
-                    if self.mapper and self.flags.mapper:
-                        self.mapper.update_scan(rx, ry, self.camera.points_3d)
 
-                    # Giám sát an toàn tức thời từ ma trận Depth USB
+                    # 1. Giám sát an toàn tức thời trên TỪNG FRAME (< 0.5ms) để phanh khẩn cấp nhạy 100%
                     if self.safety_brake:
                         d_clear = self.safety_brake.calculate_clearance(live_depth)
                         with self.lock:
@@ -778,6 +931,43 @@ class JetBotMasterSystem:
                             self.last_depth_clearance = d_clear if d_clear is not None else 99.0
                         self._update_fused_obstacle_clearance()
 
+                    # 2. Cập nhật SLAM & CSM Scan Matching ở nhịp 10 Hz chuẩn (mỗi 0.09s)
+                    # Giúp luồng Camera đạt tối đa 25-30 FPS mượt mà, không bị nghẽn bởi phép toán ma trận
+                    if (now - last_slam_time >= 0.09):
+                        last_slam_time = now
+                        with self.lock:
+                            rx, ry, rz, yaw = self.robot_x, self.robot_y, self.robot_z, self.robot_yaw
+                        self.camera.process_depth_frame(live_depth, rx, ry, rz, yaw)
+
+                        # Xác định trạng thái xe đang quay tại chỗ (Lái tay WASD, Bước định lượng hoặc Tự quét 360°):
+                        is_turning = (abs(getattr(self, 'current_w', 0.0)) > 0.03) or getattr(self, 'is_step_running', False) or getattr(self, 'is_auto_scanning', False)
+
+                        # Correlative Scan Matching (CSM - Tự cân bằng tọa độ vòng kín)
+                        # CHỈ chạy khi xe KHÔNG quay tại chỗ (tránh CSM kéo giật lùi góc robot_yaw về hướng tường cũ):
+                        if not is_turning and self.scan_matcher and getattr(config, 'ENABLE_SCAN_MATCHING', True) and self.mapper:
+                            scan_robot = getattr(self.camera, 'points_robot', None)
+                            if scan_robot:
+                                corr_x, corr_y, corr_yaw, matched, score = self.scan_matcher.align_pose(
+                                    rx, ry, yaw, scan_robot, self.mapper.grid,
+                                    self.mapper.origin_x, self.mapper.origin_y,
+                                    self.mapper.width, self.mapper.height, self.mapper.resolution
+                                )
+                                self._last_scan_matched = matched
+                                if matched:
+                                    with self.lock:
+                                        self.robot_x = corr_x
+                                        self.robot_y = corr_y
+                                        self.robot_yaw = corr_yaw
+                                        rx, ry, yaw = corr_x, corr_y, corr_yaw
+
+                        # Cập nhật bản đồ 2D Occupancy Grid:
+                        # - Khi xe đang quay tại chỗ (is_turning=True): TẠM DỪNG bắn tia vào bản đồ tĩnh để triệt tiêu
+                        #   hoàn toàn hiện tượng nhòe nan quạt do độ trễ frame (160ms @ 6.2 FPS).
+                        # - Khi xe dừng xoay hoặc chạy thẳng: Cập nhật khung hình tĩnh sắc nét (Keyframe) vào bản đồ.
+                        if self.mapper and self.flags.mapper:
+                            if not is_turning:
+                                self.mapper.update_scan(rx, ry, self.camera.points_3d)
+
                 if live_frame is not None:
                     self.latest_raw_bgr = live_frame
 
@@ -785,13 +975,15 @@ class JetBotMasterSystem:
                     c_has_imu = False
                     if self.camera and hasattr(self.camera, 'get_imu_heading'):
                         c_has_imu, _, c_raw_yaw = self.camera.get_imu_heading()
-                        if c_has_imu and not getattr(self, 'is_auto_scanning', False):
+                        if c_has_imu and not getattr(self, 'is_auto_scanning', False) and not getattr(self, 'is_step_running', False):
                             with self.lock:
                                 self.robot_yaw = c_raw_yaw
+                                self.last_imu_time = time.time()
+                                self.has_active_imu = True
 
-                    if not c_has_imu:
+                    if getattr(config, 'ENABLE_VISUAL_GYRO', False) and not c_has_imu and not getattr(self, 'is_step_running', False):
                         # Ước lượng xoay thị giác thời gian thực (Visual Gyroscope):
-                        # CHỈ bù góc khi xe đứng yên (tránh cộng dồn kép với odometry bánh xe hoặc auto scan)
+                        # Mặc định TẮT (ENABLE_VISUAL_GYRO=False) để bảo toàn tuyệt đối góc quay Odometry đã hiệu chuẩn chuẩn xác
                         is_moving = (abs(getattr(self, 'current_w', 0.0)) > 0.01 or abs(getattr(self, 'current_v', 0.0)) > 0.01)
                         if not is_moving and not getattr(self, 'is_auto_scanning', False):
                             delta_yaw = self.camera.estimate_visual_rotation(live_frame)
@@ -860,12 +1052,25 @@ class JetBotMasterSystem:
             last_ros_t = self.last_ros_img_time
             brake_dist = getattr(config, 'SAFETY_BRAKE_DIST_M', 0.20)
             cam_fps = float(self.camera.calc_fps) if (self.camera and hasattr(self.camera, 'calc_fps') and self.camera.calc_fps > 0) else 15.0
+            now_t = time.time()
+            has_ros_odom_active = (now_t - getattr(self, 'last_real_ros_odom_time', 0.0)) < 0.5
+            has_imu_active = (now_t - getattr(self, 'last_imu_time', 0.0)) < 0.5
 
         # 2. GIẢI PHÓNG LOCK HOÀN TOÀN TRƯỚC KHI XỬ LÝ BẢN ĐỒ:
         # get_payload_for_web() chạy ngoài lock để triệt tiêu 100% hiện tượng khựng/lag điều khiển WASD
         has_person = any(d.get('name') == 'PERSON' for d in dets)
         confirmed_objs = self.mapper.get_confirmed_landmarks() if (self.flags.mapper and self.mapper) else []
         map_payload = self.mapper.get_payload_for_web() if (self.flags.mapper and self.mapper) else {}
+
+        # Nguồn Odometry đang hoạt động - hiển thị trực tiếp lên Web Cockpit
+        if has_ros_odom_active:
+            odometry_source = "ROS RTAB-Map"
+        elif getattr(self, '_last_scan_matched', False):
+            odometry_source = "CSM Scan-Matching"
+        elif has_imu_active:
+            odometry_source = "IMU OAK-D S2"
+        else:
+            odometry_source = "Dead-Reckoning"
 
         if time.time() - last_ros_t < 2.0:
             cam_src = "OAK-D S2 (ROS LIVE)"
@@ -895,13 +1100,32 @@ class JetBotMasterSystem:
             "points_3d": pts,
             "detections": dets, "obstacle_distance": obs_dist,
             "safety_brake_dist": brake_dist,
+            "odometry_source": odometry_source,
+            "imu_active": has_imu_active,
+            "ros_odom_active": has_ros_odom_active,
+            "soft_stop_enabled": getattr(self, 'soft_stop_enabled', True),
             "auto_scanning": scanning,
             "auto_scan_remaining": round(scan_rem, 1),
             "auto_scan_duration": round(scan_dur, 1),
             "auto_scan_mode": scan_mode,
             "semantic_objects": confirmed_objs,
             "landmarks": confirmed_objs,
-                "follower_enabled": bool(self.follower.is_enabled) if self.follower else False,
+            "scan_matching": getattr(config, 'ENABLE_SCAN_MATCHING', True),
+            "scan_matched": getattr(self, '_last_scan_matched', False),
+            "semantic_landmarks_enabled": getattr(config, 'ENABLE_SEMANTIC_LANDMARKS', False),
+            "step_state": {
+                "running": getattr(self, 'is_step_running', False),
+                "status": getattr(self, 'step_status_text', 'SẴN SÀNG')
+            },
+            "trip_odometer": {
+                "distance_cm": round(getattr(self, 'trip_distance_m', 0.0) * 100.0, 1),
+                "distance_m": round(getattr(self, 'trip_distance_m', 0.0), 3),
+                "turn_deg": round(math.degrees(getattr(self, 'trip_turn_rad', 0.0)), 1),
+                "active_time_s": round(getattr(self, 'trip_active_time_s', 0.0), 2),
+                "current_v_cm_s": round(abs(getattr(self, 'current_v', 0.0)) * 100.0, 1),
+                "total_distance_m": round(getattr(self, 'total_distance_m', 0.0), 3)
+            },
+            "follower_enabled": bool(self.follower.is_enabled) if self.follower else False,
                 "mapper_enabled": bool(self.flags.mapper),
                 "camera_source": f"{cam_src} [{cam_mode_str}]",
                 "calc_fps": cam_fps,
@@ -944,12 +1168,10 @@ class JetBotMasterSystem:
                 res = self.camera.set_view_mode(mode)
                 return res
         if "follow" in flag_name:
-            if self.follower is None:
-                self.follower = PersonTracker()
-            new_state = not self.follower.is_enabled
-            self.follower.set_enabled(new_state)
-            print(f"🔄 [TOGGLE] Bám người HRI: {'BẬT' if new_state else 'TẮT'}")
-            return new_state
+            print("🛡️ [KHÓA CỨNG AN TOÀN] Tính năng bám người HRI đã bị VÔ HIỆU HÓA HOÀN TOÀN để bảo vệ động cơ JetBot!")
+            if self.follower:
+                self.follower.set_enabled(False)
+            return False
         elif "map" in flag_name:
             if self.mapper is None:
                 self.mapper = OccupancySLAM(size_m=10.0, resolution=0.05)
@@ -970,6 +1192,11 @@ class JetBotMasterSystem:
             self.motors.invert_linear = not self.motors.invert_linear
             print(f"🔄 [TOGGLE] Đảo chiều Tiến/Lùi: {'BẬT' if self.motors.invert_linear else 'TẮT'}")
             return self.motors.invert_linear
+        elif any(k in flag_name for k in ["soft_stop", "smooth", "decel", "ham_toc"]):
+            self.soft_stop_enabled = not getattr(self, 'soft_stop_enabled', True)
+            status_str = "BẬT (DỪNG TỪ TỪ - SOFT STOP)" if self.soft_stop_enabled else "TẮT (DỪNG TỨC THÌ - HARD STOP)"
+            print(f"🛑 [TOGGLE] Chế độ dừng: {status_str}")
+            return self.soft_stop_enabled
         return False
 
     def save_map(self, name="my_room_map"):
@@ -977,6 +1204,304 @@ class JetBotMasterSystem:
         if self.mapper:
             return self.mapper.save_map(name)
         return False, "Module Mapper chưa bật"
+
+    def execute_step_move(self, move_type, value, direction='forward', speed_pct=20.0):
+        """Thực thi bước di chuyển định lượng chính xác (cm hoặc độ) theo tốc độ %"""
+        with self.lock:
+            if getattr(self, 'is_step_running', False):
+                return False, "Đang thực hiện bước trước đó"
+            if self.is_auto_scanning:
+                self.is_auto_scanning = False
+            self.is_step_running = True
+            self.step_cancel_requested = False
+            self.last_manual_drive_time = time.time()
+
+        threading.Thread(target=self._step_worker, args=(move_type, float(value), direction, float(speed_pct)), daemon=True).start()
+        return True, f"Bắt đầu bước {move_type}"
+
+    def cancel_step_move(self):
+        """Hủy khẩn cấp bước di chuyển định lượng"""
+        with self.lock:
+            self.step_cancel_requested = True
+            self.current_v = 0.0
+            self.current_w = 0.0
+        if self.motors:
+            if hasattr(self.motors, 'active_brake'):
+                self.motors.active_brake(reverse_duty=0.14, pulse_ms=35)
+            else:
+                self.motors.stop()
+        return True
+
+    def _step_worker(self, move_type, value, direction='forward', speed_pct=20.0):
+        """Luồng điều khiển bước vi sai chính xác theo cự ly/góc và mức tốc độ PWM (%)"""
+        try:
+            # Giới hạn mức tốc độ an toàn: tối thiểu 6% (chế độ bò siêu chậm), tối đa 40%
+            pct_val = max(6.0, min(40.0, float(speed_pct)))
+            duty = pct_val / 100.0
+
+            if move_type == 'linear':
+                dist_cm = max(1.0, min(500.0, float(value)))
+                dist_m = dist_cm / 100.0
+                is_fwd = (direction == 'forward')
+                sign = 1.0 if is_fwd else -1.0
+
+                # Tỉ lệ hiệu chuẩn cự ly thực tế (dùng chung cho cả bước cm và lái tay WASD)
+                scale_factor = getattr(config, 'STEP_FORWARD_SCALE', 0.50) if is_fwd else getattr(config, 'STEP_BACKWARD_SCALE', 0.50)
+                v_calib = 0.20 * (pct_val / 20.0)
+                duration = max(0.04, (dist_m / v_calib) * scale_factor)
+                v_target = v_calib if is_fwd else -v_calib
+                brake_thresh = getattr(config, 'SAFETY_BRAKE_DIST_M', 0.20)
+
+                # ── DỪNG TỪ TỪ ĐỒNG NHẤT 100% VỚI LÁI THỦ CÔNG ──
+                enable_soft_stop = getattr(self, 'soft_stop_enabled', getattr(config, 'ENABLE_SOFT_STOP', True))
+                decel_time_s = (getattr(config, 'MANUAL_DECEL_TIME_MS', 180) / 1000.0) if enable_soft_stop else 0.0
+
+                # Trừ hao thời gian hạ dốc:
+                if enable_soft_stop and duration > decel_time_s:
+                    t_steady = duration - (decel_time_s / 2.0)
+                else:
+                    t_steady = duration
+                    decel_time_s = 0.0
+
+                total_t = t_steady + decel_time_s
+                last_progress = 0.0
+                last_t_meas = time.time()
+
+                print(f"📏 [BƯỚC ĐỊNH LƯỢNG] Bắt đầu {'TIẾN' if is_fwd else 'LÙI'} {dist_cm:.0f}cm @ {pct_val:.0f}% tốc độ (v={v_calib:.2f}m/s, calib={scale_factor:.2f}, t_chay={t_steady:.2f}s, t_ham={decel_time_s:.2f}s, soft_stop={'BẬT' if enable_soft_stop else 'TẮT'})...")
+                start_t = time.time()
+
+                # GIAI ĐOẠN 1: Chạy đều ở vận tốc mục tiêu
+                while not self.step_cancel_requested and (time.time() - start_t < t_steady):
+                    now = time.time()
+                    elapsed = now - start_t
+                    pct = min(90, int((elapsed / total_t) * 100))
+                    self.step_status_text = f"ĐANG {'TIẾN' if is_fwd else 'LÙI'} {dist_cm:.0f}CM @ {pct_val:.0f}%... ({pct}%)"
+
+                    if is_fwd:
+                        with self.lock:
+                            obs_d = self.obstacle_distance
+                        if obs_d is not None and obs_d <= brake_thresh:
+                            print(f"🛑 [BƯỚC ĐỊNH LƯỢNG] Khóa tiến vì phát hiện cản cách {obs_d*100:.1f}cm!")
+                            self.step_status_text = f"DỪNG: GẶP CẢN {obs_d*100:.1f}CM"
+                            break
+
+                    # Cập nhật tiến độ đo đạc chuẩn xác tuyệt đối theo bước lệnh:
+                    progress = min(1.0, elapsed / max(0.001, total_t))
+                    d_prog = progress - last_progress
+                    last_progress = progress
+                    dt_run = now - last_t_meas
+                    last_t_meas = now
+                    d_dist = d_prog * dist_m
+
+                    with self.lock:
+                        self.current_v = v_target
+                        self.current_w = 0.0
+                        self.last_cmd_vel_time = now
+                        self.total_distance_m += d_dist
+                        self.trip_distance_m += d_dist
+                        self.trip_active_time_s += dt_run
+                        self.robot_x += sign * d_dist * math.cos(self.robot_yaw)
+                        self.robot_y += sign * d_dist * math.sin(self.robot_yaw)
+                        if not self.path_history or ((self.robot_x - self.path_history[-1][0])**2 + (self.robot_y - self.path_history[-1][1])**2 > 0.0004):
+                            self.path_history.append([round(self.robot_x, 3), round(self.robot_y, 3), 0.02])
+                            if len(self.path_history) > 400: self.path_history.pop(0)
+
+                    if self.motors:
+                        self.motors.set_cmd_vel(v_target, 0.0)
+
+                    time.sleep(0.02)
+
+                # GIAI ĐOẠN 2: Hạ dốc giảm tốc từ từ (ĐỒNG NHẤT 100% VỚI LÁI THỦ CÔNG)
+                if not self.step_cancel_requested and decel_time_s > 0.03:
+                    steps = 4
+                    dt_step = decel_time_s / steps
+                    for i in range(1, steps + 1):
+                        if self.step_cancel_requested:
+                            break
+                        ratio = 1.0 - (i / steps)
+                        cur_v = v_target * ratio
+
+                        d_prog = (1.0 - last_progress) / max(1, steps - (i - 1))
+                        d_dist = d_prog * dist_m
+                        last_progress += d_prog
+
+                        with self.lock:
+                            self.current_v = cur_v
+                            self.current_w = 0.0
+                            self.last_cmd_vel_time = time.time()
+                            self.total_distance_m += d_dist
+                            self.trip_distance_m += d_dist
+                            self.trip_active_time_s += dt_step
+                            self.robot_x += sign * d_dist * math.cos(self.robot_yaw)
+                            self.robot_y += sign * d_dist * math.sin(self.robot_yaw)
+
+                        if self.motors:
+                            self.motors.set_cmd_vel(cur_v, 0.0)
+                        time.sleep(dt_step)
+
+                # Dừng hẳn động cơ
+                if self.motors:
+                    self.motors.stop()
+
+                # Đồng bộ hoàn tất 100% bước (nếu không bị hủy giữa chừng):
+                if not self.step_cancel_requested:
+                    rem_prog = max(0.0, 1.0 - last_progress)
+                    if rem_prog > 0:
+                        rem_dist = rem_prog * dist_m
+                        with self.lock:
+                            self.total_distance_m += rem_dist
+                            self.trip_distance_m += rem_dist
+                            self.robot_x += sign * rem_dist * math.cos(self.robot_yaw)
+                            self.robot_y += sign * rem_dist * math.sin(self.robot_yaw)
+
+                with self.lock:
+                    self.current_v = 0.0
+                    self.current_w = 0.0
+
+                if self.step_cancel_requested:
+                    self.step_status_text = "ĐÃ HỦY BƯỚC"
+                    print("⏹️ [BƯỚC ĐỊNH LƯỢNG] Đã hủy bước theo yêu cầu.")
+                else:
+                    self.step_status_text = f"HOÀN TẤT {'TIẾN' if is_fwd else 'LÙI'} {dist_cm:.0f}CM ({pct_val:.0f}%)"
+                    print(f"✅ [BƯỚC ĐỊNH LƯỢNG] Hoàn tất {'tiến' if is_fwd else 'lùi'} {dist_cm:.0f}cm @ {pct_val:.0f}%.")
+
+            elif move_type == 'turn':
+                deg = max(1.0, min(360.0, float(value)))
+                rad = math.radians(deg)
+                is_left = (direction == 'left')
+                dir_val = 1 if is_left else -1
+                dir_sign = 1.0 if is_left else -1.0
+
+                # Tách hệ số tỉ lệ quay TRÁI / PHẢI riêng biệt để bù sai lệch cơ khí:
+                if is_left:
+                    turn_scale = getattr(config, 'STEP_TURN_LEFT_SCALE', 0.60)
+                else:
+                    turn_scale = getattr(config, 'STEP_TURN_RIGHT_SCALE', 0.60)
+
+                turn_min_pwm = getattr(config, 'STEP_TURN_MIN_PWM', 0.11)
+                turn_ratio = getattr(config, 'STEP_TURN_SPEED_RATIO', 1.0)
+
+                # Quy đổi vận tốc góc quay theo % PWM:
+                raw_turn = 0.13 * (pct_val / 20.0) * turn_ratio
+                turn_duty = max(turn_min_pwm, min(0.24, raw_turn))
+                w_calib = 1.58 * (turn_duty / 0.13)
+                duration = max(0.04, (rad / w_calib) * turn_scale)
+                w_target = w_calib if is_left else -w_calib
+
+                # ── DỪNG TỪ TỪ ĐỒNG NHẤT 100% VỚI LÁI THỦ CÔNG ──
+                enable_soft_stop = getattr(self, 'soft_stop_enabled', getattr(config, 'ENABLE_SOFT_STOP', True))
+                decel_time_s = (getattr(config, 'MANUAL_DECEL_TIME_MS', 180) / 1000.0) if enable_soft_stop else 0.0
+
+                # Trừ hao thời gian hạ dốc:
+                if enable_soft_stop and duration > decel_time_s:
+                    t_steady = duration - (decel_time_s / 2.0)
+                else:
+                    t_steady = duration
+                    decel_time_s = 0.0
+
+                total_t = t_steady + decel_time_s
+                last_progress = 0.0
+                last_t_meas = time.time()
+
+                side_name = 'TRÁI' if is_left else 'PHẢI'
+                print(f"🔄 [BƯỚC ĐỊNH LƯỢNG] Bắt đầu QUAY {side_name} {deg:.0f}° @ {pct_val:.0f}% tốc độ (PWM quay={turn_duty*100:.0f}%, calib={turn_scale:.2f}, t_quay={t_steady:.2f}s, t_ham={decel_time_s:.2f}s, soft_stop={'BẬT' if enable_soft_stop else 'TẮT'})...")
+                start_t = time.time()
+
+                # GIAI ĐOẠN 1: Quay đều ở vận tốc mục tiêu
+                while not self.step_cancel_requested and (time.time() - start_t < t_steady):
+                    now = time.time()
+                    elapsed = now - start_t
+                    pct = min(90, int((elapsed / total_t) * 100))
+                    self.step_status_text = f"ĐANG QUAY {side_name} {deg:.0f}° @ {pct_val:.0f}%... ({pct}%)"
+
+                    # Cập nhật tiến độ góc quay chuẩn xác tuyệt đối theo bước lệnh:
+                    progress = min(1.0, elapsed / max(0.001, total_t))
+                    d_prog = progress - last_progress
+                    last_progress = progress
+                    dt_run = now - last_t_meas
+                    last_t_meas = now
+                    d_rad = d_prog * rad
+
+                    with self.lock:
+                        self.current_v = 0.0
+                        self.current_w = w_target
+                        self.last_cmd_vel_time = now
+                        self.trip_turn_rad += d_rad
+                        self.trip_active_time_s += dt_run
+                        self.robot_yaw += dir_sign * d_rad
+                        self.robot_yaw = math.atan2(math.sin(self.robot_yaw), math.cos(self.robot_yaw))
+
+                    if self.motors:
+                        self.motors.spin_in_place(duty=turn_duty, direction=dir_val)
+
+                    time.sleep(0.02)
+
+                # GIAI ĐOẠN 2: Hạ dốc giảm tốc từ từ (ĐỒNG NHẤT 100% VỚI LÁI THỦ CÔNG)
+                if not self.step_cancel_requested and decel_time_s > 0.03:
+                    steps = 4
+                    dt_step = decel_time_s / steps
+                    for i in range(1, steps + 1):
+                        if self.step_cancel_requested:
+                            break
+                        ratio = 1.0 - (i / steps)
+                        cur_duty = turn_duty * ratio
+                        cur_w = w_target * ratio
+
+                        d_prog = (1.0 - last_progress) / max(1, steps - (i - 1))
+                        d_rad = d_prog * rad
+                        last_progress += d_prog
+
+                        with self.lock:
+                            self.current_v = 0.0
+                            self.current_w = cur_w
+                            self.last_cmd_vel_time = time.time()
+                            self.trip_turn_rad += d_rad
+                            self.trip_active_time_s += dt_step
+                            self.robot_yaw += dir_sign * d_rad
+                            self.robot_yaw = math.atan2(math.sin(self.robot_yaw), math.cos(self.robot_yaw))
+
+                        if self.motors:
+                            if cur_duty >= 0.06:
+                                self.motors.spin_in_place(duty=cur_duty, direction=dir_val)
+                            else:
+                                self.motors.stop()
+                        time.sleep(dt_step)
+
+                # Dừng hẳn động cơ
+                if self.motors:
+                    self.motors.stop()
+
+                # Đồng bộ hoàn tất 100% bước quay (nếu không bị hủy giữa chừng):
+                if not self.step_cancel_requested:
+                    rem_prog = max(0.0, 1.0 - last_progress)
+                    if rem_prog > 0:
+                        rem_rad = rem_prog * rad
+                        with self.lock:
+                            self.trip_turn_rad += rem_rad
+                            self.robot_yaw += dir_sign * rem_rad
+                            self.robot_yaw = math.atan2(math.sin(self.robot_yaw), math.cos(self.robot_yaw))
+
+                with self.lock:
+                    self.current_v = 0.0
+                    self.current_w = 0.0
+
+                if self.step_cancel_requested:
+                    self.step_status_text = "ĐÃ HỦY BƯỚC"
+                    print("⏹️ [BƯỚC ĐỊNH LƯỢNG] Đã hủy bước quay theo yêu cầu.")
+                else:
+                    self.step_status_text = f"HOÀN TẤT QUAY {'TRÁI' if is_left else 'PHẢI'} {deg:.0f}° ({pct_val:.0f}%)"
+                    print(f"✅ [BƯỚC ĐỊNH LƯỢNG] Hoàn tất quay {'trái' if is_left else 'phải'} {deg:.0f}° @ {pct_val:.0f}%.")
+
+        except Exception as e:
+            self.step_status_text = f"LỖI: {e}"
+            print(f"❌ [BƯỚC ĐỊNH LƯỢNG] Lỗi: {e}")
+        finally:
+            with self.lock:
+                self.is_step_running = False
+                self.current_v = 0.0
+                self.current_w = 0.0
+            if self.motors:
+                self.motors.stop()
 
     def toggle_auto_scan(self, duration=None, mode=None, pwm=None):
         """Bật/Tắt chế độ tự động xoay chậm đều đúng 360 độ (Closed-Loop IMU 360° Panorama Spin)"""
@@ -1193,6 +1718,21 @@ class JetBotMasterSystem:
         print(f"🎉 [AUTO SCAN 360°] Hoàn tất chu trình quét 360° bằng Camera. Xe đã dừng tại góc ban đầu {self.robot_yaw*180/math.pi:.1f}°.")
 
 
+    def emergency_stop(self):
+        """Phanh khẩn cấp lập tức toàn bộ hệ thống động cơ JetBot"""
+        with self.lock:
+            self.current_v = 0.0
+            self.current_w = 0.0
+            self.step_cancel_requested = True
+            self.is_auto_scanning = False
+        if self.motors:
+            if hasattr(self.motors, 'active_brake'):
+                self.motors.active_brake(reverse_duty=0.16, pulse_ms=40)
+            else:
+                self.motors.stop()
+        print("🛑 [EMERGENCY STOP] Đã ngắt khẩn cấp toàn bộ động cơ JetBot!")
+        return True
+
     def reset_map(self):
         """Xóa trắng bản đồ 2D để xây dựng lại từ đầu và đặt lại gốc tọa độ"""
         with self.lock:
@@ -1203,8 +1743,19 @@ class JetBotMasterSystem:
             self.path_history = []
             self.current_v = 0.0
             self.current_w = 0.0
+        if self.camera and hasattr(self.camera, 'reset_imu_heading'):
+            self.camera.reset_imu_heading()
         if self.mapper:
             return self.mapper.reset_map()
+        return True
+
+    def reset_trip_odometer(self):
+        """Đặt lại bộ đo quãng đường và góc quay chuyến đi về 0"""
+        with self.lock:
+            self.trip_distance_m = 0.0
+            self.trip_turn_rad = 0.0
+            self.trip_active_time_s = 0.0
+        print("📏 [TRIP ODOMETER] Đã đặt lại đồng hồ đo quãng đường chuyến đi về 0.0 cm.")
         return True
 
 

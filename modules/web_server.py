@@ -156,6 +156,68 @@ class WebHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(json.dumps({"status": "OK", "reset": bool(ok)}).encode())
             return
+        elif self.path.startswith('/api/step_move'):
+            step_type = 'linear'
+            direction = 'forward'
+            dist_cm = 20.0
+            deg = 45.0
+            speed_pct = 20.0
+            val_override = None
+
+            if '?' in self.path:
+                for p in self.path.split('?')[1].split('&'):
+                    if p.startswith('type='): step_type = p.split('=')[1].lower()
+                    elif p.startswith('dist_cm='):
+                        try: dist_cm = float(p.split('=')[1])
+                        except Exception: pass
+                    elif p.startswith('deg='):
+                        try: deg = float(p.split('=')[1])
+                        except Exception: pass
+                    elif p.startswith('val='):
+                        try: val_override = float(p.split('=')[1])
+                        except Exception: pass
+                    elif p.startswith('dir='): direction = p.split('=')[1].lower()
+                    elif p.startswith('speed_pct='):
+                        try: speed_pct = float(p.split('=')[1])
+                        except Exception: pass
+                    elif p.startswith('speed='):
+                        try: speed_pct = float(p.split('=')[1])
+                        except Exception: pass
+
+            target_val = val_override if val_override is not None else (deg if step_type == 'turn' else dist_cm)
+
+            ok, msg = False, "No handler"
+            if inst and hasattr(inst, 'execute_step_move'):
+                ok, msg = inst.execute_step_move(step_type, target_val, direction, speed_pct=speed_pct)
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+            self.end_headers()
+            self.wfile.write(json.dumps({"status": "OK" if ok else "ERROR", "message": msg}).encode())
+            return
+        elif self.path.startswith('/api/step_cancel'):
+            ok = False
+            if inst and hasattr(inst, 'cancel_step_move'):
+                ok = inst.cancel_step_move()
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+            self.end_headers()
+            self.wfile.write(json.dumps({"status": "OK", "cancelled": ok}).encode())
+            return
+        elif self.path.startswith('/api/trip_reset'):
+            ok = False
+            if inst and hasattr(inst, 'reset_trip'):
+                ok = inst.reset_trip()
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+            self.end_headers()
+            self.wfile.write(json.dumps({"status": "OK", "reset": bool(ok)}).encode())
+            return
         elif self.path.startswith('/api/auto_scan'):
             duration = None
             mode = None
@@ -243,6 +305,68 @@ class WebHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(json.dumps({"status": "OK", "reset": bool(ok)}).encode())
             return
+        elif self.path.startswith('/api/step_move'):
+            step_type = 'linear'
+            direction = 'forward'
+            dist_cm = 20.0
+            deg = 45.0
+            speed_pct = 20.0
+            val_override = None
+
+            if '?' in self.path:
+                for p in self.path.split('?')[1].split('&'):
+                    if p.startswith('type='): step_type = p.split('=')[1].lower()
+                    elif p.startswith('dist_cm='):
+                        try: dist_cm = float(p.split('=')[1])
+                        except Exception: pass
+                    elif p.startswith('deg='):
+                        try: deg = float(p.split('=')[1])
+                        except Exception: pass
+                    elif p.startswith('val='):
+                        try: val_override = float(p.split('=')[1])
+                        except Exception: pass
+                    elif p.startswith('dir='): direction = p.split('=')[1].lower()
+                    elif p.startswith('speed_pct='):
+                        try: speed_pct = float(p.split('=')[1])
+                        except Exception: pass
+                    elif p.startswith('speed='):
+                        try: speed_pct = float(p.split('=')[1])
+                        except Exception: pass
+
+            target_val = val_override if val_override is not None else (deg if step_type == 'turn' else dist_cm)
+
+            ok, msg = False, "No handler"
+            if inst and hasattr(inst, 'execute_step_move'):
+                ok, msg = inst.execute_step_move(step_type, target_val, direction, speed_pct=speed_pct)
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+            self.end_headers()
+            self.wfile.write(json.dumps({"status": "OK" if ok else "ERROR", "message": msg}).encode())
+            return
+        elif self.path.startswith('/api/step_cancel'):
+            ok = False
+            if inst and hasattr(inst, 'cancel_step_move'):
+                ok = inst.cancel_step_move()
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+            self.end_headers()
+            self.wfile.write(json.dumps({"status": "OK", "cancelled": ok}).encode())
+            return
+        elif self.path.startswith('/api/trip_reset'):
+            ok = False
+            if inst and hasattr(inst, 'reset_trip'):
+                ok = inst.reset_trip()
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+            self.end_headers()
+            self.wfile.write(json.dumps({"status": "OK", "reset": bool(ok)}).encode())
+            return
         elif self.path.startswith('/api/auto_scan'):
             duration = None
             mode = None
@@ -312,6 +436,9 @@ class WebCockpitServer:
         self.map_save_cb = None
         self.map_reset_cb = None
         self.auto_scan_cb = None
+        self.step_move_cb = None
+        self.step_cancel_cb = None
+        self.trip_reset_cb = None
 
     def start(self):
         WebHandler.server_instance = self
@@ -373,6 +500,24 @@ class WebCockpitServer:
                 except TypeError:
                     return self.auto_scan_cb()
         return False
+
+    def execute_step_move(self, step_type, val, direction, speed_pct=20.0):
+        if self.step_move_cb:
+            try:
+                return self.step_move_cb(step_type, val, direction, speed_pct=speed_pct)
+            except TypeError:
+                return self.step_move_cb(step_type, val, direction)
+        return False, "Chưa đăng ký hàm bước"
+
+    def cancel_step_move(self):
+        if self.step_cancel_cb:
+            return self.step_cancel_cb()
+        return False
+
+    def reset_trip(self):
+        if self.trip_reset_cb:
+            return self.trip_reset_cb()
+        return True
 
 
 

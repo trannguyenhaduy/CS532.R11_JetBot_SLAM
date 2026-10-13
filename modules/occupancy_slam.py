@@ -22,6 +22,15 @@ import base64
 import numpy as np
 import cv2
 
+try:
+    import config
+except ImportError:
+    try:
+        import sys as _s; _s.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        import config
+    except ImportError:
+        config = None
+
 if hasattr(sys.stdout, 'reconfigure'):
     try: sys.stdout.reconfigure(encoding='utf-8')
     except Exception: pass
@@ -39,7 +48,7 @@ class PinnedLandmark:
         self.seen_count = 1
         self.first_seen = time.time()
         self.last_seen = self.first_seen
-        self.is_pinned = False  # Khi seen_count >= 10 -> Khóa cứng tọa độ không đổi!
+        self.is_pinned = False  # Khi seen_count >= 2 -> Khóa cứng tọa độ không đổi vĩnh viễn!
 
         # Kích thước hình học 2D thực tế (Rộng x Sâu, mét) phục vụ vẽ 2D Bounding Box:
         dim_map = {
@@ -49,12 +58,13 @@ class PinnedLandmark:
             "TABLE": (1.10, 0.70),
             "DESK": (1.10, 0.70),
             "POTTEDPLANT": (0.35, 0.35),
-            "BOTTLE": (0.15, 0.15),
-            "CUP": (0.12, 0.12),
+            "BOTTLE": (0.20, 0.20),
+            "CUP": (0.15, 0.15),
             "LAPTOP": (0.35, 0.25),
             "TVMONITOR": (0.80, 0.20),
             "SOFA": (1.40, 0.80),
             "BED": (1.60, 1.20),
+            "CAR": (0.50, 0.40),
             "UNKNOWN": (0.35, 0.35),
             "OBSTACLE": (0.35, 0.35)
         }
@@ -62,10 +72,18 @@ class PinnedLandmark:
         self.width_m = float(width_m) if width_m is not None else def_w
         self.depth_m = float(depth_m) if depth_m is not None else def_d
 
-    def update(self, x, y, z, score, width_m=None, depth_m=None):
+    def update(self, x, y, z, score, width_m=None, depth_m=None, new_name=None):
         self.last_seen = time.time()
         self.seen_count += 1
         self.score = max(self.score, score)
+
+        # Cập nhật tên thông minh: ưu tiên tên cụ thể hơn UNKNOWN / OBSTACLE
+        if new_name:
+            clean_n = str(new_name).upper()
+            if self.name in ["UNKNOWN", "OBSTACLE"] and clean_n not in ["UNKNOWN", "OBSTACLE"]:
+                self.name = clean_n
+            elif clean_n not in ["UNKNOWN", "OBSTACLE"] and score > self.score:
+                self.name = clean_n
 
         if width_m is not None:
             self.width_m = round(0.70 * self.width_m + 0.30 * float(width_m), 2)
@@ -78,11 +96,11 @@ class PinnedLandmark:
             self.x = (1.0 - alpha) * self.x + alpha * float(x)
             self.y = (1.0 - alpha) * self.y + alpha * float(y)
             self.z = (1.0 - alpha) * self.z + alpha * float(z)
-            if self.seen_count >= 3:
-                self.is_pinned = True  # ĐÓNG DẤU GHIM CỐ ĐỊNH!
+            if self.seen_count >= 2:
+                self.is_pinned = True  # ĐÓNG DẤU GHIM CỐ ĐỊNH VĨNH VIỄN!
         else:
-            # Khi đã ghim: Tinh chỉnh rất êm dịu (alpha=0.04) để triệt tiêu sai số trôi dạt
-            alpha = 0.04
+            # Khi đã ghim: Tinh chỉnh rất êm dịu (alpha=0.03) để triệt tiêu sai số trôi dạt
+            alpha = 0.03
             self.x = (1.0 - alpha) * self.x + alpha * float(x)
             self.y = (1.0 - alpha) * self.y + alpha * float(y)
 
@@ -97,7 +115,8 @@ class PinnedLandmark:
             "seen": self.seen_count,
             "pinned": self.is_pinned,
             "width": round(self.width_m, 2),
-            "depth": round(self.depth_m, 2)
+            "depth": round(self.depth_m, 2),
+            "is_obstacle": True  # Luôn đóng dấu cản để Web vẽ viền đỏ Tactical Bounding Box!
         }
 
 
@@ -172,11 +191,12 @@ class OccupancySLAM:
 
         self.total_scans_processed += 1
         has_new_obstacle = False
+        effective_max_dist = min(max_dist, 2.85)
 
-        # Lấy mẫu tối đa 40 điểm cản tiêu biểu trong lượt quét hiện tại để giữ CPU < 1ms
-        sampled_pts = points_3d[::max(1, len(points_3d) // 40)] if len(points_3d) > 40 else points_3d
+        # Sử dụng đầy đủ toàn bộ các tia quét đo được từ OAK-D S2 Stereo Depth
+        sampled_pts = points_3d
 
-        # Tạo ray_mask 1 lần duy nhất cho toàn bộ 40 tia thay vì cấp phát 40 mảng trong vòng lặp
+        # Tạo ray_mask 1 lần duy nhất cho toàn bộ các tia để tối ưu CPU Jetson Nano
         ray_mask = np.zeros((self.height, self.width), dtype=np.uint8)
         has_ray = False
 
@@ -190,7 +210,7 @@ class OccupancySLAM:
                     continue
 
                 dist = math.hypot(wx - rx, wy - ry)
-                if not (0.15 <= dist <= max_dist):
+                if not (0.15 <= dist <= effective_max_dist):
                     continue
 
                 o_col, o_row = self.world_to_grid(wx, wy)
@@ -217,9 +237,10 @@ class OccupancySLAM:
 
                 # Vật cản thực sự (wz >= 0.06m: chân ghế, mặt ghế, tường...):
                 cur_hits = int(self.hit_counts[o_row, o_col])
-                if cur_hits < 250:
-                    self.hit_counts[o_row, o_col] = cur_hits + 1
-                # Khi quét trúng >= 2 lần -> Ghim chặt thành vật cản cố định (255)
+                if cur_hits < 30:
+                    self.hit_counts[o_row, o_col] = cur_hits + 2
+
+                # Khi quét trúng >= 2 lần -> Ghim chặt thành tường/vật cản kiên cố (255)
                 if self.hit_counts[o_row, o_col] >= 2:
                     self.grid[o_row, o_col] = 255
                     has_new_obstacle = True
@@ -228,12 +249,30 @@ class OccupancySLAM:
                 pass
 
         if has_ray:
-            free_indices = (ray_mask == 1) & (self.hit_counts < 2)
+            # Mô hình cập nhật không gian thoáng chuẩn xác suất (Bayesian Free Space Decay):
+            # Các ô mà tia xuyên qua được giảm bớt điểm hit_counts nếu là nhiễu hạt bụi,
+            # nhưng bảo vệ kiên cố các ô có hit_counts >= 3 (tường thật sự).
+            ray_indices = (ray_mask == 1)
+            # Suy giảm điểm nhiễu tạm thời trên đường thoáng:
+            self.hit_counts[ray_indices & (self.hit_counts < 3)] = np.maximum(
+                0, self.hit_counts[ray_indices & (self.hit_counts < 3)] - 1
+            )
+            # Cập nhật ô thoáng cho các ô không phải tường kiên cố:
+            free_indices = ray_indices & (self.hit_counts < 2)
             self.grid[free_indices] = 128
             self.miss_counts[free_indices] += 1
 
-        # 4. Tự động gom cụm các điểm cản thành Bounding Box (UNKNOWN / OBSTACLE)
-        self._cluster_obstacle_points(rx, ry, points_3d)
+        # 4. Tự động gom cụm các điểm cản thành Bounding Box (Chỉ chạy khi BẬT ENABLE_SEMANTIC_LANDMARKS)
+        if getattr(config, 'ENABLE_SEMANTIC_LANDMARKS', False):
+            self._cluster_obstacle_points(rx, ry, points_3d)
+
+            # 5. Khóa kiên cố vĩnh viễn các ô lưới của các vật cản đã ghim
+            for lm in self.landmarks:
+                if getattr(lm, 'is_pinned', False) or lm.seen_count >= 2:
+                    c_col, c_row = self.world_to_grid(lm.x, lm.y)
+                    if c_col is not None and c_row is not None:
+                        self.grid[c_row, c_col] = 255
+                        self.hit_counts[c_row, c_col] = max(int(self.hit_counts[c_row, c_col]), 8)
 
         if has_new_obstacle or (self.total_scans_processed % 3 == 0):
             self.version += 1
@@ -309,17 +348,18 @@ class OccupancySLAM:
                 "num_pts": len(cl)
             })
 
-            # Kiểm tra xem cụm này có trùng với Landmark đã có nhãn AI không (< 0.45m)
-            matched_named = False
+            # Kiểm tra xem cụm này có trùng với Landmark đã có trong không gian không (< 0.45m)
+            matched_lm = None
+            min_dist = 0.45
             for lm in self.landmarks:
-                if lm.name not in ["UNKNOWN", "OBSTACLE"]:
-                    if math.hypot(lm.x - cx, lm.y - cy) < 0.45:
-                        lm.update(cx, cy, cz, lm.score, width_m=w_m, depth_m=d_m)
-                        matched_named = True
-                        break
+                d = math.hypot(lm.x - cx, lm.y - cy)
+                if d < min_dist:
+                    min_dist = d
+                    matched_lm = lm
 
-            # Nếu không có tên AI nhận diện -> Đánh dấu là UNKNOWN
-            if not matched_named:
+            if matched_lm is not None:
+                matched_lm.update(cx, cy, cz, max(matched_lm.score, 0.85), width_m=w_m, depth_m=d_m)
+            else:
                 self.add_semantic_landmark("UNKNOWN", cx, cy, cz, score=0.85, width_m=w_m, depth_m=d_m)
 
         return detected_clusters
@@ -327,23 +367,24 @@ class OccupancySLAM:
     def add_semantic_landmark(self, name, x_world, y_world, z_world=0.2, score=0.8, width_m=None, depth_m=None):
         """
         Gán và ghim vật thể ngữ nghĩa hoặc chướng ngại vật cố định trên bản đồ:
-        - Gom cụm không gian: Ghép nối với vật thể cùng loại (UNKNOWN: 40cm, khác: 85cm).
-        - Khóa tọa độ (Spatial Pinning): Khi thấy >= 3 lần, tọa độ đóng dấu cố định!
+        - Gom cụm không gian vật lý: Bán kính 0.45m cho mọi vật thể trong cùng một vị trí.
+        - Khóa tọa độ (Spatial Pinning): Khi thấy >= 2 lần, tọa độ đóng dấu cố định vĩnh viễn!
         """
+        if not getattr(config, 'ENABLE_SEMANTIC_LANDMARKS', False):
+            return None
         name_clean = str(name).upper()
-        threshold_dist = 0.40 if name_clean in ["UNKNOWN", "OBSTACLE"] else 0.85
+        threshold_dist = 0.45
 
         best_match = None
         min_d = 999.0
         for lm in self.landmarks:
-            if lm.name == name_clean:
-                d = math.hypot(lm.x - x_world, lm.y - y_world)
-                if d < threshold_dist and d < min_d:
-                    min_d = d
-                    best_match = lm
+            d = math.hypot(lm.x - x_world, lm.y - y_world)
+            if d < threshold_dist and d < min_d:
+                min_d = d
+                best_match = lm
 
         if best_match is not None:
-            best_match.update(x_world, y_world, z_world, score, width_m=width_m, depth_m=depth_m)
+            best_match.update(x_world, y_world, z_world, score, width_m=width_m, depth_m=depth_m, new_name=name_clean)
             return True
 
         new_lm = PinnedLandmark(self._next_landmark_id, name_clean, x_world, y_world, z_world, score, width_m=width_m, depth_m=depth_m)
@@ -356,7 +397,9 @@ class OccupancySLAM:
         Chiếu điểm từ Camera Frame sang World Frame bằng phép toán vi sai.
         Camera: X phải, Y xuống, Z tới -> Robot: X tới (zc), Y trái (-xc), Z lên (-yc + 0.12)
         """
-        x_rob = zc
+        # Bù cánh tay đòn camera OAK-D S2 nhô phía trước trục bánh vi sai 9cm (0.09m)
+        cam_offset_x = 0.09
+        x_rob = zc + cam_offset_x
         y_rob = -xc
         z_rob = -yc + 0.12
 
@@ -413,19 +456,21 @@ class OccupancySLAM:
 
     def get_confirmed_landmarks(self):
         """
-        Trả về danh sách các vật thể đã được xác nhận (seen >= 3)
-        và đã khử trùng lặp không gian (Spatial De-duplication 0.85m)
-        để không bị đè nhiều icon cùng một vị trí.
+        Trả về danh sách các vật thể đã được xác nhận (seen >= 2 hoặc đã ghim)
+        và đã khử trùng lặp không gian (Spatial De-duplication 0.45m).
+        Vật thể đã ghim (is_pinned) hoặc seen_count >= 2 TUYỆT ĐỐI KHÔNG BAO GIỜ BỊ XÓA!
         """
+        if not getattr(config, 'ENABLE_SEMANTIC_LANDMARKS', False):
+            return []
         now = time.time()
-        # Loại bỏ các vật thể rác chưa ghim và không thấy lại trong 8 giây
+        # Bảo toàn kiên cố các vật thể đã ghim (is_pinned hoặc seen >= 2), chỉ dọn rác thoáng qua
         self.landmarks = [
             lm for lm in self.landmarks
-            if lm.is_pinned or (now - lm.last_seen < 8.0)
+            if lm.is_pinned or lm.seen_count >= 2 or (now - lm.last_seen < 12.0)
         ]
 
-        # Lọc danh sách ứng viên (đã thấy ít nhất 3 lần và score >= 0.40 để loại bỏ rác/nhiễu AI)
-        candidates = [lm for lm in self.landmarks if lm.seen_count >= 3 and getattr(lm, 'score', 1.0) >= 0.40]
+        # Lọc danh sách ứng viên (đã thấy >= 2 lần hoặc đã ghim)
+        candidates = [lm for lm in self.landmarks if (lm.is_pinned or lm.seen_count >= 2)]
         if not candidates:
             return []
 

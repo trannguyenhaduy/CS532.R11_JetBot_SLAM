@@ -56,7 +56,7 @@ class AdafruitWaveshareDriver:
         mapped = int(255.0 * val)
         speed = min(max(abs(mapped), 0), 255)
         motor.setSpeed(speed)
-        if speed < 15:
+        if speed < 8:
             motor.run(self._hat_api.RELEASE)
             self._hat._pwm.setPWM(ina, 0, 0)
             self._hat._pwm.setPWM(inb, 0, 0)
@@ -291,7 +291,12 @@ class MotorController:
                 # w = 1.58 rad/s (~90.5 deg/s) tương ứng mức xung chuẩn 13% PWM (0.13).
                 # Nhờ đồng bộ 1:1, xe quay 360 độ ngoài đời thực thì bản đồ cũng quay đúng 360 độ!
                 norm_w = abs(actual_w)
-                turn_duty = max(0.10, min(0.20, (norm_w / 1.58) * 0.13))
+                try:
+                    import config
+                    min_turn = getattr(config, 'STEP_TURN_MIN_PWM', 0.11)
+                except Exception:
+                    min_turn = 0.11
+                turn_duty = max(min_turn, min(0.24, (norm_w / 1.58) * 0.13))
                 p_l = -turn_duty if actual_w > 0 else turn_duty
                 p_r = turn_duty if actual_w > 0 else -turn_duty
             else:
@@ -309,11 +314,13 @@ class MotorController:
                 p_l = max(-MAX_DUTY, min(MAX_DUTY, p_l))
                 p_r = max(-MAX_DUTY, min(MAX_DUTY, p_r))
 
-                # Bù lực ma sát tối thiểu (Deadband boost nhẹ) để bánh xe lăn êm
-                if abs(p_l) > 0.03 and abs(p_l) < 0.18:
-                    p_l = 0.18 if p_l > 0 else -0.18
-                if abs(p_r) > 0.03 and abs(p_r) < 0.18:
-                    p_r = 0.18 if p_r > 0 else -0.18
+                # Chỉ bù deadband siêu nhẹ (< 0.05 tức 5%) để tránh nghẹt cuộn dây động cơ,
+                # Cho phép xe bò siêu chậm từ 6% - 8% để triệt tiêu tối đa sai số
+                MIN_DRIVE_PWM = 0.05
+                if 0.01 < abs(p_l) < MIN_DRIVE_PWM:
+                    p_l = MIN_DRIVE_PWM if p_l > 0 else -MIN_DRIVE_PWM
+                if 0.01 < abs(p_r) < MIN_DRIVE_PWM:
+                    p_r = MIN_DRIVE_PWM if p_r > 0 else -MIN_DRIVE_PWM
 
             # Đảo cực tính động cơ nếu cần
             if self.invert_left: p_l = -p_l
@@ -347,8 +354,9 @@ class MotorController:
     def spin_in_place(self, duty: float = 0.13, direction: int = 1):
         """Quay tròn tại chỗ với mức xung PWM chỉ định và kiểm soát hướng (direction: 1=trái CCW, -1=phải CW).
         Mặc định 13% PWM giúp JetBot xoay từ tốn, không làm nhòe camera AI.
+        Cho phép xuống thấp tới 6% (0.06) để quay rà từng độ cực chuẩn.
         """
-        turn_duty = max(0.09, min(0.25, float(duty)))
+        turn_duty = max(0.06, min(0.25, float(duty)))
         # Quay trái CCW: bánh trái lùi (-), bánh phải tiến (+)
         p_l = -turn_duty if direction > 0 else turn_duty
         p_r = turn_duty if direction > 0 else -turn_duty
@@ -368,25 +376,28 @@ class MotorController:
             if self.is_connected and self.driver:
                 self.driver.stop()
 
-    def active_brake(self, reverse_duty: float = 0.14, pulse_ms: int = 35, spin_direction: int = 0):
+    def active_brake(self, reverse_duty: float = 0.14, pulse_ms: int = 35, spin_direction: int = 0, linear_direction: int = 1):
         """Phát một xung đảo chiều cực ngắn (~35-40ms) để triệt tiêu tức thì quán tính trượt trớn khi dừng xe:
-        - spin_direction == 0: Hãm quán tính chuyển động tịnh tiến (lùi 2 bánh).
+        - spin_direction == 0: Hãm quán tính tịnh tiến (linear_direction >= 0: hãm tiến bằng -rev; < 0: hãm lùi bằng +rev).
         - spin_direction != 0: Hãm quán tính quay tròn tại chỗ (đảo ngược chiều quay của 2 bánh).
         """
         with self.lock:
             if self.is_connected and self.driver:
                 try:
                     self.driver.stop()
-                    rev = max(0.08, min(0.20, float(reverse_duty)))
+                    rev = max(0.08, min(0.25, float(reverse_duty)))
                     if spin_direction != 0:
                         p_l = rev if spin_direction > 0 else -rev
                         p_r = -rev if spin_direction > 0 else rev
-                        if self.invert_left: p_l = -p_l
-                        if self.invert_right: p_r = -p_r
-                        if self.swap_motors: p_l, p_r = p_r, p_l
-                        self.driver.set_motors(p_l, p_r)
                     else:
-                        self.driver.set_motors(-rev, -rev)
+                        sign = -1.0 if linear_direction >= 0 else 1.0
+                        p_l = sign * rev
+                        p_r = sign * rev
+
+                    if self.invert_left: p_l = -p_l
+                    if self.invert_right: p_r = -p_r
+                    if self.swap_motors: p_l, p_r = p_r, p_l
+                    self.driver.set_motors(p_l, p_r)
                     time.sleep(pulse_ms / 1000.0)
                 except Exception:
                     pass
