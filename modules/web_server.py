@@ -242,6 +242,65 @@ class WebHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(json.dumps({"status": "OK", "auto_scanning": bool(active)}).encode())
             return
+        elif self.path.startswith('/api/plan_path') or self.path.startswith('/api/set_goal'):
+            gx, gy = None, None
+            if '?' in self.path:
+                for p in self.path.split('?')[1].split('&'):
+                    if p.startswith('x=') or p.startswith('gx='):
+                        try: gx = float(p.split('=')[1])
+                        except Exception: pass
+                    elif p.startswith('y=') or p.startswith('gy='):
+                        try: gy = float(p.split('=')[1])
+                        except Exception: pass
+            res = {"success": False, "message": "Thiếu tọa độ đích x, y"}
+            if inst and gx is not None and gy is not None:
+                if hasattr(inst, 'plan_path'):
+                    res = inst.plan_path(gx, gy)
+                elif hasattr(inst, 'plan_to_goal'):
+                    res = inst.plan_to_goal(gx, gy)
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+            self.end_headers()
+            self.wfile.write(json.dumps(res).encode())
+            return
+        elif self.path.startswith('/api/clear_goal'):
+            ok = False
+            if inst:
+                if hasattr(inst, 'clear_goal'):
+                    ok = inst.clear_goal()
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+            self.end_headers()
+            self.wfile.write(json.dumps({"status": "OK", "cleared": bool(ok)}).encode())
+            return
+        elif self.path.startswith('/api/start_nav'):
+            res = {"success": False, "message": "Server chưa sẵn sàng"}
+            if inst:
+                if hasattr(inst, 'start_nav'):
+                    res = inst.start_nav()
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+            self.end_headers()
+            self.wfile.write(json.dumps(res).encode())
+            return
+        elif self.path.startswith('/api/stop_nav') or self.path.startswith('/api/cancel_nav'):
+            res = {"success": False, "message": "Server chưa sẵn sàng"}
+            if inst:
+                if hasattr(inst, 'stop_nav'):
+                    res = inst.stop_nav()
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+            self.end_headers()
+            self.wfile.write(json.dumps(res).encode())
+            return
         elif self.path.startswith('/api/toggle'):
             flag_name = None
             if '?' in self.path:
@@ -439,6 +498,10 @@ class WebCockpitServer:
         self.step_move_cb = None
         self.step_cancel_cb = None
         self.trip_reset_cb = None
+        self.plan_path_cb = None
+        self.clear_goal_cb = None
+        self.start_nav_cb = None
+        self.stop_nav_cb = None
 
     def start(self):
         WebHandler.server_instance = self
@@ -518,6 +581,26 @@ class WebCockpitServer:
         if self.trip_reset_cb:
             return self.trip_reset_cb()
         return True
+
+    def plan_path(self, gx, gy):
+        if self.plan_path_cb:
+            return self.plan_path_cb(gx, gy)
+        return {"success": False, "message": "Chưa đăng ký hàm tìm đường"}
+
+    def clear_goal(self):
+        if self.clear_goal_cb:
+            return self.clear_goal_cb()
+        return False
+
+    def start_nav(self):
+        if self.start_nav_cb:
+            return self.start_nav_cb()
+        return {"success": False, "message": "Chưa đăng ký hàm tự hành (start_nav_cb)"}
+
+    def stop_nav(self):
+        if self.stop_nav_cb:
+            return self.stop_nav_cb()
+        return {"success": False, "message": "Chưa đăng ký hàm dừng tự hành (stop_nav_cb)"}
 
 
 

@@ -27,6 +27,9 @@ SCAN_MATCH_SEARCH_YAW_DEG = 6.0    # Cửa sổ tìm kiếm góc quay (±6 độ
 SCAN_MATCH_MIN_SCORE      = 0.28   # Ngưỡng tin cậy tối thiểu để hít tọa độ (28% số tia khớp tường)
 ENABLE_WEB                = True   # Bật/Tắt trạm điều khiển Web Cockpit (Port 8080)
 ENABLE_SAFETY_BRAKE       = True   # Bật tính năng phanh khẩn cấp Virtual Bumper (< 20cm)
+ENABLE_PATH_PLANNER       = True   # Bật module tìm đường tối ưu A* (Global Path Planner)
+ROBOT_RADIUS_M            = 0.12   # Bán kính thân xe JetBot (12cm)
+COSTMAP_INFLATION_RADIUS_M = 0.20  # Bán kính vùng đệm an toàn chống cạ tường (20cm)
 
 # ─── THÔNG SỐ TRẠM ĐIỀU KHIỂN WEB ─────────────────────────────────────────────
 WEB_PORT = 8080
@@ -95,3 +98,13 @@ ENABLE_SOFT_STOP         = True  # Cờ tổng thể: True = Dừng êm từ t�
 MANUAL_SOFT_DECEL        = True  # Giữ tương thích: Cho phép hạ dốc mượt mà khi dừng xe
 MANUAL_DECEL_TIME_MS     = 180   # Thời gian hạ dốc mượt mà (180ms) dùng chung cho cả Lái tay và Bước cm/độ
 STEP_USE_ACTIVE_BRAKE    = False # False: Ngắt êm tự nhiên (không giật ngược). True: Dùng xung phanh ngược cứng
+
+# ─── THÔNG SỐ TỰ HÀNH BÁM ĐƯỜNG (AUTONOMOUS NAVIGATOR & PATH FOLLOWER) ───────────
+ENABLE_AUTONOMOUS_NAVIGATOR = True  # Bật bộ điều khiển bám đường tự hành A*
+NAV_LINEAR_SPEED            = 0.12  # Vận tốc tiến tự hành (m/s) ~15-20% PWM đầm xe
+NAV_TURN_SPEED              = 1.20  # Vận tốc quay tại chỗ (rad/s) ~11-13% PWM êm ái
+NAV_GOAL_TOLERANCE_M        = 0.06  # Bán kính chạm đích dừng xe (6cm)
+NAV_WAYPOINT_TOLERANCE_M    = 0.10  # Bán kính chuyển waypoint tiếp theo (10cm)
+NAV_HEADING_TOLERANCE_RAD   = 0.35  # Dung sai góc lệch (~20 độ) trước khi chuyển từ quay sang tiến
+NAV_KP_ANGULAR              = 1.6   # Hệ số P chỉnh lái bám đường
+

@@ -185,6 +185,65 @@ def run_tests():
             errors.append(msg)
 
     # ──────────────────────────────────────────────────────────────────────────
+    # [TEST 7] Kiểm tra thuật toán PathPlanner A*
+    # ──────────────────────────────────────────────────────────────────────────
+    print("\n[TEST 7/8] Kiểm tra thuật toán tìm đường tối ưu A* (modules/path_planner.py)...")
+    total_tests += 1
+    try:
+        import numpy as np
+        from modules.path_planner import PathPlanner
+        planner = PathPlanner()
+        sim_grid = np.zeros((200, 200), dtype=np.uint8)
+        sim_grid[80:120, 100] = 255
+        res = planner.plan_path((-1.5, 0.0), (1.5, 0.0), grid=sim_grid)
+        if res.get('success') and len(res.get('path', [])) >= 2:
+            print(f"  ✅ [PASS] PathPlanner A* tìm đường thành công ({res['length_m']}m, {res['plan_time_ms']}ms)!")
+            passed_tests += 1
+        else:
+            msg = f"PathPlanner không tìm thấy đường: {res.get('message')}"
+            print(f"  ❌ [FAIL] {msg}")
+            errors.append(msg)
+    except Exception as e:
+        msg = f"Lỗi khởi tạo PathPlanner: {e}"
+        print(f"  ❌ [FAIL] {msg}")
+        errors.append(msg)
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # [TEST 8] Kiểm tra bộ điều khiển tự hành bám đường AutonomousNavigator
+    # ──────────────────────────────────────────────────────────────────────────
+    print("\n[TEST 8/8] Kiểm tra bộ điều khiển tự hành bám đường (modules/navigator.py)...")
+    total_tests += 1
+    try:
+        import time
+        import math
+        from modules.navigator import AutonomousNavigator
+        sim_pos = [0.0, 0.0, 0.0]
+        def _gp(): return sim_pos[0], sim_pos[1], sim_pos[2]
+        def _scv(v, w):
+            sim_pos[2] += w * 0.05
+            sim_pos[0] += v * 0.05 * math.cos(sim_pos[2])
+            sim_pos[1] += v * 0.05 * math.sin(sim_pos[2])
+        def _st(): pass
+        nav = AutonomousNavigator(_gp, _scv, _st, linear_speed=0.20, turn_speed=1.5, goal_tolerance_m=0.06)
+        res = nav.start_navigation([(0.0, 0.0), (0.2, 0.0)])
+        assert res.get('success'), f"Khởi động navigator thất bại: {res}"
+        t0 = time.time()
+        while nav.is_running and time.time() - t0 < 3.0:
+            time.sleep(0.05)
+        st = nav.get_status()
+        if st.get('state') == AutonomousNavigator.STATE_GOAL_REACHED:
+            print(f"  ✅ [PASS] AutonomousNavigator bám đường và chạm đích chính xác ({st['dist_to_goal']*100:.1f}cm)!")
+            passed_tests += 1
+        else:
+            msg = f"Navigator chưa đạt đích (state={st.get('state')}): {st.get('status_text')}"
+            print(f"  ❌ [FAIL] {msg}")
+            errors.append(msg)
+    except Exception as e:
+        msg = f"Lỗi khởi tạo AutonomousNavigator: {e}"
+        print(f"  ❌ [FAIL] {msg}")
+        errors.append(msg)
+
+    # ──────────────────────────────────────────────────────────────────────────
     # TỔNG KẾT BÁO CÁO
     # ──────────────────────────────────────────────────────────────────────────
     print("\n" + "═" * 70)

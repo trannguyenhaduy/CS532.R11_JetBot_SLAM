@@ -580,8 +580,13 @@
         <canvas id="map-canvas" class="canvas-map" style="display:block;"></canvas>
         <div id="three-viewport" style="display:none;"></div>
         <div class="hud" id="hud-info">2D OCCUPANCY GRID MAP & LASERSCAN</div>
-        <div class="hud-tip" id="hud-tip-text">💡 Kéo chuột: Di chuyển bản đồ | Cuộn: Phóng to / Thu nhỏ | Reset Cam:
-          Căn giữa JetBot</div>
+        <div class="hud-tip" id="hud-tip-text">🎯 Click bản đồ: Đặt đích A* | 🖱️ Kéo chuột: Di chuyển | 📜 Cuộn: Phóng to/Thu nhỏ</div>
+
+        <!-- Floating banner hiển thị tiến trình tự hành A* -->
+        <div id="nav-status-badge"
+          style="display:none; position:absolute; top:12px; left:50%; transform:translateX(-50%); background:rgba(10,14,23,0.92); border:1.5px solid var(--accent); color:var(--accent); padding:5px 14px; border-radius:20px; font-size:12px; font-weight:700; z-index:20; box-shadow:0 0 15px rgba(0,255,163,0.35); pointer-events:none; letter-spacing:0.5px;">
+          🚀 TỰ HÀNH: ĐANG CHẠY
+        </div>
 
         <!-- On-canvas quick controls for 2D Map -->
         <div id="map-overlay-controls"
@@ -598,6 +603,15 @@
           <button class="tab-btn" id="btn-follow-toggle" onclick="toggleFollowRobot()"
             style="padding:4px 8px; font-size:11px; background:rgba(10,14,23,0.85); color:var(--dim); border-color:var(--border);"
             title="Khóa tâm camera bản đồ 2D theo vị trí JetBot (KHÔNG PHẢI xe bám theo người)">🔓 TÂM XE: TẮT (TỰ DO)</button>
+          <button class="tab-btn" id="btn-auto-nav" onclick="toggleAutoNav()"
+            style="padding:5px 9px; font-size:11px; font-weight:700; background:rgba(0,255,163,0.2); color:var(--accent); border-color:var(--accent); display:none; box-shadow:0 0 10px rgba(0,255,163,0.3);"
+            title="Kích hoạt tự hành bám đường A* đến đích">🚀 CHẠY TỰ HÀNH</button>
+          <button class="tab-btn" id="btn-clear-goal" onclick="clearGoal()"
+            style="padding:4px 8px; font-size:11px; background:rgba(10,14,23,0.85); color:#ffb800; border-color:#ffb800;"
+            title="Xóa điểm đích và đường đi A*">🎯 XÓA ĐÍCH A*</button>
+          <label style="padding:3px 6px; font-size:10px; color:var(--text); background:rgba(10,14,23,0.85); border:1px solid rgba(255,255,255,0.12); border-radius:4px; display:flex; align-items:center; gap:5px; cursor:pointer;" title="Khi click chọn đích thì xe tự động chạy luôn">
+            <input type="checkbox" id="chk-auto-start" style="accent-color:var(--accent);"> Tự chạy khi click
+          </label>
         </div>
       </div>
     </div>
@@ -1243,6 +1257,77 @@
       }
     });
 
+    // Lắng nghe click chuột trên bản đồ để đặt điểm đích A* (Set Goal)
+    mapCanvas.addEventListener('click', (e) => {
+      if (Math.hypot(e.clientX - dragStartX, e.clientY - dragStartY) > 8) return;
+
+      const rect = mapCanvas.getBoundingClientRect();
+      const clickX = e.clientX - rect.left;
+      const clickY = e.clientY - rect.top;
+      const W = rect.width || 600;
+      const H = rect.height || 420;
+      const safeZoom = (typeof mapZoom === 'number' && mapZoom > 0.1) ? mapZoom : 1.0;
+      const baseScale = Math.min(W, H) / 7.0;
+      const scale = Math.max(10.0, baseScale * safeZoom);
+      const centerX = W / 2.0;
+      const centerY = H / 2.0;
+
+      const wx = mapPanX + (clickX - centerX) / scale;
+      const wy = mapPanY - (clickY - centerY) / scale;
+
+      console.log(`🎯 [A* GOAL] Click đặt điểm đích: (${wx.toFixed(2)}, ${wy.toFixed(2)})m`);
+      fetch(`/api/set_goal?x=${wx.toFixed(3)}&y=${wy.toFixed(3)}`)
+        .then(r => r.json())
+        .then(res => {
+          if (res.success) {
+            console.log(`🎯 [A* PATH] Tìm thấy lộ trình: ${res.length_m}m (${res.waypoints_count} điểm)`);
+            const chkAuto = document.getElementById('chk-auto-start');
+            if (chkAuto && chkAuto.checked) {
+              startAutoNav();
+            }
+          } else {
+            console.warn(`⚠️ [A* PATH] ${res.message}`);
+          }
+        })
+        .catch(err => console.error(err));
+    });
+
+    function clearGoal() {
+      fetch('/api/clear_goal')
+        .then(r => r.json())
+        .then(res => {
+          console.log('🧹 [A* GOAL] Đã xóa điểm đích.');
+        })
+        .catch(err => console.error(err));
+    }
+
+    function startAutoNav() {
+      fetch('/api/start_nav')
+        .then(r => r.json())
+        .then(res => {
+          console.log('🚀 [AUTO NAV]', res.message);
+        })
+        .catch(err => console.error(err));
+    }
+
+    function stopAutoNav() {
+      fetch('/api/stop_nav')
+        .then(r => r.json())
+        .then(res => {
+          console.log('🛑 [AUTO NAV]', res.message);
+        })
+        .catch(err => console.error(err));
+    }
+
+    function toggleAutoNav() {
+      const btn = document.getElementById('btn-auto-nav');
+      if (btn && btn.dataset.running === 'true') {
+        stopAutoNav();
+      } else {
+        startAutoNav();
+      }
+    }
+
     mapCanvas.addEventListener('wheel', (e) => {
       e.preventDefault();
       const factor = e.deltaY < 0 ? 1.15 : 0.87;
@@ -1529,6 +1614,66 @@
             mapCtx.lineTo(pt.x, pt.y);
           }
           mapCtx.stroke();
+          mapCtx.restore();
+        }
+
+        // 4.1. LỘ TRÌNH TỐI ƯU A* (PLANNED A-STAR PATH & WAYPOINTS)
+        if (d.planned_path && d.planned_path.length > 1) {
+          mapCtx.save();
+          mapCtx.strokeStyle = '#00f0ff';
+          mapCtx.shadowColor = '#00f0ff';
+          mapCtx.shadowBlur = 12;
+          mapCtx.lineWidth = 2.8;
+          mapCtx.setLineDash([8, 4]);
+          mapCtx.lineCap = 'round';
+          mapCtx.lineJoin = 'round';
+          mapCtx.beginPath();
+          const startP = worldToCanvas(d.planned_path[0][0], d.planned_path[0][1]);
+          mapCtx.moveTo(startP.x, startP.y);
+          for (let i = 1; i < d.planned_path.length; i++) {
+            const pt = worldToCanvas(d.planned_path[i][0], d.planned_path[i][1]);
+            mapCtx.lineTo(pt.x, pt.y);
+          }
+          mapCtx.stroke();
+
+          // Vẽ các điểm mốc Waypoints hình tròn nhỏ
+          mapCtx.setLineDash([]);
+          mapCtx.fillStyle = '#00f0ff';
+          for (let i = 1; i < d.planned_path.length - 1; i++) {
+            const wp = worldToCanvas(d.planned_path[i][0], d.planned_path[i][1]);
+            mapCtx.beginPath();
+            mapCtx.arc(wp.x, wp.y, 3.2, 0, Math.PI * 2);
+            mapCtx.fill();
+          }
+          mapCtx.restore();
+        }
+
+        // 4.2. VẼ ĐIỂM ĐÍCH GOAL TARGET (NẾU CÓ)
+        if (d.current_goal && d.current_goal.length >= 2) {
+          const gp = worldToCanvas(d.current_goal[0], d.current_goal[1]);
+          mapCtx.save();
+          mapCtx.strokeStyle = '#ffb800';
+          mapCtx.fillStyle = 'rgba(255, 184, 0, 0.25)';
+          mapCtx.shadowColor = '#ffb800';
+          mapCtx.shadowBlur = 10;
+          mapCtx.lineWidth = 2.0;
+
+          // Vòng tròn mục tiêu
+          mapCtx.beginPath();
+          mapCtx.arc(gp.x, gp.y, 8, 0, Math.PI * 2);
+          mapCtx.fill();
+          mapCtx.stroke();
+
+          // Tâm dấu cộng (+)
+          mapCtx.beginPath();
+          mapCtx.moveTo(gp.x - 12, gp.y); mapCtx.lineTo(gp.x + 12, gp.y);
+          mapCtx.moveTo(gp.x, gp.y - 12); mapCtx.lineTo(gp.x, gp.y + 12);
+          mapCtx.stroke();
+
+          // Nhãn Goal
+          mapCtx.font = 'bold 10px Orbitron, monospace';
+          mapCtx.fillStyle = '#ffb800';
+          mapCtx.fillText('GOAL', gp.x + 12, gp.y - 6);
           mapCtx.restore();
         }
 
@@ -2105,6 +2250,9 @@
         if (d.step_state) {
           updateStepStatus(d.step_state);
         }
+
+        // Cập nhật trạng thái Tự hành Bám đường A* (Autonomous Navigator)
+        updateNavStatus(d.nav_state, d.planned_path);
       } catch (e) { }
       setTimeout(pollState, 140);
     }
@@ -2564,6 +2712,61 @@
         banner.style.borderColor = 'var(--border)';
         banner.style.background = 'rgba(0, 240, 255, 0.08)';
         banner.innerText = `✅ ${state.status || 'SẴN SÀNG THỰC THI BƯỚC ĐỊNH LƯỢNG'}`;
+      }
+    }
+
+    function updateNavStatus(nav, path) {
+      const btn = document.getElementById('btn-auto-nav');
+      const badge = document.getElementById('nav-status-badge');
+      if (!btn) return;
+
+      const hasPath = Array.isArray(path) && path.length > 0;
+      const isNavRunning = nav && nav.running;
+
+      if (isNavRunning) {
+        btn.style.display = 'block';
+        btn.dataset.running = 'true';
+        btn.innerText = '🛑 DỪNG TỰ HÀNH';
+        btn.style.color = '#ff3366';
+        btn.style.borderColor = '#ff3366';
+        btn.style.background = 'rgba(255, 51, 102, 0.25)';
+        btn.style.boxShadow = '0 0 10px rgba(255, 51, 102, 0.4)';
+
+        if (badge) {
+          badge.style.display = 'block';
+          badge.style.borderColor = 'var(--accent)';
+          badge.style.color = 'var(--accent)';
+          badge.innerText = '🚀 [TỰ HÀNH] ' + (nav.status_text || 'Đang di chuyển...');
+        }
+      } else {
+        btn.dataset.running = 'false';
+        if (hasPath) {
+          btn.style.display = 'block';
+          btn.innerText = '🚀 BẮT ĐẦU CHẠY (AUTO)';
+          btn.style.color = 'var(--accent)';
+          btn.style.borderColor = 'var(--accent)';
+          btn.style.background = 'rgba(0, 255, 163, 0.18)';
+          btn.style.boxShadow = '0 0 10px rgba(0, 255, 163, 0.3)';
+
+          if (badge) {
+            if (nav && nav.state === 'GOAL_REACHED') {
+              badge.style.display = 'block';
+              badge.style.borderColor = 'var(--emerald)';
+              badge.style.color = 'var(--emerald)';
+              badge.innerText = '🏁 ' + (nav.status_text || 'ĐÃ ĐẾN ĐÍCH!');
+            } else if (nav && nav.state === 'STALLED') {
+              badge.style.display = 'block';
+              badge.style.borderColor = 'var(--rose)';
+              badge.style.color = 'var(--rose)';
+              badge.innerText = '⚠️ ' + (nav.status_text || 'KẸT XE');
+            } else {
+              badge.style.display = 'none';
+            }
+          }
+        } else {
+          btn.style.display = 'none';
+          if (badge) badge.style.display = 'none';
+        }
       }
     }
 

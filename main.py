@@ -61,6 +61,8 @@ from modules.occupancy_slam import OccupancySLAM
 from modules.semantic_mapper import SemanticMapper
 from modules.web_server import WebCockpitServer
 from modules.scan_matcher import CorrelativeScanMatcher2D
+from modules.path_planner import PathPlanner
+from modules.navigator import AutonomousNavigator
 
 # Kiểm tra môi trường ROS
 try:
@@ -203,6 +205,30 @@ class JetBotMasterSystem:
             )
         self._last_scan_matched = False
 
+        # 7.2. Khởi tạo Module Lập kế hoạch đường đi tối ưu A* (Global Path Planner)
+        self.planner = None
+        if getattr(config, 'ENABLE_PATH_PLANNER', True):
+            self.planner = PathPlanner(
+                slam=self.mapper,
+                robot_radius_m=getattr(config, 'ROBOT_RADIUS_M', 0.12),
+                cost_inflation_radius_m=getattr(config, 'COSTMAP_INFLATION_RADIUS_M', 0.20)
+            )
+
+        # 7.3. Khởi tạo Module Tự hành bám đường (Autonomous Navigator & Path Follower)
+        self.navigator = None
+        if getattr(config, 'ENABLE_AUTONOMOUS_NAVIGATOR', True):
+            self.navigator = AutonomousNavigator(
+                get_pose_cb=lambda: (self.robot_x, self.robot_y, self.robot_yaw),
+                set_cmd_vel_cb=self._nav_set_cmd_vel,
+                stop_cb=self._nav_stop_robot,
+                linear_speed=getattr(config, 'NAV_LINEAR_SPEED', 0.12),
+                turn_speed=getattr(config, 'NAV_TURN_SPEED', 1.20),
+                goal_tolerance_m=getattr(config, 'NAV_GOAL_TOLERANCE_M', 0.06),
+                waypoint_tolerance_m=getattr(config, 'NAV_WAYPOINT_TOLERANCE_M', 0.10),
+                heading_tolerance_rad=getattr(config, 'NAV_HEADING_TOLERANCE_RAD', 0.35),
+                kp_angular=getattr(config, 'NAV_KP_ANGULAR', 1.6)
+            )
+
         # 8. Khởi tạo Trạm điều khiển Web Cockpit
         self.web = None
         if self.flags.web:
@@ -219,6 +245,10 @@ class JetBotMasterSystem:
             self.web.step_move_cb = self.execute_step_move
             self.web.step_cancel_cb = self.cancel_step_move
             self.web.trip_reset_cb = self.reset_trip_odometer
+            self.web.plan_path_cb = self.plan_to_goal
+            self.web.clear_goal_cb = self.clear_goal
+            self.web.start_nav_cb = self.start_navigation
+            self.web.stop_nav_cb = self.stop_navigation
             self.web.start()
 
         # Kết nối ROS trong nền nếu có roscore
@@ -659,6 +689,8 @@ class JetBotMasterSystem:
             self.is_auto_scanning = False
         if getattr(self, 'is_step_running', False):
             self.cancel_step_move()
+        if getattr(self, 'navigator', None) and self.navigator.is_running:
+            self.navigator.cancel_navigation("Người dùng lái tay WASD")
         print(f"🎮 [WEB LÁI TAY] Lệnh nhận được: v={v:.2f}, w={w:.2f}")
 
         brake_thresh = getattr(config, 'SAFETY_BRAKE_DIST_M', 0.20)
@@ -1113,6 +1145,11 @@ class JetBotMasterSystem:
             "scan_matching": getattr(config, 'ENABLE_SCAN_MATCHING', True),
             "scan_matched": getattr(self, '_last_scan_matched', False),
             "semantic_landmarks_enabled": getattr(config, 'ENABLE_SEMANTIC_LANDMARKS', False),
+            "planned_path": getattr(self.planner, 'current_path', []) if getattr(self, 'planner', None) else [],
+            "current_goal": getattr(self.planner, 'current_goal', None) if getattr(self, 'planner', None) else None,
+            "nav_state": self.navigator.get_status() if getattr(self, 'navigator', None) else {
+                "running": False, "state": "IDLE", "status_text": "SẴN SÀNG", "current_wp_idx": 0, "total_waypoints": 0, "dist_to_goal": 0.0, "progress_pct": 0.0
+            },
             "step_state": {
                 "running": getattr(self, 'is_step_running', False),
                 "status": getattr(self, 'step_status_text', 'SẴN SÀNG')
@@ -1745,9 +1782,82 @@ class JetBotMasterSystem:
             self.current_w = 0.0
         if self.camera and hasattr(self.camera, 'reset_imu_heading'):
             self.camera.reset_imu_heading()
+        self.clear_goal()
         if self.mapper:
             return self.mapper.reset_map()
         return True
+
+    def plan_to_goal(self, gx, gy):
+        """Lập kế hoạch đường đi tối ưu A* từ vị trí xe hiện tại tới đích (gx, gy) mét"""
+        with self.lock:
+            rx, ry = self.robot_x, self.robot_y
+            grid = self.mapper.grid if self.mapper else None
+            landmarks = self.mapper.landmarks if self.mapper else []
+
+        if not getattr(self, 'planner', None):
+            return {"success": False, "message": "Module PathPlanner chưa được khởi tạo"}
+
+        res = self.planner.plan_path((rx, ry), (gx, gy), grid=grid, landmarks=landmarks)
+        if res.get('success'):
+            print(f"🎯 [A* PATH PLANNER] Đã tìm lộ trình tới ({gx:.2f}, {gy:.2f}): {res['length_m']}m ({res['waypoints_count']} waypoints) trong {res['plan_time_ms']}ms")
+        else:
+            print(f"⚠️ [A* PATH PLANNER] Không tìm thấy đường tới ({gx:.2f}, {gy:.2f}): {res.get('message')}")
+        return res
+
+    def clear_goal(self):
+        """Xóa mục tiêu và lộ trình hiện tại"""
+        if getattr(self, 'navigator', None) and self.navigator.is_running:
+            self.navigator.cancel_navigation("Người dùng xóa đích")
+        if getattr(self, 'planner', None):
+            self.planner.clear_path()
+            print("🧹 [A* PATH PLANNER] Đã xóa mục tiêu và lộ trình.")
+            return True
+        return False
+
+    def _nav_set_cmd_vel(self, v, w):
+        """Hàm nhận lệnh vận tốc từ AutonomousNavigator để phát cho Motor & Odometry"""
+        with self.lock:
+            self.current_v = v
+            self.current_w = w
+            self.last_cmd_vel_time = time.time()
+        if self.motors:
+            self.motors.set_cmd_vel(v, w)
+        if HAS_ROS and self.ros_cmd_pub:
+            t = Twist()
+            t.linear.x, t.angular.z = v, w
+            self.ros_cmd_pub.publish(t)
+
+    def _nav_stop_robot(self):
+        """Dừng xe an toàn khi tự hành hoàn tất hoặc bị hủy"""
+        with self.lock:
+            self.current_v = 0.0
+            self.current_w = 0.0
+            self.last_cmd_vel_time = time.time()
+        if self.motors:
+            self.motors.stop()
+        if HAS_ROS and self.ros_cmd_pub:
+            t = Twist()
+            self.ros_cmd_pub.publish(t)
+
+    def start_navigation(self):
+        """Kích hoạt AutonomousNavigator tự động lăn bánh bám lộ trình A*"""
+        if not getattr(self, 'navigator', None):
+            return {"success": False, "message": "Module AutonomousNavigator chưa được khởi tạo"}
+        if not getattr(self, 'planner', None) or not self.planner.current_path:
+            return {"success": False, "message": "Chưa có đường đi A*. Hãy click bản đồ để đặt đích trước!"}
+
+        # Hủy bước thủ công nếu có
+        if getattr(self, 'is_step_running', False):
+            self.cancel_step_move()
+
+        return self.navigator.start_navigation(self.planner.current_path)
+
+    def stop_navigation(self):
+        """Dừng khẩn cấp tiến trình tự hành bám đường"""
+        if getattr(self, 'navigator', None):
+            self.navigator.cancel_navigation("Dừng bởi người dùng qua Web")
+            return {"success": True, "message": "Đã dừng tự hành"}
+        return {"success": False, "message": "Module AutonomousNavigator chưa được khởi tạo"}
 
     def reset_trip_odometer(self):
         """Đặt lại bộ đo quãng đường và góc quay chuyến đi về 0"""
@@ -1762,6 +1872,7 @@ class JetBotMasterSystem:
     def shutdown(self):
         print("\n🛑 [SHUTDOWN] Đang dừng an toàn toàn bộ hệ thống JetBot...")
         self.running = False
+        if getattr(self, 'navigator', None): self.navigator.cancel_navigation("Hệ thống tắt máy")
         if self.motors: self.motors.shutdown()
         if self.camera: self.camera.shutdown()
         if self.web: self.web.stop()
