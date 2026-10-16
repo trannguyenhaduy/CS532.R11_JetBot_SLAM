@@ -23,10 +23,10 @@ if hasattr(sys.stdout, 'reconfigure'):
 class EmergencyBrake:
     """Bộ giám sát an toàn và Phanh khẩn cấp Virtual Bumper cho JetBot"""
 
-    def __init__(self, brake_dist_m=0.20, warning_dist_m=0.40, min_pts_threshold=20, is_enabled=False):
+    def __init__(self, brake_dist_m=0.22, warning_dist_m=0.45, min_pts_threshold=20, is_enabled=False):
         """
-        :param brake_dist_m: Ngưỡng cự ly phanh cứng khẩn cấp (mặc định 20cm = 200mm)
-        :param warning_dist_m: Ngưỡng cảnh báo giảm tốc (mặc định 40cm = 400mm)
+        :param brake_dist_m: Ngưỡng cự ly phanh an toàn (mặc định 22cm = 0.22m)
+        :param warning_dist_m: Ngưỡng cảnh báo giảm tốc từ từ (mặc định 45cm = 0.45m)
         :param min_pts_threshold: Số điểm ảnh cản tối thiểu để xác nhận (chống nhiễu hạt)
         :param is_enabled: Bật/Tắt can thiệp phanh (Mặc định False để lái tự do)
         """
@@ -72,8 +72,8 @@ class EmergencyBrake:
         else:
             roi_m = roi.astype(np.float32)
 
-        # Lọc các điểm đo vật lý hợp lệ trong cự ly từ 15cm đến 3.5m (tránh nhiễu điểm cực sát)
-        valid = roi_m[(roi_m >= 0.15) & (roi_m <= 3.5)]
+        # Lọc các điểm đo vật lý hợp lệ trong cự ly từ 10cm đến 3.5m (bao quát vùng an toàn 22cm)
+        valid = roi_m[(roi_m >= 0.10) & (roi_m <= 3.5)]
 
         # Phải có đủ số lượng điểm tối thiểu để tránh nhiễu do điểm ảnh chết hoặc sàn trơn
         if len(valid) >= self.min_pts_threshold:
@@ -82,7 +82,7 @@ class EmergencyBrake:
             self.last_clearance_m = round(clearance, 2)
         elif roi_m.size > 0 and (np.count_nonzero(roi_m < 0.10) / float(roi_m.size)) > 0.45 and self.last_clearance_m <= 0.45:
             # HIỆN TƯỢNG ĐIỂM MÙ STEREO: Khi vật cản che kín >45% hành lang trước mắt ở cự ly áp sát
-            self.last_clearance_m = 0.20
+            self.last_clearance_m = 0.18
         else:
             # Đường thoáng (không có cản trong hành lang)
             self.last_clearance_m = 99.0
@@ -91,7 +91,7 @@ class EmergencyBrake:
 
     def evaluate_velocity(self, target_v: float, target_w: float, clearance_m: float = None):
         """
-        Đánh giá và can thiệp lệnh vận tốc để bảo vệ phần cứng.
+        Đánh giá và can thiệp lệnh vận tốc để bảo vệ phần cứng với giảm tốc mượt mà.
         :param target_v: Vận tốc dài yêu cầu (m/s)
         :param target_w: Vận tốc góc yêu cầu (rad/s)
         :param clearance_m: Cự ly cản đo được (nếu None sẽ lấy cự ly gần nhất)
@@ -106,10 +106,10 @@ class EmergencyBrake:
             self.last_alert_level = "SAFE (BYPASS)"
             return target_v, target_w, "SAFE"
 
-        # 1. TRƯỜNG HỢP NGUY CẤP: Vật cản áp sát dưới ngưỡng phanh
-        if clearance_m < self.brake_dist_m:
+        # 1. TRƯỜNG HỢP NGUY CẤP: Vật cản áp sát dưới ngưỡng phanh (<= 22cm)
+        if clearance_m <= self.brake_dist_m:
             if target_v > 0.0:
-                # KHÓA CHẶT LỆNH TIẾN — PHANH KHẨN CẤP
+                # KHÓA CHẶT LỆNH TIẾN — DỪNG AN TOÀN
                 self.is_emergency_active = True
                 self.last_alert_level = "EMERGENCY_STOP"
                 # Vẫn giữ target_w để cho phép robot xoay tìm hướng thoát!
@@ -120,13 +120,15 @@ class EmergencyBrake:
                 self.last_alert_level = "ESCAPE_MANEUVER"
                 return target_v, target_w, "ESCAPE_MANEUVER"
 
-        # 2. TRƯỜNG HỢP CẢNH BÁO: Vật cản đang tới gần (< warning_dist)
+        # 2. TRƯỜNG HỢP CẢNH BÁO: Đang tiếp cận gần (22cm < clearance_m < 45cm) -> Giảm tốc mượt mà
         elif clearance_m < self.warning_dist_m:
             self.is_emergency_active = False
             self.last_alert_level = "WARNING"
-            # Giảm tốc độ tiến còn tối đa 0.12 m/s để tiếp cận êm ái, phanh không bị giật
-            capped_v = min(0.12, target_v) if target_v > 0.0 else target_v
-            return capped_v, target_w, "WARNING"
+            if target_v > 0.0:
+                ratio = max(0.20, (clearance_m - self.brake_dist_m) / max(0.01, self.warning_dist_m - self.brake_dist_m))
+                smooth_v = target_v * ratio
+                return smooth_v, target_w, "WARNING"
+            return target_v, target_w, "WARNING"
 
         # 3. TRƯỜNG HỢP AN TOÀN TUYỆT ĐỐI
         else:
@@ -140,9 +142,9 @@ if __name__ == '__main__':
     print("🧪 [SELF-TEST] BẮT ĐẦU KIỂM THỬ ĐỘC LẬP MODULE PHANH KHẨN CẤP (EMERGENCY BRAKE)")
     print("═" * 70)
 
-    brake = EmergencyBrake(brake_dist_m=0.18, warning_dist_m=0.40, is_enabled=True)
-    print(f"  ├─ Ngưỡng phanh khẩn cấp: {brake.brake_dist_m}m (18cm)")
-    print(f"  ├─ Ngưỡng cảnh báo giảm tốc: {brake.warning_dist_m}m (40cm)")
+    brake = EmergencyBrake(brake_dist_m=0.22, warning_dist_m=0.45, is_enabled=True)
+    print(f"  ├─ Ngưỡng phanh an toàn: {brake.brake_dist_m}m (22cm)")
+    print(f"  ├─ Ngưỡng cảnh báo giảm tốc: {brake.warning_dist_m}m (45cm)")
 
     # KỊCH BẢN 1: Đường thoáng (không có cản)
     fake_empty_depth = np.ones((360, 480), dtype=np.uint16) * 1500 # 1.5m

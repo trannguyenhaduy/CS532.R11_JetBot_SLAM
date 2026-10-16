@@ -86,12 +86,20 @@ class WebHandler(BaseHTTPRequestHandler):
                         self.wfile.write(b'--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ' +
                                          str(len(jpeg)).encode() + b'\r\n\r\n' + jpeg + b'\r\n')
                         self.wfile.flush()
+                        if inst and hasattr(inst, 'record_stream_frame'):
+                            inst.record_stream_frame(len(jpeg))
                     except Exception:
                         break
                 elif not frame_evt:
                     time.sleep(0.003)
-        elif self.path == '/api/state':
-            state_data = inst.get_state_dict() if inst else {}
+        elif self.path.startswith('/api/state'):
+            client_map_ver = -1
+            if '?' in self.path:
+                for p in self.path.split('?')[1].split('&'):
+                    if p.startswith('map_ver='):
+                        try: client_map_ver = int(p.split('=')[1])
+                        except Exception: client_map_ver = -1
+            state_data = inst.get_state_dict(client_map_ver=client_map_ver) if inst else {}
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
             self.send_header('Access-Control-Allow-Origin', '*')
@@ -161,7 +169,7 @@ class WebHandler(BaseHTTPRequestHandler):
             direction = 'forward'
             dist_cm = 20.0
             deg = 45.0
-            speed_pct = 20.0
+            speed_pct = None
             val_override = None
 
             if '?' in self.path:
@@ -217,6 +225,127 @@ class WebHandler(BaseHTTPRequestHandler):
             self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
             self.end_headers()
             self.wfile.write(json.dumps({"status": "OK", "reset": bool(ok)}).encode())
+            return
+        elif self.path.startswith('/api/motor_trim'):
+            trim_l = 1.0
+            trim_r = 1.0
+            should_save = False
+            if '?' in self.path:
+                for p in self.path.split('?')[1].split('&'):
+                    if p.startswith('left='):
+                        try: trim_l = float(p.split('=')[1])
+                        except Exception: pass
+                    elif p.startswith('right='):
+                        try: trim_r = float(p.split('=')[1])
+                        except Exception: pass
+                    elif p.startswith('bias='):
+                        try:
+                            b = float(p.split('=')[1])
+                            trim_l = round(1.0 + b, 3)
+                            trim_r = round(1.0 - b, 3)
+                        except Exception: pass
+                    elif p.startswith('save='):
+                        should_save = (p.split('=')[1].lower() in ['1', 'true', 'yes'])
+            ok = False
+            if inst:
+                if hasattr(inst, 'motor_trim_cb') and inst.motor_trim_cb:
+                    ok = inst.motor_trim_cb(trim_l, trim_r)
+                elif hasattr(inst, 'set_motor_trim'):
+                    ok = inst.set_motor_trim(trim_l, trim_r)
+                elif hasattr(inst, 'motors') and inst.motors:
+                    inst.motors.set_trim(trim_l, trim_r)
+                    ok = True
+                if should_save:
+                    if hasattr(inst, 'save_motor_trim_cb') and inst.save_motor_trim_cb:
+                        inst.save_motor_trim_cb(trim_l, trim_r)
+                    elif hasattr(inst, 'save_motor_trim'):
+                        inst.save_motor_trim(trim_l, trim_r)
+                    elif hasattr(inst, 'motors') and hasattr(inst.motors, 'save_trim_to_disk'):
+                        inst.motors.save_trim_to_disk()
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+            self.end_headers()
+            self.wfile.write(json.dumps({"status": "OK", "left": trim_l, "right": trim_r, "updated": bool(ok), "saved": bool(should_save)}).encode())
+            return
+        elif self.path.startswith('/api/calibration'):
+            params = {}
+            save_disk = False
+            if '?' in self.path:
+                for p in self.path.split('?')[1].split('&'):
+                    if '=' in p:
+                        k, v = p.split('=', 1)
+                        if k == 'save':
+                            save_disk = (v.lower() in ['1', 'true', 'yes'])
+                        elif k in ['trim_left', 'trim_right', 'step_forward_scale', 'step_backward_scale', 'step_turn_left_scale', 'step_turn_right_scale', 'step_turn_min_pwm']:
+                            try: params[k] = float(v)
+                            except Exception: pass
+            ok = False
+            if inst and hasattr(inst, 'calibration_cb') and inst.calibration_cb:
+                if params:
+                    ok = inst.calibration_cb(params, save_to_disk=save_disk)
+                else:
+                    ok = True
+            curr_calib = {}
+            if inst and hasattr(inst, 'get_calibration_cb') and inst.get_calibration_cb:
+                curr_calib = inst.get_calibration_cb()
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+            self.end_headers()
+            self.wfile.write(json.dumps({"status": "OK", "updated": bool(ok), "saved": bool(save_disk), "calibration": curr_calib}).encode())
+            return
+        elif self.path.startswith('/api/pattern_move'):
+            p_type = 'rectangle'
+            action = 'start'
+            length = 80.0
+            width = 40.0
+            leg = 50.0
+            speed_pct = 10.0
+            turn_dir = 'left'
+            if '?' in self.path:
+                for p in self.path.split('?')[1].split('&'):
+                    if p.startswith('type='): p_type = p.split('=')[1].lower()
+                    elif p.startswith('action='): action = p.split('=')[1].lower()
+                    elif p.startswith('length='):
+                        try: length = float(p.split('=')[1])
+                        except Exception: pass
+                    elif p.startswith('width='):
+                        try: width = float(p.split('=')[1])
+                        except Exception: pass
+                    elif p.startswith('leg='):
+                        try: leg = float(p.split('=')[1])
+                        except Exception: pass
+                    elif p.startswith('speed_pct='):
+                        try: speed_pct = float(p.split('=')[1])
+                        except Exception: pass
+                    elif p.startswith('speed='):
+                        try: speed_pct = float(p.split('=')[1])
+                        except Exception: pass
+                    elif p.startswith('turn_dir='): turn_dir = p.split('=')[1].lower()
+            ok = False
+            msg = ""
+            if inst:
+                if action in ['stop', 'cancel']:
+                    if hasattr(inst, 'pattern_cancel_cb') and inst.pattern_cancel_cb:
+                        ok = inst.pattern_cancel_cb()
+                    elif hasattr(inst, 'cancel_pattern_patrol'):
+                        ok = inst.cancel_pattern_patrol()
+                    msg = "Đã dừng quỹ đạo"
+                else:
+                    params = {'length': length, 'width': width, 'leg': leg, 'speed_pct': speed_pct, 'turn_dir': turn_dir}
+                    if hasattr(inst, 'pattern_move_cb') and inst.pattern_move_cb:
+                        ok, msg = inst.pattern_move_cb(p_type, **params)
+                    elif hasattr(inst, 'execute_pattern_patrol'):
+                        ok, msg = inst.execute_pattern_patrol(p_type, **params)
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+            self.end_headers()
+            self.wfile.write(json.dumps({"status": "OK" if ok else "ERROR", "message": msg}).encode())
             return
         elif self.path.startswith('/api/auto_scan'):
             duration = None
@@ -316,6 +445,138 @@ class WebHandler(BaseHTTPRequestHandler):
                 return
             self.send_response(400)
             self.end_headers()
+        elif self.path.startswith('/api/debug_pause'):
+            paused = True
+            if '?' in self.path:
+                for p in self.path.split('?')[1].split('&'):
+                    if p.startswith('paused='):
+                        paused = (p.split('=')[1].lower() in ['1', 'true', 'yes'])
+            res = False
+            if inst and hasattr(inst, 'debug_pause_cb') and inst.debug_pause_cb:
+                res = inst.debug_pause_cb(paused)
+            elif inst and hasattr(inst, 'set_debug_paused'):
+                res = inst.set_debug_paused(paused)
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+            self.end_headers()
+            self.wfile.write(json.dumps({"status": "OK", "debug_paused": bool(res)}).encode())
+            return
+        elif self.path.startswith('/api/debug_step'):
+            res = False
+            if inst and hasattr(inst, 'debug_step_cb') and inst.debug_step_cb:
+                res = inst.debug_step_cb()
+            elif inst and hasattr(inst, 'request_debug_step'):
+                res = inst.request_debug_step()
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+            self.end_headers()
+            self.wfile.write(json.dumps({"status": "OK", "step_requested": bool(res)}).encode())
+            return
+        elif self.path.startswith('/api/session/export'):
+            session_id = None
+            if '?' in self.path:
+                for p in self.path.split('?')[1].split('&'):
+                    if p.startswith('session_id='):
+                        session_id = p.split('=')[1].strip()
+
+            recorder = getattr(inst, 'recorder', None)
+            zip_path = None
+            if recorder and hasattr(recorder, 'create_session_zip'):
+                zip_path = recorder.create_session_zip(session_id=session_id)
+
+            if zip_path and os.path.exists(zip_path):
+                filename = os.path.basename(zip_path)
+                file_size = os.path.getsize(zip_path)
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/zip')
+                self.send_header('Content-Disposition', f'attachment; filename="{filename}"')
+                self.send_header('Content-Length', str(file_size))
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                try:
+                    with open(zip_path, 'rb') as f:
+                        while True:
+                            chunk = f.read(65536)
+                            if not chunk:
+                                break
+                            self.wfile.write(chunk)
+                except Exception as ex:
+                    print(f"⚠️ [WEB EXPORT ZIP ERR]: {ex}")
+                return
+            else:
+                self.send_response(404)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({"error": "Chưa có session frame nào được ghi nhận hoặc không thể nén file ZIP."}).encode())
+                return
+        elif self.path.startswith('/api/session/stats'):
+            recorder = getattr(inst, 'recorder', None)
+            stats = recorder.get_session_stats() if recorder else {}
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps(stats).encode())
+            return
+        elif self.path.startswith('/api/config/full'):
+            res = {}
+            if inst and hasattr(inst, 'get_full_config'):
+                res = inst.get_full_config()
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+            self.end_headers()
+            payload = dict(res) if isinstance(res, dict) else {}
+            payload["status"] = "OK"
+            payload["config"] = res
+            self.wfile.write(json.dumps(payload).encode())
+            return
+        elif self.path.startswith('/api/config/select_profile'):
+            pid = 1
+            if '?' in self.path:
+                for p in self.path.split('?')[1].split('&'):
+                    if p.startswith('id='):
+                        try: pid = int(p.split('=')[1])
+                        except Exception: pass
+            ok, msg = False, "No handler"
+            if inst and hasattr(inst, 'select_profile'):
+                ok, msg = inst.select_profile(pid)
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+            self.end_headers()
+            self.wfile.write(json.dumps({"status": "OK" if ok else "ERROR", "message": msg, "profile_id": pid}).encode())
+            return
+        elif self.path.startswith('/api/config/update'):
+            params = {}
+            pid = None
+            if '?' in self.path:
+                for p in self.path.split('?')[1].split('&'):
+                    if '=' in p:
+                        k, v = p.split('=', 1)
+                        if k == 'profile_id':
+                            try: pid = int(v)
+                            except Exception: pass
+                        else:
+                            try: params[k] = float(v)
+                            except Exception: pass
+            ok, msg = False, "No handler"
+            if inst and hasattr(inst, 'update_full_config'):
+                ok, msg = inst.update_full_config(params, profile_id=pid)
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+            self.end_headers()
+            self.wfile.write(json.dumps({"status": "OK" if ok else "ERROR", "message": msg}).encode())
+            return
         else:
             self.send_response(404)
             self.end_headers()
@@ -369,7 +630,7 @@ class WebHandler(BaseHTTPRequestHandler):
             direction = 'forward'
             dist_cm = 20.0
             deg = 45.0
-            speed_pct = 20.0
+            speed_pct = None
             val_override = None
 
             if '?' in self.path:
@@ -461,16 +722,125 @@ class WebHandler(BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(json.dumps({"flag": flag_name, "state": res}).encode())
                 return
+        elif self.path.startswith('/api/config/select_profile'):
+            pid = 1
+            if '?' in self.path:
+                for p in self.path.split('?')[1].split('&'):
+                    if p.startswith('id='):
+                        try: pid = int(p.split('=')[1])
+                        except Exception: pass
+            ok, msg = False, "No handler"
+            if inst and hasattr(inst, 'select_profile'):
+                ok, msg = inst.select_profile(pid)
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+            self.end_headers()
+            self.wfile.write(json.dumps({"status": "OK" if ok else "ERROR", "message": msg, "profile_id": pid}).encode())
+            return
+        elif self.path.startswith('/api/config/update'):
+            params = {}
+            pid = None
+            try:
+                length = int(self.headers.get('content-length', 0))
+                if length > 0:
+                    body_bytes = self.rfile.read(length)
+                    data = json.loads(body_bytes.decode('utf-8'))
+                    if isinstance(data, dict):
+                        params = data.get('params', data)
+                        pid = data.get('profile_id', None)
+            except Exception:
+                pass
+            if '?' in self.path:
+                for p in self.path.split('?')[1].split('&'):
+                    if '=' in p:
+                        k, v = p.split('=', 1)
+                        if k == 'profile_id':
+                            try: pid = int(v)
+                            except Exception: pass
+                        else:
+                            try: params[k] = float(v)
+                            except Exception: pass
+            ok, msg = False, "No handler"
+            if inst and hasattr(inst, 'update_full_config'):
+                ok, msg = inst.update_full_config(params, profile_id=pid)
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+            self.end_headers()
+            self.wfile.write(json.dumps({"status": "OK" if ok else "ERROR", "message": msg}).encode())
+            return
+        elif self.path.startswith('/api/config/create_profile'):
+            name = None
+            desc = None
+            params = {}
+            try:
+                length = int(self.headers.get('content-length', 0))
+                if length > 0:
+                    body_bytes = self.rfile.read(length)
+                    data = json.loads(body_bytes.decode('utf-8'))
+                    if isinstance(data, dict):
+                        name = data.get('name')
+                        desc = data.get('description')
+                        params = data.get('params', {})
+            except Exception:
+                pass
+            ok, msg, new_pid = False, "No handler", None
+            if inst and hasattr(inst, 'create_profile'):
+                ok, msg, new_pid = inst.create_profile(name=name, description=desc, params=params)
+            cfg = inst.get_full_config() if inst and hasattr(inst, 'get_full_config') else {}
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+            self.end_headers()
+            self.wfile.write(json.dumps({"status": "OK" if ok else "ERROR", "message": msg, "profile_id": new_pid, "config": cfg}).encode())
+            return
+        elif self.path.startswith('/api/config/delete_profile'):
+            pid = None
+            try:
+                length = int(self.headers.get('content-length', 0))
+                if length > 0:
+                    body_bytes = self.rfile.read(length)
+                    data = json.loads(body_bytes.decode('utf-8'))
+                    if isinstance(data, dict):
+                        pid = data.get('id') or data.get('profile_id')
+            except Exception:
+                pass
+            if pid is None and '?' in self.path:
+                for p in self.path.split('?')[1].split('&'):
+                    if p.startswith('id='):
+                        try: pid = int(p.split('=')[1])
+                        except Exception: pass
+            ok, msg = False, "No handler"
+            if inst and hasattr(inst, 'delete_profile'):
+                ok, msg = inst.delete_profile(pid)
+            cfg = inst.get_full_config() if inst and hasattr(inst, 'get_full_config') else {}
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+            self.end_headers()
+            self.wfile.write(json.dumps({"status": "OK" if ok else "ERROR", "message": msg, "config": cfg}).encode())
+            return
+        else:
             self.send_response(400)
             self.end_headers()
 
 
 class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
     daemon_threads = True
+    allow_reuse_address = True
 
     def server_bind(self):
-        super().server_bind()
         import socket
+        try:
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        except Exception:
+            pass
+        super().server_bind()
         try:
             self.socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         except Exception:
@@ -502,11 +872,68 @@ class WebCockpitServer:
         self.clear_goal_cb = None
         self.start_nav_cb = None
         self.stop_nav_cb = None
+        self.motor_trim_cb = None
+        self.save_motor_trim_cb = None
+        self.calibration_cb = None
+        self.get_calibration_cb = None
+        self.get_full_config_cb = None
+        self.update_full_config_cb = None
+        self.select_profile_cb = None
+        self.create_profile_cb = None
+        self.delete_profile_cb = None
+        self.pattern_move_cb = None
+        self.pattern_cancel_cb = None
+        self.debug_pause_cb = None
+        self.debug_step_cb = None
+
+        # Thống kê băng thông & FPS luồng stream video mạng (Network Stream Profiler)
+        self.stream_stats = {
+            "fps_sent": 0.0,
+            "kbps": 0.0,
+            "bytes_total": 0,
+            "frames_total": 0,
+            "avg_frame_kb": 0.0
+        }
+        self._stat_lock = threading.Lock()
+        self._stat_last_time = time.time()
+        self._stat_frame_counter = 0
+        self._stat_byte_counter = 0
+
+    def record_stream_frame(self, byte_len):
+        now = time.time()
+        with self._stat_lock:
+            self._stat_frame_counter += 1
+            self._stat_byte_counter += byte_len
+            self.stream_stats["bytes_total"] += byte_len
+            self.stream_stats["frames_total"] += 1
+            dt = now - self._stat_last_time
+            if dt >= 0.8:
+                self.stream_stats["fps_sent"] = round(self._stat_frame_counter / dt, 1)
+                self.stream_stats["kbps"] = round((self._stat_byte_counter / 1024.0) / dt, 1)
+                if self._stat_frame_counter > 0:
+                    self.stream_stats["avg_frame_kb"] = round((self._stat_byte_counter / 1024.0) / self._stat_frame_counter, 1)
+                self._stat_frame_counter = 0
+                self._stat_byte_counter = 0
+                self._stat_last_time = now
+
+    def get_stream_stats(self):
+        with self._stat_lock:
+            if time.time() - self._stat_last_time > 2.0 and self._stat_frame_counter == 0:
+                self.stream_stats["fps_sent"] = 0.0
+                self.stream_stats["kbps"] = 0.0
+            return dict(self.stream_stats)
 
     def start(self):
         WebHandler.server_instance = self
         self.is_running = True
-        self.server = ThreadedHTTPServer((self.host, self.port), WebHandler)
+        try:
+            self.server = ThreadedHTTPServer((self.host, self.port), WebHandler)
+        except OSError as e:
+            if getattr(e, 'errno', None) == 98 or 'Address already in use' in str(e):
+                print(f"\n❌ [WEB ERROR] Cổng {self.port} đang bị một tiến trình Python khác (hoặc main.py cũ chưa thoát hẳn) chiếm dụng!")
+                print(f"👉 Hãy chạy lệnh sau trên Terminal của Jetson để giải phóng cổng 8080 ngay lập tức:")
+                print(f"   fuser -k {self.port}/tcp   (hoặc pkill -9 -f main.py)\n")
+            raise e
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         print(f"🌐 [WEB] JetBot 3D Cockpit đã khởi chạy tại: http://{self.host}:{self.port}")
@@ -529,9 +956,12 @@ class WebCockpitServer:
             return 0, self.jpeg_provider_cb()
         return 0, None
 
-    def get_state_dict(self):
+    def get_state_dict(self, client_map_ver=-1):
         if self.state_provider_cb:
-            return self.state_provider_cb()
+            try:
+                return self.state_provider_cb(client_map_ver=client_map_ver)
+            except TypeError:
+                return self.state_provider_cb()
         return {}
 
     def on_drive_command(self, v, w):
@@ -564,7 +994,7 @@ class WebCockpitServer:
                     return self.auto_scan_cb()
         return False
 
-    def execute_step_move(self, step_type, val, direction, speed_pct=20.0):
+    def execute_step_move(self, step_type, val, direction, speed_pct=None):
         if self.step_move_cb:
             try:
                 return self.step_move_cb(step_type, val, direction, speed_pct=speed_pct)
@@ -601,6 +1031,31 @@ class WebCockpitServer:
         if self.stop_nav_cb:
             return self.stop_nav_cb()
         return {"success": False, "message": "Chưa đăng ký hàm dừng tự hành (stop_nav_cb)"}
+
+    def get_full_config(self):
+        if self.get_full_config_cb:
+            return self.get_full_config_cb()
+        return {}
+
+    def update_full_config(self, params, profile_id=None):
+        if self.update_full_config_cb:
+            return self.update_full_config_cb(params, profile_id=profile_id)
+        return False, "Chưa đăng ký hàm cập nhật cấu hình"
+
+    def select_profile(self, profile_id):
+        if self.select_profile_cb:
+            return self.select_profile_cb(profile_id)
+        return False, "Chưa đăng ký hàm chọn profile cấu hình"
+
+    def create_profile(self, name=None, description=None, params=None):
+        if self.create_profile_cb:
+            return self.create_profile_cb(name=name, description=description, params=params)
+        return False, "Chưa đăng ký hàm tạo profile mới", None
+
+    def delete_profile(self, profile_id):
+        if self.delete_profile_cb:
+            return self.delete_profile_cb(profile_id)
+        return False, "Chưa đăng ký hàm xóa profile"
 
 
 

@@ -200,6 +200,29 @@ class MotorController:
         self.last_cmd_time = time.time()
         self.last_log_time = 0.0
         self.lock = threading.RLock()
+        try:
+            import config
+            self.trim_left = float(getattr(config, 'MOTOR_TRIM_LEFT', 1.0))
+            self.trim_right = float(getattr(config, 'MOTOR_TRIM_RIGHT', 1.0))
+        except Exception:
+            self.trim_left = 1.0
+            self.trim_right = 1.0
+
+        # Tự động nạp thông số hiệu chuẩn từ robot_dynamics.json (nếu có, tương thích calibrate_motors.py)
+        try:
+            import os, json
+            dyn_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "robot_dynamics.json")
+            if os.path.exists(dyn_path):
+                with open(dyn_path, "r", encoding="utf-8") as f:
+                    dyn_data = json.load(f)
+                    tf = float(dyn_data.get("trim_factor", 1.0))
+                    # Nếu trim_factor != 1.0 và config đang để mặc định 1.0
+                    if abs(tf - 1.0) > 0.001 and self.trim_left == 1.0 and self.trim_right == 1.0:
+                        self.trim_right = tf
+                        print(f"📥 [MOTOR] Đã tự động kế thừa Trim Factor={tf:.3f} từ 'robot_dynamics.json'!")
+        except Exception:
+            pass
+
         self.is_connected = False
         self.driver_name = "SIMULATOR"
         self.driver = None
@@ -254,25 +277,40 @@ class MotorController:
                 self.obstacle_distance_m = 99.0
             else:
                 self.obstacle_distance_m = float(dist_m)
-            if self.enable_brake and self.obstacle_distance_m < self.brake_dist and self.target_v > 0.0:
-                print(f"🛑 [EMERGENCY BRAKE] Cản ở {self.obstacle_distance_m*100:.1f}cm (< {self.brake_dist*100:.0f}cm) -> NGẮT ĐỘNG CƠ LẬP TỨC!")
+            warn_d = getattr(self, 'warn_dist', 0.45)
+            # 1. Cự ly nguy hiểm (<= 22cm): Khóa tiến hoàn toàn, giảm êm về 0, không trôi trượt xe
+            if self.enable_brake and self.obstacle_distance_m <= self.brake_dist and self.target_v > 0.0:
+                print(f"🛑 [DỪNG AN TOÀN] Cản ở {self.obstacle_distance_m*100:.1f}cm (<= {self.brake_dist*100:.0f}cm) -> HÃM TỐC ÊM & KHÓA TIẾN!")
                 self.target_v = 0.0
-                self.target_w = 0.0
-                if self.is_connected and self.driver:
-                    self.driver.stop()
+                if abs(self.target_w) < 0.01:
+                    if self.is_connected and self.driver:
+                        self.driver.stop()
+            # 2. Vùng cảnh báo giảm tốc (22cm < d < 45cm): Tự động giảm tốc mượt mà theo cự ly
+            elif self.enable_brake and self.brake_dist < self.obstacle_distance_m < warn_d and self.target_v > 0.0:
+                ratio = max(0.20, (self.obstacle_distance_m - self.brake_dist) / max(0.01, warn_d - self.brake_dist))
+                max_allowed_v = self.max_v * ratio
+                if self.target_v > max_allowed_v:
+                    self.target_v = max_allowed_v
 
     def set_cmd_vel(self, v: float, w: float):
         with self.lock:
             self.last_cmd_time = time.time()
-            if self.enable_brake and self.obstacle_distance_m < self.brake_dist and v > 0.0:
-                print(f"🛑 [MOTOR PHANH] Khóa tiến do cản ở {self.obstacle_distance_m*100:.1f}cm (< {self.brake_dist*100:.0f}cm)!")
-                v = 0.0
-                if abs(w) < 0.01:
-                    self.target_v = 0.0
-                    self.target_w = 0.0
-                    if self.is_connected and self.driver:
-                        self.driver.stop()
-                    return
+            warn_d = getattr(self, 'warn_dist', 0.45)
+            if self.enable_brake and v > 0.0:
+                # Cản sát sạt (<= 22cm): Khóa tiến hoàn toàn (cho phép lùi và quay)
+                if self.obstacle_distance_m <= self.brake_dist:
+                    print(f"🛑 [KHÓA TIẾN AN TOÀN] Cản ở {self.obstacle_distance_m*100:.1f}cm (<= {self.brake_dist*100:.0f}cm)! Cho phép Lùi & Quay.")
+                    v = 0.0
+                    if abs(w) < 0.01:
+                        self.target_v = 0.0
+                        self.target_w = 0.0
+                        if self.is_connected and self.driver:
+                            self.driver.stop()
+                        return
+                # Vùng cảnh báo giảm tốc (22cm < d < 45cm): Giảm tốc mượt mà
+                elif self.obstacle_distance_m < warn_d:
+                    ratio = max(0.20, (self.obstacle_distance_m - self.brake_dist) / max(0.01, warn_d - self.brake_dist))
+                    v = v * ratio
 
             self.target_v = v
             self.target_w = w
@@ -296,7 +334,7 @@ class MotorController:
                     min_turn = getattr(config, 'STEP_TURN_MIN_PWM', 0.11)
                 except Exception:
                     min_turn = 0.11
-                turn_duty = max(min_turn, min(0.24, (norm_w / 1.58) * 0.13))
+                turn_duty = max(min_turn, min(0.35, (norm_w / 1.58) * 0.13))
                 p_l = -turn_duty if actual_w > 0 else turn_duty
                 p_r = turn_duty if actual_w > 0 else -turn_duty
             else:
@@ -314,13 +352,18 @@ class MotorController:
                 p_l = max(-MAX_DUTY, min(MAX_DUTY, p_l))
                 p_r = max(-MAX_DUTY, min(MAX_DUTY, p_r))
 
-                # Chỉ bù deadband siêu nhẹ (< 0.05 tức 5%) để tránh nghẹt cuộn dây động cơ,
-                # Cho phép xe bò siêu chậm từ 6% - 8% để triệt tiêu tối đa sai số
-                MIN_DRIVE_PWM = 0.05
-                if 0.01 < abs(p_l) < MIN_DRIVE_PWM:
+                # Bù deadband tối thiểu siêu mịn (< 0.03 tức 3%) giúp hạ dốc dừng mượt mà không bị khựng giật
+                MIN_DRIVE_PWM = 0.03
+                if 0.008 < abs(p_l) < MIN_DRIVE_PWM:
                     p_l = MIN_DRIVE_PWM if p_l > 0 else -MIN_DRIVE_PWM
-                if 0.01 < abs(p_r) < MIN_DRIVE_PWM:
+                if 0.008 < abs(p_r) < MIN_DRIVE_PWM:
                     p_r = MIN_DRIVE_PWM if p_r > 0 else -MIN_DRIVE_PWM
+
+
+                # ── BÙ LỆCH PHẦN CỨNG 2 BÁNH KHI CHẠY THẲNG/LƯỢN (HARDWARE WHEEL TRIM) ──
+                # Cân bằng điện áp xung PWM giữa motor Trái & Phải triệt tiêu lệch cơ khí:
+                p_l = p_l * self.trim_left
+                p_r = p_r * self.trim_right
 
             # Đảo cực tính động cơ nếu cần
             if self.invert_left: p_l = -p_l
@@ -333,10 +376,50 @@ class MotorController:
             now = time.time()
             if (abs(v) > 0.01 or abs(w) > 0.01) and (now - self.last_log_time > 0.3):
                 self.last_log_time = now
-                print(f"🕹️ [MOTOR] Lệnh: v={v:.2f}, w={w:.2f} -> L={p_l:.2f}, R={p_r:.2f} [{self.driver_name}]")
+                print(f"🕹️ [MOTOR] Lệnh: v={v:.2f}, w={w:.2f} -> L={p_l:.2f}, R={p_r:.2f} (Trim L={self.trim_left:.2f}, R={self.trim_right:.2f}) [{self.driver_name}]")
 
             if self.is_connected and self.driver:
                 self.driver.set_motors(p_l, p_r)
+
+    def set_trim(self, left: float, right: float):
+        """Cập nhật hệ số cân bằng tỉ lệ 2 bánh xe (Hardware Wheel Trim)"""
+        with self.lock:
+            self.trim_left = max(0.50, min(1.50, float(left)))
+            self.trim_right = max(0.50, min(1.50, float(right)))
+            print(f"⚖️ [MOTOR TRIM] Đã cập nhật tỉ lệ cân bằng 2 bánh: Trái={self.trim_left:.3f}, Phải={self.trim_right:.3f}")
+
+    def get_trim(self):
+        """Lấy hệ số cân bằng tỉ lệ 2 bánh hiện tại"""
+        with self.lock:
+            return self.trim_left, self.trim_right
+
+    def save_trim_to_disk(self):
+        """Lưu hệ số cân bằng 2 bánh vào robot_dynamics.json để bảo lưu vĩnh viễn"""
+        with self.lock:
+            try:
+                import os, json
+                dyn_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "robot_dynamics.json")
+                data = {}
+                if os.path.exists(dyn_path):
+                    try:
+                        with open(dyn_path, "r", encoding="utf-8") as f:
+                            data = json.load(f)
+                    except Exception: pass
+                
+                # Tính trim_factor theo chuẩn của calibrate_motors.py (r_spd = l_spd * trim_factor)
+                ratio = round(self.trim_right / max(0.01, self.trim_left), 3)
+                data["trim_factor"] = ratio
+                data["motor_trim_left"] = round(self.trim_left, 3)
+                data["motor_trim_right"] = round(self.trim_right, 3)
+                data["last_calibrated"] = time.strftime("%Y-%m-%d %H:%M:%S")
+
+                with open(dyn_path, "w", encoding="utf-8") as f:
+                    json.dump(data, f, indent=4, ensure_ascii=False)
+                print(f"💾 [MOTOR TRIM] Đã lưu thông số cân bằng 2 bánh (Trim Factor={ratio}) vào: {dyn_path}")
+                return True
+            except Exception as e:
+                print(f"⚠️ [MOTOR TRIM] Lỗi khi lưu robot_dynamics.json: {e}")
+                return False
 
     def set_direct_motors(self, left: float, right: float):
         """Cho phép đặt tốc độ trực tiếp từng bánh [-1.0, 1.0] để kiểm tra hoặc bù lệch bánh"""
@@ -358,8 +441,8 @@ class MotorController:
         """
         turn_duty = max(0.06, min(0.25, float(duty)))
         # Quay trái CCW: bánh trái lùi (-), bánh phải tiến (+)
-        p_l = -turn_duty if direction > 0 else turn_duty
-        p_r = turn_duty if direction > 0 else -turn_duty
+        p_l = (-turn_duty if direction > 0 else turn_duty) * self.trim_left
+        p_r = (turn_duty if direction > 0 else -turn_duty) * self.trim_right
         with self.lock:
             self.last_cmd_time = time.time()
             if self.invert_left: p_l = -p_l
@@ -367,6 +450,7 @@ class MotorController:
             if self.swap_motors: p_l, p_r = p_r, p_l
             if self.is_connected and self.driver:
                 self.driver.set_motors(p_l, p_r)
+
 
 
     def stop(self):

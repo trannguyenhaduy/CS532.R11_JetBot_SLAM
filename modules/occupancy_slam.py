@@ -142,6 +142,8 @@ class OccupancySLAM:
         self.grid = np.zeros((self.height, self.width), dtype=np.uint8)
         self.hit_counts = np.zeros((self.height, self.width), dtype=np.int16)
         self.miss_counts = np.zeros((self.height, self.width), dtype=np.int16)
+        # Ma trận mặt nạ bờ tường mốc bất tử (Immutable Anchor Walls)
+        self.anchor_mask = np.zeros((self.height, self.width), dtype=bool)
 
         # Danh mục vật thể ngữ nghĩa được ghim (Landmarks)
         self.landmarks = []
@@ -172,7 +174,7 @@ class OccupancySLAM:
         wy = (self.origin_y + self.size_m) - (row + 0.5) * self.resolution
         return round(wx, 3), round(wy, 3)
 
-    def update_scan(self, rx, ry, points_3d, max_dist=3.8):
+    def update_scan(self, rx, ry, points_3d, max_dist=3.8, yaw=None):
         """
         Cập nhật mây điểm quét tia LaserScan / Depth từ OAK-D S2 vào bản đồ.
         - Phân biệt triệt để sàn nhà (wz < 0.06m) và vật cản thực sự (0.06m <= wz <= 0.85m).
@@ -188,6 +190,19 @@ class OccupancySLAM:
 
         if not points_3d or len(points_3d) == 0:
             return
+
+        # Gốc phát tia quang học thực tế (từ mắt thấu kính OAK-D thay vì tâm trục bánh xe)
+        if yaw is not None:
+            cam_off_x = getattr(config, 'CAMERA_OFFSET_FORWARD_M', 0.09) if config else 0.09
+            cam_off_y = getattr(config, 'CAMERA_OFFSET_LATERAL_M', -0.015) if config else 0.0
+            cos_y = math.cos(yaw)
+            sin_y = math.sin(yaw)
+            cam_wx = rx + (cam_off_x * cos_y - cam_off_y * sin_y)
+            cam_wy = ry + (cam_off_x * sin_y + cam_off_y * cos_y)
+            c_col, c_row = self.world_to_grid(cam_wx, cam_wy)
+            ray_orig_col, ray_orig_row = (c_col, c_row) if c_col is not None else (r_col, r_row)
+        else:
+            ray_orig_col, ray_orig_row = r_col, r_row
 
         self.total_scans_processed += 1
         has_new_obstacle = False
@@ -217,7 +232,7 @@ class OccupancySLAM:
                 if o_col is None:
                     continue
 
-                # Vẽ tia quan sát quang học: Vùng giữa Robot và Điểm đo là KHÔNG GIAN THOÁNG
+                # Vẽ tia quan sát quang học: Vùng giữa Camera và Điểm đo là KHÔNG GIAN THOÁNG
                 # Dừng tia trước vật cản 6cm để bảo toàn mép vật cản không bị tia đè lên
                 if dist > 0.08:
                     ratio = max(0.0, (dist - 0.06) / dist)
@@ -225,7 +240,7 @@ class OccupancySLAM:
                     fy = ry + (wy - ry) * ratio
                     f_col, f_row = self.world_to_grid(fx, fy)
                     if f_col is not None:
-                        cv2.line(ray_mask, (r_col, r_row), (f_col, f_row), 1, 1)
+                        cv2.line(ray_mask, (ray_orig_col, ray_orig_row), (f_col, f_row), 1, 1)
                         has_ray = True
 
                 # ─── PHÂN LOẠI SÀN NHÀ VÀ VẬT CẢN THỰC SỰ ───
@@ -251,16 +266,20 @@ class OccupancySLAM:
         if has_ray:
             # Mô hình cập nhật không gian thoáng chuẩn xác suất (Bayesian Free Space Decay):
             # Các ô mà tia xuyên qua được giảm bớt điểm hit_counts nếu là nhiễu hạt bụi,
-            # nhưng bảo vệ kiên cố các ô có hit_counts >= 3 (tường thật sự).
+            # nhưng BẢO VỆ TUYỆT ĐỐI các ô tường mốc Anchor kiên cố (Immutable Anchor Walls).
             ray_indices = (ray_mask == 1)
-            # Suy giảm điểm nhiễu tạm thời trên đường thoáng:
-            self.hit_counts[ray_indices & (self.hit_counts < 3)] = np.maximum(
-                0, self.hit_counts[ray_indices & (self.hit_counts < 3)] - 1
+            decay_mask = ray_indices & (self.hit_counts < 3) & (~self.anchor_mask)
+            self.hit_counts[decay_mask] = np.maximum(
+                0, self.hit_counts[decay_mask] - 1
             )
-            # Cập nhật ô thoáng cho các ô không phải tường kiên cố:
-            free_indices = ray_indices & (self.hit_counts < 2)
+            # Cập nhật ô thoáng cho các ô không phải tường kiên cố và không phải Anchor:
+            free_indices = ray_indices & (self.hit_counts < 2) & (~self.anchor_mask)
             self.grid[free_indices] = 128
             self.miss_counts[free_indices] += 1
+
+            # Khôi phục bảo toàn giá trị 255 tuyệt đối cho toàn bộ các ô mốc Anchor
+            if np.any(self.anchor_mask):
+                self.grid[self.anchor_mask] = 255
 
         # 4. Tự động gom cụm các điểm cản thành Bounding Box (Chỉ chạy khi BẬT ENABLE_SEMANTIC_LANDMARKS)
         if getattr(config, 'ENABLE_SEMANTIC_LANDMARKS', False):
@@ -512,16 +531,33 @@ class OccupancySLAM:
 
         return merged
 
+    def freeze_anchor_walls(self):
+        """Khóa cứng toàn bộ các bức tường/vật cản hiện có thành Bờ Tường Mốc Bất Tử (Immutable Anchor Walls).
+        Các ô này sẽ không bao giờ bị xóa hay ăn mòn bởi các tia quét sau này."""
+        current_walls = (self.grid == 255)
+        self.anchor_mask = current_walls.copy()
+        self.hit_counts[self.anchor_mask] = np.maximum(self.hit_counts[self.anchor_mask], 50)
+        num_anchors = int(np.sum(self.anchor_mask))
+        self.version += 1
+        print(f"🔒 [OCCUPANCY SLAM] Đã khóa kiên cố {num_anchors} ô bờ tường mốc (Anchor Walls) vĩnh cửu!")
+        return num_anchors
+
     def reset_map(self):
         """Xóa trắng bản đồ để bắt đầu xây dựng lại từ đầu"""
         self.grid.fill(0)
         self.hit_counts.fill(0)
         self.miss_counts.fill(0)
+        self.anchor_mask.fill(False)
         self.landmarks.clear()
         self._next_landmark_id = 1
+        self.origin_x = -self.size_m / 2.0
+        self.origin_y = -self.size_m / 2.0
+        self.width = int(round(self.size_m / self.resolution))
+        self.height = int(round(self.size_m / self.resolution))
+        self.total_scans_processed = 0
         self.version += 1
         self.cached_b64 = ""
-        print("🧹 [OCCUPANCY SLAM] Đã xóa trắng bản đồ thành công!")
+        print("🧹 [OCCUPANCY SLAM] Đã xóa trắng bản đồ và trả gốc tọa độ về (-size/2, -size/2) thành công!")
         return True
 
     def save_map(self, filename="my_room_map"):
@@ -645,24 +681,44 @@ class OccupancySLAM:
             inflated = cv2.dilate(closed_occ, kernel_inflate)
             mask_inflation = (inflated > 0) & mask_free & (closed_occ == 0)
 
-            # 4. TÔ MÀU THEO CHUẨN ĐỒ HỌA CAO CẤP ROS RVIZ / CARTOGRAPHER:
-            # A. Sàn nhà đã khám phá (Free Space): Màu xám ngà sáng, sạch sẽ, phẳng phiu (BGRA)
-            bgra[mask_free] = [228, 230, 232, 235]
+            # 4. TÔ MÀU THEO MỨC ĐỘ TỰ TIN / XÁC SUẤT CHIẾM DỤNG (CONFIDENCE GRADIENT):
+            # A. Sàn nhà đã khám phá (Free Space): Màu xám ngà ánh cyan sáng, sạch sẽ, trong suốt nhẹ
+            bgra[mask_free] = [232, 238, 242, 215]
 
-            # B. Vùng đệm an toàn Costmap Inflation (15cm buffer): Màu hổ phách dịu ấm áp
-            bgra[mask_inflation] = [185, 210, 240, 235]
+            # B. Vùng đệm an toàn Costmap Inflation (15cm buffer): Màu lam ngọc nhạt êm dịu
+            bgra[mask_inflation] = [215, 228, 245, 160]
 
-            # C. Tường & Chướng ngại vật thực sự (Occupied): Màu đen đậm kiến trúc CAD sắc sảo
-            bgra[closed_occ > 0] = [15, 15, 15, 255]
+            # C. Phân tầng vật cản theo số lần quét xác nhận (Confidence Color Ramp):
+            # - Mức 1: hit_counts <= 2 -> ĐỎ RUBY/NEON (Mới quét, mức độ chưa chắc chắn / Nghi ngờ)
+            # - Mức 2: hit_counts 3..5 -> VÀNG ĐẬM / CAM (Đang tích lũy xác nhận)
+            # - Mức 3: hit_counts 6..9 -> VÀNG NHẠT (Độ tự tin cao)
+            # - Mức 4: hit_counts >= 10 hoặc anchor_mask -> XANH LỤC EMERALD (Kiên cố, tự tin 100%)
+            occ_mask = (closed_occ > 0)
+            if np.any(occ_mask):
+                hits = self.hit_counts
 
-            # D. Viền sắc sảo ranh giới tường (Outer Contour Stroke): Nét viền đen tuyền 1px
-            # Tương thích kép OpenCV 3 (Jetson Nano Melodic: 3 giá trị) & OpenCV 4 (2 giá trị)
-            if np.any(closed_occ):
+                # Mức 1: ĐỎ RUBY (Mới thấy 1-2 lần, chưa chắc chắn)
+                m1 = occ_mask & (hits <= 2)
+                bgra[m1] = [50, 42, 255, 255]
+
+                # Mức 2: VÀNG ĐẬM / CAM (3-5 lần)
+                m2 = occ_mask & (hits >= 3) & (hits <= 5)
+                bgra[m2] = [0, 140, 255, 255]
+
+                # Mức 3: VÀNG NHẠT NẮNG (6-9 lần)
+                m3 = occ_mask & (hits >= 6) & (hits <= 9)
+                bgra[m3] = [30, 225, 255, 255]
+
+                # Mức 4: XANH LỤC EMERALD (>= 10 lần hoặc mốc cố định - Tự tin tuyệt đối)
+                m4 = occ_mask & ((hits >= 10) | getattr(self, 'anchor_mask', np.zeros_like(occ_mask, dtype=bool)))
+                bgra[m4] = [160, 255, 0, 255]
+
+                # Nét viền ranh giới vật cản (Outer Contour Stroke): Viền đỏ kỹ thuật 1px nổi bật
                 try:
                     res = cv2.findContours(closed_occ, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                     contours = res[0] if len(res) == 2 else res[1]
                     if contours:
-                        cv2.drawContours(bgra, contours, -1, (5, 5, 5, 255), 1)
+                        cv2.drawContours(bgra, contours, -1, (40, 40, 255, 255), 1)
                 except Exception:
                     pass
 
