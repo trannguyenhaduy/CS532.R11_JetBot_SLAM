@@ -276,7 +276,18 @@ class CollisionManager:
             val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False)
 
             # 3. Khởi tạo Kiến trúc Mạng Nơ-ron (Transfer Learning)
-            if 'mobilenet' in model_type.lower():
+            model_type_str = str(model_type).lower()
+            if 'alexnet' in model_type_str:
+                try:
+                    weights = torchvision.models.AlexNet_Weights.DEFAULT
+                    net = torchvision.models.alexnet(weights=weights)
+                except Exception:
+                    net = torchvision.models.alexnet(pretrained=True)
+                for param in net.features.parameters():
+                    param.requires_grad = False
+                in_f = net.classifier[6].in_features
+                net.classifier[6] = nn.Linear(in_f, 2)
+            elif 'mobilenet' in model_type_str:
                 try:
                     weights = torchvision.models.MobileNet_V2_Weights.DEFAULT
                     net = torchvision.models.mobilenet_v2(weights=weights)
@@ -453,31 +464,78 @@ class CollisionManager:
             return False
 
         try:
-            # 1. Thử dùng torchvision nếu có sẵn
+            state_dict = torch.load(self.model_path, map_location=self.device)
             net = None
-            if HAS_TORCHVISION:
-                try:
-                    weights = torchvision.models.ResNet18_Weights.DEFAULT
-                    net = torchvision.models.resnet18(weights=weights)
-                except Exception:
+
+            # Tự động nhận diện cấu trúc mạng từ keys của state_dict
+            is_alexnet = any('classifier.6' in k for k in state_dict.keys())
+            is_mobilenet = any('classifier.1' in k for k in state_dict.keys())
+
+            if is_alexnet:
+                if HAS_TORCHVISION:
                     try:
-                        net = torchvision.models.resnet18(pretrained=False)
+                        net = torchvision.models.alexnet(pretrained=False)
+                        net.classifier[6] = nn.Linear(net.classifier[6].in_features, 2)
                     except Exception:
                         net = None
-                if net is not None:
-                    net.fc = nn.Linear(net.fc.in_features, 2)
+                if net is None:
+                    # Native AlexNet
+                    class AlexNetNative(nn.Module):
+                        def __init__(self, num_classes=2):
+                            super().__init__()
+                            self.features = nn.Sequential(
+                                nn.Conv2d(3, 64, kernel_size=11, stride=4, padding=2),
+                                nn.ReLU(inplace=True),
+                                nn.MaxPool2d(kernel_size=3, stride=2),
+                                nn.Conv2d(64, 192, kernel_size=5, padding=2),
+                                nn.ReLU(inplace=True),
+                                nn.MaxPool2d(kernel_size=3, stride=2),
+                                nn.Conv2d(192, 384, kernel_size=3, padding=1),
+                                nn.ReLU(inplace=True),
+                                nn.Conv2d(384, 256, kernel_size=3, padding=1),
+                                nn.ReLU(inplace=True),
+                                nn.Conv2d(256, 256, kernel_size=3, padding=1),
+                                nn.ReLU(inplace=True),
+                                nn.MaxPool2d(kernel_size=3, stride=2),
+                            )
+                            self.avgpool = nn.AdaptiveAvgPool2d((6, 6))
+                            self.classifier = nn.Sequential(
+                                nn.Dropout(),
+                                nn.Linear(256 * 6 * 6, 4096),
+                                nn.ReLU(inplace=True),
+                                nn.Dropout(),
+                                nn.Linear(4096, 4096),
+                                nn.ReLU(inplace=True),
+                                nn.Linear(4096, num_classes),
+                            )
+                        def forward(self, x):
+                            x = self.features(x)
+                            x = self.avgpool(x)
+                            x = torch.flatten(x, 1)
+                            return self.classifier(x)
+                    net = AlexNetNative(num_classes=2)
+            elif is_mobilenet:
+                if HAS_TORCHVISION:
+                    net = torchvision.models.mobilenet_v2(pretrained=False)
+                    net.classifier[1] = nn.Linear(net.classifier[1].in_features, 2)
+            else:
+                # Mặc định là ResNet-18
+                if HAS_TORCHVISION:
+                    try:
+                        net = torchvision.models.resnet18(pretrained=False)
+                        net.fc = nn.Linear(net.fc.in_features, 2)
+                    except Exception:
+                        net = None
+                if net is None:
+                    net = self._build_resnet18_native(num_classes=2)
 
-            # 2. Dự phòng: Dùng khung ResNet18 thuần PyTorch (chạy mượt 100% không cần cài torchvision)
-            if net is None:
-                net = self._build_resnet18_native(num_classes=2)
-
-            state_dict = torch.load(self.model_path, map_location=self.device)
             net.load_state_dict(state_dict)
             net = net.to(self.device)
             net.eval()
 
             self.model = net
-            print(f"🧠 [AI COLLISION] Đã nạp thành công mô hình: {self.model_path} trên {self.device}")
+            arch_name = "AlexNet" if is_alexnet else ("MobileNetV2" if is_mobilenet else "ResNet18")
+            print(f"🧠 [AI COLLISION] Đã nạp thành công mô hình ({arch_name}): {self.model_path} trên {self.device}")
             return True
         except Exception as e:
             print(f"⚠️ [AI COLLISION] Không thể nạp mô hình: {e}")
