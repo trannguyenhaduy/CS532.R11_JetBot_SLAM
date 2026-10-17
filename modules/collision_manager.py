@@ -205,7 +205,7 @@ class CollisionManager:
     # 2. HUẤN LUYỆN MÔ HÌNH (DEEP LEARNING MODEL TRAINING)
     # ══════════════════════════════════════════════════════════════════════════
 
-    def start_training(self, epochs=15, batch_size=8, lr=0.001, model_type='resnet18'):
+    def start_training(self, epochs=15, batch_size=8, lr=0.001, model_type='alexnet'):
         """Kích hoạt tiến trình huấn luyện PyTorch trong luồng nền (non-blocking)"""
         if not HAS_TORCH:
             return False, "Hệ thống chưa cài đặt PyTorch/Torchvision"

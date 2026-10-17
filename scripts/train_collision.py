@@ -30,7 +30,7 @@ def main():
     parser.add_argument("--epochs", type=int, default=15, help="Số lượt huấn luyện (default: 15)")
     parser.add_argument("--batch_size", type=int, default=8, help="Kích thước batch (default: 8)")
     parser.add_argument("--lr", type=float, default=0.001, help="Tốc độ học Learning Rate (default: 0.001)")
-    parser.add_argument("--model", type=str, default="resnet18", choices=["resnet18", "alexnet", "mobilenet_v2"], help="Kiến trúc mạng (default: resnet18)")
+    parser.add_argument("--model", type=str, default="alexnet", choices=["alexnet", "mobilenet_v2", "resnet18"], help="Kiến trúc mạng (default: alexnet)")
     args = parser.parse_args()
 
     print("\n" + "═" * 70)
