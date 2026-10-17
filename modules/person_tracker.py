@@ -147,8 +147,8 @@ class PersonTracker:
                 return 0.0, 0.0
             return None, None
 
-        # Lọc danh sách người
-        persons = [d for d in detections if d.get('id') == 0 or 'PERSON' in str(d.get('name', '')).upper()]
+        # Lọc danh sách người (chỉ nhận diện PERSON thật sự, không lấy OBSTACLE)
+        persons = [d for d in detections if 'PERSON' in str(d.get('name', '')).upper() or 'PERSON' in str(d.get('class', '')).upper()]
         if not persons:
             if not self.has_sent_stop and (now - self.last_target_time > 0.8):
                 self.has_sent_stop = True
@@ -159,7 +159,17 @@ class PersonTracker:
         # Chọn người gần trục giữa camera nhất
         target = min(persons, key=lambda p: abs(float(p.get('x', 0.0))))
         x = float(target.get('x', 0.0))
-        z = float(target.get('z', 0.0))
+        z = float(target.get('z', target.get('distance', 0.0)))
+
+        # Nếu chưa có cự ly 3D từ stereo, ước tính quang học từ chiều rộng bounding box
+        if (z < 0.15 or z > 6.0) and 'bbox' in target and target['bbox']:
+            try:
+                bw = target['bbox'][2]
+                bh = target['bbox'][3]
+                d_opt = max(bw, int(bh * 0.65))
+                z = max(0.25, min(3.5, (190.0 / float(max(15, d_opt))) * 0.65))
+            except Exception:
+                pass
 
         valid_depth = (0.20 < z < 5.0)
         dt = max(0.01, now - self.last_ctrl_time)

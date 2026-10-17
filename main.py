@@ -305,6 +305,8 @@ class JetBotMasterSystem:
             self.web.pattern_cancel_cb = self.cancel_pattern_patrol
             self.web.debug_pause_cb = self.set_debug_paused
             self.web.debug_step_cb = self.request_debug_step
+            self.web.tracker_mode_cb = self.set_tracker_mode
+            self.web.tracker_roi_cb = self.init_tracker_roi
             self.web.start()
 
         # Kết nối ROS trong nền nếu có roscore

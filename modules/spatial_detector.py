@@ -343,116 +343,120 @@ class SpatialPerceptionEngine:
             if self._cached_hog_boxes:
                 found_boxes.extend(self._cached_hog_boxes)
 
-        # ─── 1.6. PHÁT HIỆN VẬT CẢN 3D TỪ ĐÁM MÂY ĐIỂM STEREO DEPTH THỜI GIAN THỰC ───
+        # ─── 1.6. PHÁT HIỆN KHUÔN MẶT HAAR CASCADE TRƯỚC ĐỂ KHÓA CHÍNH XÁC "PERSON" ───
+        detected_faces = []
+        if self.face_cascade is not None:
+            try:
+                faces = self.face_cascade.detectMultiScale(gray, scaleFactor=1.15, minNeighbors=3, minSize=(35, 35))
+                for (fx1, fy1, fw, fh) in faces:
+                    cx_face = fx1 + fw / 2.0
+                    if abs(cx_face - w / 2.0) < (w * 0.48):
+                        # Mở rộng vùng khuôn mặt thành thân người hoàn chỉnh
+                        ex = max(0, int(fx1 - fw * 0.35))
+                        ey = max(0, int(fy1 - fh * 0.20))
+                        ew = min(w - ex, int(fw * 1.7))
+                        eh = min(h - ey, int(fh * 3.5))
+                        detected_faces.append((ex, ey, ew, eh, "PERSON", 0.96))
+                        found_boxes.append((ex, ey, ew, eh, "PERSON", 0.96))
+            except Exception:
+                pass
+
+        # ─── 1.7. PHÂN TÍCH VẬT THỂ & NGƯỜI TỪ ĐÁM MÂY ĐIỂM STEREO DEPTH ───
         if depth_frame is not None and isinstance(depth_frame, np.ndarray):
             try:
                 dh, dw = depth_frame.shape[:2]
                 if dh >= 10 and dw >= 10:
-                    valid_d = (depth_frame >= 80) & (depth_frame <= 2200)
+                    valid_d = (depth_frame >= 80) & (depth_frame <= 2500)
                     small_d = cv2.resize(valid_d.astype(np.uint8), (160, 120), interpolation=cv2.INTER_NEAREST)
                     res_d = cv2.findContours(small_d, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                     cnts_d = res_d[0] if len(res_d) == 2 else res_d[1]
                     scale_dw, scale_dh = w / 160.0, h / 120.0
                     for cd in cnts_d:
                         area_d = cv2.contourArea(cd)
-                        if area_d > (160 * 120 * 0.03):
+                        if area_d > (160 * 120 * 0.025):
                             dbx, dby, dbw, dbh = cv2.boundingRect(cd)
                             real_bx = max(0, min(w - 2, int(dbx * scale_dw)))
                             real_by = max(0, min(h - 2, int(dby * scale_dh)))
                             real_bw = max(10, min(w - real_bx, int(dbw * scale_dw)))
                             real_bh = max(10, min(h - real_by, int(dbh * scale_dh)))
-                            has_overlap = any(
-                                abs((real_bx + real_bw//2) - (fb[0] + fb[2]//2)) < (real_bw * 0.6)
+
+                            # Kiểm tra trùng lặp với Person đã phát hiện trước
+                            overlaps_person = any(
+                                (fb[4] == 'PERSON') and
+                                (abs((real_bx + real_bw//2) - (fb[0] + fb[2]//2)) < max(real_bw, fb[2]) * 0.65)
                                 for fb in found_boxes
                             )
-                            if not has_overlap:
-                                aspect = real_bw / float(max(1, real_bh))
-                                if aspect < 0.45:
-                                    name_d = "BOTTLE"
-                                elif aspect > 1.35:
-                                    name_d = "CHAIR"
-                                else:
-                                    name_d = "OBSTACLE"
-                                found_boxes.append((real_bx, real_by, real_bw, real_bh, name_d, 0.88))
+                            if overlaps_person:
+                                continue
+
+                            aspect = real_bw / float(max(1, real_bh))
+
+                            # Kiểm tra sắc độ da ở 45% phía trên của vùng vật thể để xác thực Người
+                            has_skin = False
+                            top_h = max(10, int(real_bh * 0.45))
+                            top_roi = bgr_img[real_by:real_by + top_h, real_bx:real_bx + real_bw]
+                            if top_roi.size > 0:
+                                try:
+                                    ycrcb_roi = cv2.cvtColor(top_roi, cv2.COLOR_BGR2YCrCb)
+                                    s_mask = cv2.inRange(ycrcb_roi, np.array([0, 133, 77]), np.array([255, 173, 127]))
+                                    skin_ratio = np.count_nonzero(s_mask) / float(s_mask.size)
+                                    has_skin = (skin_ratio > 0.04)
+                                except Exception:
+                                    pass
+
+                            # Phân loại thông minh: Dáng đứng thon cao hoặc có mặt/da -> PERSON
+                            if has_skin or (0.22 <= aspect <= 0.85 and real_bh >= 80):
+                                name_d = "PERSON"
+                                score_d = 0.92 if has_skin else 0.85
+                            elif aspect < 0.35 and real_bh < 80:
+                                name_d = "BOTTLE"
+                                score_d = 0.82
+                            elif aspect > 1.35 and real_by > int(h * 0.35):
+                                name_d = "CHAIR"
+                                score_d = 0.80
+                            else:
+                                name_d = "OBSTACLE"
+                                score_d = 0.78
+
+                            found_boxes.append((real_bx, real_by, real_bw, real_bh, name_d, score_d))
             except Exception:
                 pass
 
-        # ─── 2. BỔ TRỢ KHUÔN MẶT HAAR CASCADE (ĐẶC BIỆT KHI NGỒI GẦN WEBCAM) ───
-        if self.face_cascade is not None and not any(b[4] == 'PERSON' for b in found_boxes):
+        # ─── 2. PHƯƠNG ÁN DỰ PHÒNG 2: PHÂN TÍCH SẮC ĐỘ DA TOÀN DIỆN NẾU CHƯA THẤY NGƯỜI ───
+        if not any(b[4] == 'PERSON' for b in found_boxes):
             try:
-                faces = self.face_cascade.detectMultiScale(gray, scaleFactor=1.2, minNeighbors=4, minSize=(45, 45))
-                for (fx1, fy1, fw, fh) in faces:
-                    cx_face = fx1 + fw / 2.0
-                    if abs(cx_face - w / 2.0) < (w * 0.42):
-                        found_boxes.append((fx1, fy1, fw, fh, "PERSON", 0.95))
+                ycrcb = cv2.cvtColor(bgr_img, cv2.COLOR_BGR2YCrCb)
+                skin_mask = cv2.inRange(ycrcb, np.array([0, 133, 77]), np.array([255, 173, 127]))
+                kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+                skin_clean = cv2.morphologyEx(skin_mask, cv2.MORPH_OPEN, kernel)
+                res_skin = cv2.findContours(skin_clean, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                cnts_skin = res_skin[0] if len(res_skin) == 2 else res_skin[1]
+
+                skin_candidates = []
+                for c in cnts_skin:
+                    area = cv2.contourArea(c)
+                    if area > (w * h * 0.015):
+                        bx, by, bw, bh = cv2.boundingRect(c)
+                        aspect = bw / float(bh)
+                        box_cx = bx + bw / 2.0
+                        if 0.20 <= aspect <= 2.2 and abs(box_cx - w / 2.0) < (w * 0.48):
+                            skin_candidates.append((area, bx, by, bw, bh))
+
+                if skin_candidates:
+                    skin_candidates.sort(key=lambda x: x[0], reverse=True)
+                    _, bx, by, bw, bh = skin_candidates[0]
+                    exp_w = int(bw * 1.4)
+                    exp_h = int(bh * 1.5)
+                    ex = max(0, bx - (exp_w - bw) // 2)
+                    ey = max(0, by - (exp_h - bh) // 4)
+                    ew = min(w - ex, exp_w)
+                    eh = min(h - ey, exp_h)
+
+                    # Thay thế hoặc cập nhật hộp cản nếu trùng vị trí người
+                    found_boxes = [b for b in found_boxes if abs((b[0] + b[2]//2) - (ex + ew//2)) > (ew * 0.6)]
+                    found_boxes.append((ex, ey, ew, eh, "PERSON", 0.91))
             except Exception:
                 pass
-
-        # ─── 3. PHƯƠNG ÁN DỰ PHÒNG: PHÂN TÍCH HÌNH THÁI VÀ ĐẶC TRƯNG HÌNH HỌC (ĐA LỚP) ───
-        if not found_boxes:
-            # Phát hiện Người bằng phân tách sắc độ da YCrCb
-            ycrcb = cv2.cvtColor(bgr_img, cv2.COLOR_BGR2YCrCb)
-            skin_mask = cv2.inRange(ycrcb, np.array([0, 133, 77]), np.array([255, 173, 127]))
-            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-            skin_clean = cv2.morphologyEx(skin_mask, cv2.MORPH_OPEN, kernel)
-            res_skin = cv2.findContours(skin_clean, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            cnts_skin = res_skin[0] if len(res_skin) == 2 else res_skin[1]
-
-            skin_candidates = []
-            for c in cnts_skin:
-                area = cv2.contourArea(c)
-                if area > (w * h * 0.02):
-                    bx, by, bw, bh = cv2.boundingRect(c)
-                    aspect = bw / float(bh)
-                    box_cx = bx + bw / 2.0
-                    if 0.25 <= aspect <= 2.2 and abs(box_cx - w / 2.0) < (w * 0.45):
-                        skin_candidates.append((area, bx, by, bw, bh))
-
-            if skin_candidates:
-                skin_candidates.sort(key=lambda x: x[0], reverse=True)
-                _, bx, by, bw, bh = skin_candidates[0]
-                exp_w = int(bw * 1.3)
-                exp_h = int(bh * 1.4)
-                ex = max(0, bx - (exp_w - bw) // 2)
-                ey = max(0, by - (exp_h - bh) // 4)
-                ew = min(w - ex, exp_w)
-                eh = min(h - ey, exp_h)
-                found_boxes.append((ex, ey, ew, eh, "PERSON", 0.90))
-            else:
-                clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
-                enhanced = clahe.apply(gray)
-                blur = cv2.GaussianBlur(enhanced, (19, 19), 0)
-
-                _, thresh1 = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-                thresh2 = cv2.bitwise_not(thresh1)
-
-                candidates = []
-                for t_img in [thresh1, thresh2]:
-                    res_t = cv2.findContours(t_img, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                    cnts = res_t[0] if len(res_t) == 2 else res_t[1]
-                    for c in cnts:
-                        area = cv2.contourArea(c)
-                        if area > (w * h * 0.04):
-                            bx, by, bw, bh = cv2.boundingRect(c)
-                            aspect = bw / float(bh)
-                            box_cx = bx + bw / 2.0
-                            center_dist = abs(box_cx - w / 2.0)
-                            if 0.15 <= aspect <= 3.0 and center_dist < (w * 0.42):
-                                candidates.append((area, bx, by, bw, bh, aspect))
-
-                if candidates:
-                    candidates.sort(key=lambda x: x[0], reverse=True)
-                    area, bx, by, bw, bh, aspect = candidates[0]
-                    # Phân loại dựa trên tỷ lệ hình học thực tế:
-                    if aspect < 0.45:
-                        obj_type = "BOTTLE"  # Dáng đứng cao thon
-                    elif aspect > 1.4:
-                        obj_type = "LAPTOP"  # Dáng chữ nhật nằm ngang
-                    elif by > int(h * 0.45):
-                        obj_type = "CHAIR"   # Vật thể nằm thấp dưới sàn
-                    else:
-                        obj_type = "OBSTACLE" # Vật cản trung tâm trước mặt xe
-                    found_boxes.append((bx, by, bw, bh, obj_type, 0.85))
 
         detections = []
         for (bx, by, bw, bh, name, score) in found_boxes:

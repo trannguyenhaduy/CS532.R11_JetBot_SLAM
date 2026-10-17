@@ -920,6 +920,8 @@ class WebCockpitServer:
         self.pattern_cancel_cb = None
         self.debug_pause_cb = None
         self.debug_step_cb = None
+        self.tracker_mode_cb = None
+        self.tracker_roi_cb = None
 
         # Thống kê băng thông & FPS luồng stream video mạng (Network Stream Profiler)
         self.stream_stats = {
@@ -1091,6 +1093,16 @@ class WebCockpitServer:
         if self.delete_profile_cb:
             return self.delete_profile_cb(profile_id)
         return False, "Chưa đăng ký hàm xóa profile"
+
+    def set_tracker_mode(self, mode, color='red'):
+        if self.tracker_mode_cb:
+            return self.tracker_mode_cb(mode, color)
+        return False
+
+    def init_tracker_roi(self, bbox):
+        if self.tracker_roi_cb:
+            return self.tracker_roi_cb(bbox)
+        return False
 
 
 
