@@ -68,10 +68,14 @@ class YahboomVisualSuite:
             print(f"📡 Chế độ: Điều khiển từ xa qua WiFi -> JetBot IP: {self.robot_ip}")
             self.cap = cv2.VideoCapture(self.stream_url)
         else:
-            print("🤖 Chế độ: Chạy trực tiếp trên JetBot (Local Hardware)")
-            self.base_url = None
-            self.stream_url = None
-            self.cap = cv2.VideoCapture(0)
+            print("🤖 Chế độ: Chạy trực tiếp trên JetBot (100% Local Hardware)")
+            # Kiểm tra xem main.py có đang mở luồng 8080 trên localhost không
+            self.base_url = f"http://127.0.0.1:{self.port}"
+            self.stream_url = f"{self.base_url}/stream.mjpg"
+            self.cap = cv2.VideoCapture(self.stream_url)
+            if not self.cap.isOpened():
+                # Nếu main.py chưa chạy, thử mở camera OAK-D hoặc V4L2
+                self.cap = cv2.VideoCapture(0)
 
         # Kết nối động cơ nếu chạy local
         self.motors = None
@@ -102,6 +106,14 @@ class YahboomVisualSuite:
         else:
             if self.motors:
                 self.motors.set_cmd_vel(v, w)
+            elif self.base_url:
+                url = f"{self.base_url}/api/drive?v={v:.2f}&w={w:.2f}"
+                try:
+                    req = urllib.request.Request(url, headers={'User-Agent': 'YahboomVisualSuite'})
+                    with urllib.request.urlopen(req, timeout=0.15) as resp:
+                        pass
+                except Exception:
+                    pass
 
     def process_color_tracking(self, frame):
         """Bài 9.2: Yahboom Astra Color Tracking"""
