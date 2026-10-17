@@ -126,10 +126,15 @@ class SpatialPerceptionEngine:
         self._last_dnn_time = 0.0
         self._cached_dnn_boxes = []
 
-        # Ưu tiên nhận diện 100% bằng phần cứng VPU OAK-D (Myriad X) để tiết kiệm tài nguyên.
-        # Tuyệt đối không nạp PyTorch MobileNet lên CPU nhằm triệt tiêu hiện tượng nghẽn CPU 100% trên Jetson Nano.
-        self._dnn_model = None
-        self._coco_labels = None
+        # Khởi tạo mô hình AI Deep Learning (MobileNetV3 SSDLite COCO 80 lớp) chạy dự phòng khi không có OAK-D VPU
+        try:
+            import torchvision.models.detection as tv_det
+            self._dnn_model = tv_det.ssdlite320_mobilenet_v3_large(weights=tv_det.SSDLite320_MobileNet_V3_Large_Weights.DEFAULT).eval()
+            self._coco_labels = tv_det.SSDLite320_MobileNet_V3_Large_Weights.DEFAULT.meta['categories']
+            print("🚀 [AI ENGINE] Đã nạp mô hình AI nhận diện 80 lớp COCO (Person, Chair, Bottle, Laptop, Backpack...)!")
+        except Exception:
+            self._dnn_model = None
+            self._coco_labels = None
 
         try:
             import os
