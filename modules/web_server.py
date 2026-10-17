@@ -612,6 +612,103 @@ class WebHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(json.dumps({"status": "OK" if ok else "ERROR", "message": msg}).encode())
             return
+        elif self.path.startswith('/api/collision/status'):
+            res = {}
+            if inst and hasattr(inst, 'get_collision_status'):
+                res = inst.get_collision_status()
+            elif inst and getattr(inst, 'collision_mgr', None):
+                res = inst.collision_mgr.get_status()
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+            self.end_headers()
+            self.wfile.write(json.dumps(res).encode())
+            return
+        elif self.path.startswith('/api/collision/capture'):
+            lbl = 'free'
+            if '?' in self.path:
+                for p in self.path.split('?')[1].split('&'):
+                    if p.startswith('label='): lbl = p.split('=')[1].lower().strip()
+            ok, msg, counts = False, "No handler", {}
+            if inst and hasattr(inst, 'capture_collision_sample'):
+                ok, msg, counts = inst.capture_collision_sample(lbl)
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+            self.end_headers()
+            self.wfile.write(json.dumps({"status": "OK" if ok else "ERROR", "message": msg, "counts": counts}).encode())
+            return
+        elif self.path.startswith('/api/collision/undo'):
+            ok, msg, counts = False, "No handler", {}
+            if inst and hasattr(inst, 'undo_collision_sample'):
+                ok, msg, counts = inst.undo_collision_sample()
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+            self.end_headers()
+            self.wfile.write(json.dumps({"status": "OK" if ok else "ERROR", "message": msg, "counts": counts}).encode())
+            return
+        elif self.path.startswith('/api/collision/train'):
+            epochs = 15
+            batch = 8
+            lr = 0.001
+            model = 'resnet18'
+            if '?' in self.path:
+                for p in self.path.split('?')[1].split('&'):
+                    if p.startswith('epochs='):
+                        try: epochs = int(p.split('=')[1])
+                        except Exception: pass
+                    elif p.startswith('batch='):
+                        try: batch = int(p.split('=')[1])
+                        except Exception: pass
+                    elif p.startswith('lr='):
+                        try: lr = float(p.split('=')[1])
+                        except Exception: pass
+                    elif p.startswith('model='):
+                        model = p.split('=')[1].strip()
+            ok, msg = False, "No handler"
+            if inst and hasattr(inst, 'start_collision_train'):
+                ok, msg = inst.start_collision_train(epochs=epochs, batch_size=batch, lr=lr, model_type=model)
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+            self.end_headers()
+            self.wfile.write(json.dumps({"status": "OK" if ok else "ERROR", "message": msg}).encode())
+            return
+        elif self.path.startswith('/api/collision/toggle_avoid'):
+            is_avoiding = False
+            if inst and hasattr(inst, 'toggle_collision_avoid'):
+                is_avoiding = inst.toggle_collision_avoid()
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+            self.end_headers()
+            self.wfile.write(json.dumps({"status": "OK", "is_avoiding": bool(is_avoiding)}).encode())
+            return
+        elif self.path.startswith('/api/collision/export'):
+            mgr = getattr(inst, 'collision_mgr', None)
+            if mgr:
+                ok, path = mgr.export_dataset_zip()
+                if ok and os.path.exists(path):
+                    try:
+                        with open(path, 'rb') as f:
+                            zip_data = f.read()
+                        self.send_response(200)
+                        self.send_header('Content-Type', 'application/zip')
+                        self.send_header('Content-Disposition', 'attachment; filename="dataset_collision_jetbot.zip"')
+                        self.send_header('Content-Length', str(len(zip_data)))
+                        self.end_headers()
+                        self.wfile.write(zip_data)
+                        return
+                    except Exception: pass
+            self.send_response(500)
+            self.end_headers()
+            return
         else:
             self.send_response(404)
             self.end_headers()
@@ -1103,6 +1200,46 @@ class WebCockpitServer:
         if self.tracker_roi_cb:
             return self.tracker_roi_cb(bbox)
         return False
+
+    def get_collision_status(self):
+        if hasattr(self, 'collision_status_cb') and self.collision_status_cb:
+            return self.collision_status_cb()
+        if getattr(self, 'collision_mgr', None):
+            return self.collision_mgr.get_status()
+        return {}
+
+    def capture_collision_sample(self, label='free'):
+        if hasattr(self, 'collision_capture_cb') and self.collision_capture_cb:
+            return self.collision_capture_cb(label)
+        if getattr(self, 'collision_mgr', None):
+            frame = None
+            if self.jpeg_provider_cb:
+                # Nếu có frame
+                pass
+            return self.collision_mgr.save_sample(frame, label)
+        return False, "Chưa đăng ký callback", {}
+
+    def undo_collision_sample(self):
+        if hasattr(self, 'collision_undo_cb') and self.collision_undo_cb:
+            return self.collision_undo_cb()
+        if getattr(self, 'collision_mgr', None):
+            return self.collision_mgr.undo_last_sample()
+        return False, "Chưa đăng ký callback", {}
+
+    def start_collision_train(self, epochs=15, batch_size=8, lr=0.001, model_type='resnet18'):
+        if hasattr(self, 'collision_train_cb') and self.collision_train_cb:
+            return self.collision_train_cb(epochs=epochs, batch_size=batch_size, lr=lr, model_type=model_type)
+        if getattr(self, 'collision_mgr', None):
+            return self.collision_mgr.start_training(epochs=epochs, batch_size=batch_size, lr=lr, model_type=model_type)
+        return False, "Chưa đăng ký callback"
+
+    def toggle_collision_avoid(self):
+        if hasattr(self, 'collision_toggle_avoid_cb') and self.collision_toggle_avoid_cb:
+            return self.collision_toggle_avoid_cb()
+        if getattr(self, 'collision_mgr', None):
+            return self.collision_mgr.toggle_avoidance()
+        return False
+
 
 
 

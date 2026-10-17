@@ -1265,6 +1265,8 @@
             style="color:var(--emerald); border-color:var(--emerald);">📏 BƯỚC (CM & ĐỘ)</button>
           <button class="tab-btn" id="btn-mode-tracker" onclick="switchControlMode('tracker')"
             style="color:var(--amber); border-color:var(--amber);">🎯 BÁM THỊ GIÁC</button>
+          <button class="tab-btn" id="btn-mode-collision" onclick="switchControlMode('collision')"
+            style="color:var(--rose); border-color:var(--rose); font-weight:700;">🤖 AI NÉ VẬT CẢN</button>
         </div>
       </div>
 
@@ -1412,6 +1414,105 @@
             style="padding:6px 20px; font-size:0.75rem; font-weight:700; border-color:var(--rose); color:var(--rose); background:rgba(255,50,50,0.12); cursor:pointer;">
             🛑 TẮT BỘ BÁM
           </button>
+        </div>
+      </div>
+
+      <!-- 4. CHẾ ĐỘ THU THẬP DỮ LIỆU & AI NÉ VẬT CẢN (NVIDIA JETBOT COLLISION AVOIDANCE) -->
+      <div id="collision-ctrl-container" style="display:none; padding:12px 14px;">
+        <!-- Banner trạng thái -->
+        <div id="col-status-banner"
+          style="margin-bottom:10px; padding:8px 12px; border-radius:6px; font-size:0.75rem; text-align:center; font-weight:700; border:1px solid var(--rose); color:var(--rose); background:rgba(255, 42, 109, 0.1);">
+          [AI COLLISION AVOIDANCE] SẴN SÀNG THU THẬP DỮ LIỆU
+        </div>
+
+        <!-- 1. THU THẬP DỮ LIỆU (DATA COLLECTION) -->
+        <div style="background:rgba(255,255,255,0.02); border:1px solid var(--border); border-radius:8px; padding:10px; margin-bottom:10px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+            <span style="font-size:0.75rem; color:var(--cyan); font-weight:700;">📸 1. THU THẬP DỮ LIỆU (DATASET)</span>
+            <div style="display:flex; gap:8px; font-family:'Orbitron',monospace; font-size:0.72rem;">
+              <span style="color:var(--emerald);">FREE: <b id="col-free-badge">0</b></span>
+              <span style="color:var(--rose);">BLOCKED: <b id="col-blocked-badge">0</b></span>
+            </div>
+          </div>
+
+          <!-- 2 NÚT CHỤP TO NỔI BẬT -->
+          <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px; margin-bottom:8px;">
+            <button class="tab-btn" onclick="captureCollisionSample('free')"
+              style="padding:10px; font-size:0.75rem; font-weight:800; border-color:var(--emerald); color:#070b12; background:var(--emerald); cursor:pointer; box-shadow:0 0 10px rgba(0,255,163,0.3);">
+              📸 THÊM FREE [F]
+            </button>
+            <button class="tab-btn" onclick="captureCollisionSample('blocked')"
+              style="padding:10px; font-size:0.75rem; font-weight:800; border-color:var(--rose); color:#fff; background:var(--rose); cursor:pointer; box-shadow:0 0 10px rgba(255,42,109,0.3);">
+              📸 THÊM BLOCKED [B]
+            </button>
+          </div>
+
+          <div style="display:flex; justify-content:space-between; align-items:center; font-size:0.68rem; color:var(--dim);">
+            <span>💡 Phím tắt: Bấm <b style="color:var(--emerald);">[F]</b> chụp Free | Bấm <b style="color:var(--rose);">[B]</b> chụp Blocked</span>
+            <div style="display:flex; gap:6px;">
+              <button class="tab-btn" onclick="undoCollisionSample()" style="padding:3px 8px; font-size:0.65rem; color:var(--amber); border-color:var(--amber);">↩️ Hoàn tác</button>
+              <button class="tab-btn" onclick="exportCollisionZip()" style="padding:3px 8px; font-size:0.65rem; color:var(--cyan); border-color:var(--cyan);">📥 Tải .ZIP</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 2. HUẤN LUYỆN MODEL AI (TRAIN DEEP LEARNING) -->
+        <div style="background:rgba(255,255,255,0.02); border:1px solid var(--border); border-radius:8px; padding:10px; margin-bottom:10px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+            <span style="font-size:0.75rem; color:var(--cyan); font-weight:700;">🧠 2. HUẤN LUYỆN MODEL AI</span>
+            <span id="col-train-status" style="font-size:0.68rem; font-family:'Orbitron',monospace; color:var(--emerald);">SẴN SÀNG</span>
+          </div>
+
+          <div style="display:grid; grid-template-columns: 1fr 1fr auto; gap:6px; margin-bottom:8px;">
+            <select id="col-model-select" style="background:#07090e; border:1px solid var(--border); color:var(--cyan); border-radius:4px; font-size:0.70rem; padding:4px;">
+              <option value="resnet18">ResNet-18 (Chuẩn JetBot)</option>
+              <option value="mobilenet_v2">MobileNetV2 (Siêu nhẹ)</option>
+            </select>
+            <select id="col-epochs-select" style="background:#07090e; border:1px solid var(--border); color:var(--cyan); border-radius:4px; font-size:0.70rem; padding:4px;">
+              <option value="10">10 Epochs (~2 phút)</option>
+              <option value="15" selected>15 Epochs (~3 phút)</option>
+              <option value="25">25 Epochs (~5 phút)</option>
+            </select>
+            <button class="tab-btn" id="btn-col-train" onclick="startCollisionTrain()"
+              style="padding:5px 12px; font-size:0.70rem; font-weight:700; color:#000; background:var(--cyan); border-color:var(--cyan); cursor:pointer;">
+              🚀 BẮT ĐẦU TRAIN
+            </button>
+          </div>
+
+          <!-- Progress bar -->
+          <div id="col-progress-wrap" style="display:none;">
+            <div style="height:6px; background:rgba(255,255,255,0.1); border-radius:3px; overflow:hidden; margin-bottom:4px;">
+              <div id="col-progress-bar" style="width:0%; height:100%; background:linear-gradient(90deg, var(--cyan), var(--emerald)); transition:width 0.3s;"></div>
+            </div>
+            <div style="display:flex; justify-content:space-between; font-size:0.65rem; color:var(--dim); font-family:'Orbitron',monospace;">
+              <span id="col-train-loss">Loss: --</span>
+              <span id="col-train-acc">Acc: --%</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 3. TỰ HÀNH NÉ VẬT CẢN (LIVE AUTOPILOT) -->
+        <div style="background:rgba(255,255,255,0.02); border:1px solid var(--border); border-radius:8px; padding:10px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+            <span style="font-size:0.75rem; color:var(--cyan); font-weight:700;">⚡ 3. TỰ HÀNH NÉ CẢN AI</span>
+            <button class="tab-btn" id="btn-col-toggle-avoid" onclick="toggleCollisionAvoid()"
+              style="padding:6px 14px; font-size:0.72rem; font-weight:800; border-color:var(--emerald); color:var(--emerald); background:rgba(0,255,163,0.15); cursor:pointer;">
+              ▶️ KÍCH HOẠT NÉ CẢN
+            </button>
+          </div>
+
+          <!-- Live gauge bar xác suất AI -->
+          <div>
+            <div style="display:flex; justify-content:space-between; font-size:0.68rem; font-family:'Orbitron',monospace; margin-bottom:4px;">
+              <span style="color:var(--emerald);">THOÁNG: <b id="col-prob-free-txt">100%</b></span>
+              <span id="col-action-badge" style="color:var(--cyan); font-weight:700;">CHỜ LỆNH</span>
+              <span style="color:var(--rose);">CẢN: <b id="col-prob-blocked-txt">0%</b></span>
+            </div>
+            <div style="height:10px; background:rgba(255,255,255,0.08); border-radius:5px; overflow:hidden; display:flex;">
+              <div id="col-gauge-free" style="width:100%; height:100%; background:var(--emerald); transition:width 0.1s;"></div>
+              <div id="col-gauge-blocked" style="width:0%; height:100%; background:var(--rose); transition:width 0.1s;"></div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -3816,10 +3917,165 @@
 
         // Cập nhật trạng thái Tự hành Bám đường A* (Autonomous Navigator)
         updateNavStatus(d.nav_state, d.planned_path);
+
+        // Cập nhật trạng thái AI Né Vật Cản (Collision Avoidance)
+        if (d.collision) {
+          updateCollisionUI(d.collision);
+        }
       } catch (e) { }
       setTimeout(pollState, 140);
     }
     pollState();
+
+    // ══════════════════════════════════════════════════════════════════
+    // 🤖 AI COLLISION AVOIDANCE HANDLERS (NVIDIA JETBOT WORKFLOW)
+    // ══════════════════════════════════════════════════════════════════
+    function captureCollisionSample(label) {
+      fetch('/api/collision/capture?label=' + encodeURIComponent(label))
+        .then(r => r.json())
+        .then(res => {
+          if (res.status === 'OK') {
+            updateCollisionCounts(res.counts);
+            if (typeof showConfigToast === 'function') {
+              showConfigToast('📸 Đã lưu mẫu [' + label.toUpperCase() + '] #' + (res.counts[label] || ''), 'success');
+            }
+            // Flash banner
+            const b = document.getElementById('col-status-banner');
+            if (b) {
+              b.innerText = `📸 [ĐÃ THÊM MẪU] ${label.toUpperCase()} (${res.counts.free} Free / ${res.counts.blocked} Blocked)`;
+              b.style.color = (label === 'free') ? 'var(--emerald)' : 'var(--rose)';
+              b.style.borderColor = (label === 'free') ? 'var(--emerald)' : 'var(--rose)';
+            }
+          } else {
+            if (typeof showConfigToast === 'function') showConfigToast('⚠️ Lỗi: ' + res.message, 'error');
+          }
+        })
+        .catch(e => console.error(e));
+    }
+
+    function undoCollisionSample() {
+      fetch('/api/collision/undo')
+        .then(r => r.json())
+        .then(res => {
+          if (res.status === 'OK') {
+            updateCollisionCounts(res.counts);
+            if (typeof showConfigToast === 'function') showConfigToast(res.message, 'success');
+            const b = document.getElementById('col-status-banner');
+            if (b) b.innerText = `↩️ ${res.message}`;
+          } else {
+            if (typeof showConfigToast === 'function') showConfigToast('⚠️ ' + res.message, 'error');
+          }
+        })
+        .catch(e => console.error(e));
+    }
+
+    function exportCollisionZip() {
+      if (typeof showConfigToast === 'function') showConfigToast('📥 Đang nén và tải dataset ZIP...', 'success');
+      window.location.href = '/api/collision/export';
+    }
+
+    function startCollisionTrain() {
+      const model = document.getElementById('col-model-select').value;
+      const epochs = document.getElementById('col-epochs-select').value;
+      const btn = document.getElementById('btn-col-train');
+      if (btn) {
+        btn.disabled = true;
+        btn.innerText = '⏳ ĐANG TRAIN...';
+      }
+
+      fetch(`/api/collision/train?model=${encodeURIComponent(model)}&epochs=${epochs}&batch=8`)
+        .then(r => r.json())
+        .then(res => {
+          if (typeof showConfigToast === 'function') {
+            showConfigToast(res.message, res.status === 'OK' ? 'success' : 'error');
+          }
+          const b = document.getElementById('col-status-banner');
+          if (b) b.innerText = `🚀 ${res.message}`;
+        })
+        .catch(e => {
+          console.error(e);
+          if (btn) { btn.disabled = false; btn.innerText = '🚀 BẮT ĐẦU TRAIN'; }
+        });
+    }
+
+    function toggleCollisionAvoid() {
+      fetch('/api/collision/toggle_avoid')
+        .then(r => r.json())
+        .then(res => {
+          const btn = document.getElementById('btn-col-toggle-avoid');
+          if (btn) {
+            btn.innerText = res.is_avoiding ? '⏹️ DỪNG NÉ CẢN' : '▶️ KÍCH HOẠT NÉ CẢN';
+            btn.style.background = res.is_avoiding ? 'rgba(255,42,109,0.3)' : 'rgba(0,255,163,0.15)';
+            btn.style.borderColor = res.is_avoiding ? 'var(--rose)' : 'var(--emerald)';
+            btn.style.color = res.is_avoiding ? 'var(--rose)' : 'var(--emerald)';
+          }
+          if (typeof showConfigToast === 'function') {
+            showConfigToast(res.is_avoiding ? '⚡ ĐÃ KÍCH HOẠT AI NÉ VẬT CẢN' : '🛑 ĐÃ TẮT TỰ HÀNH', res.is_avoiding ? 'success' : 'error');
+          }
+        })
+        .catch(e => console.error(e));
+    }
+
+    function updateCollisionCounts(counts) {
+      if (!counts) return;
+      const f = document.getElementById('col-free-badge');
+      const b = document.getElementById('col-blocked-badge');
+      if (f) f.innerText = counts.free || 0;
+      if (b) b.innerText = counts.blocked || 0;
+    }
+
+    function updateCollisionUI(col) {
+      if (!col) return;
+      updateCollisionCounts(col.counts);
+
+      const pFree = (col.prob_free !== undefined) ? Math.round(col.prob_free * 100) : 100;
+      const pBlocked = (col.prob_blocked !== undefined) ? Math.round(col.prob_blocked * 100) : 0;
+      const txtFree = document.getElementById('col-prob-free-txt');
+      const txtBlocked = document.getElementById('col-prob-blocked-txt');
+      const gFree = document.getElementById('col-gauge-free');
+      const gBlocked = document.getElementById('col-gauge-blocked');
+      if (txtFree) txtFree.innerText = pFree + '%';
+      if (txtBlocked) txtBlocked.innerText = pBlocked + '%';
+      if (gFree) gFree.style.width = pFree + '%';
+      if (gBlocked) gBlocked.style.width = pBlocked + '%';
+
+      const actBadge = document.getElementById('col-action-badge');
+      if (actBadge && col.action_desc) actBadge.innerText = col.action_desc;
+
+      const btnAvoid = document.getElementById('btn-col-toggle-avoid');
+      if (btnAvoid) {
+        btnAvoid.innerText = col.is_avoiding ? '⏹️ DỪNG NÉ CẢN' : '▶️ KÍCH HOẠT NÉ CẢN';
+        btnAvoid.style.background = col.is_avoiding ? 'rgba(255,42,109,0.3)' : 'rgba(0,255,163,0.15)';
+        btnAvoid.style.borderColor = col.is_avoiding ? 'var(--rose)' : 'var(--emerald)';
+        btnAvoid.style.color = col.is_avoiding ? 'var(--rose)' : 'var(--emerald)';
+      }
+
+      // Cập nhật tiến trình train nếu đang train
+      const wrap = document.getElementById('col-progress-wrap');
+      const bar = document.getElementById('col-progress-bar');
+      const statusTxt = document.getElementById('col-train-status');
+      const lossTxt = document.getElementById('col-train-loss');
+      const accTxt = document.getElementById('col-train-acc');
+      const btnTrain = document.getElementById('btn-col-train');
+
+      if (col.is_training && col.train_progress) {
+        if (wrap) wrap.style.display = 'block';
+        if (bar) bar.style.width = (col.train_progress.percent || 0) + '%';
+        if (statusTxt) statusTxt.innerText = col.train_progress.status || 'ĐANG TRAIN...';
+        if (lossTxt) lossTxt.innerText = 'Loss: ' + (col.train_progress.train_loss || '--');
+        if (accTxt) accTxt.innerText = 'Val Acc: ' + (col.train_progress.val_acc || '--') + '%';
+        if (btnTrain) { btnTrain.disabled = true; btnTrain.innerText = '⏳ ĐANG TRAIN...'; }
+      } else {
+        if (btnTrain && btnTrain.disabled) {
+          btnTrain.disabled = false;
+          btnTrain.innerText = '🚀 BẮT ĐẦU TRAIN';
+          if (statusTxt && col.train_progress && col.train_progress.status) {
+            statusTxt.innerText = col.train_progress.status;
+          }
+        }
+      }
+    }
+
 
     // Tự động khôi phục luồng stream nếu mạng gián đoạn
     const camImg = document.getElementById('cam-stream');
@@ -4143,10 +4399,12 @@
       const bStep = document.getElementById('btn-mode-step');
       const bPattern = document.getElementById('btn-mode-pattern');
       const bTracker = document.getElementById('btn-mode-tracker');
+      const bCol = document.getElementById('btn-mode-collision');
       const wasdBox = document.getElementById('wasd-ctrl-container');
       const stepBox = document.getElementById('step-ctrl-container');
       const patternBox = document.getElementById('pattern-ctrl-container');
       const trackerBox = document.getElementById('tracker-ctrl-container');
+      const colBox = document.getElementById('collision-ctrl-container');
 
       if (bWasd) {
         bWasd.classList.toggle('active', mode === 'wasd');
@@ -4164,11 +4422,16 @@
         bTracker.classList.toggle('active', mode === 'tracker');
         bTracker.style.color = (mode === 'tracker') ? '#000' : 'var(--amber)';
       }
+      if (bCol) {
+        bCol.classList.toggle('active', mode === 'collision');
+        bCol.style.color = (mode === 'collision') ? '#000' : 'var(--rose)';
+      }
 
       if (wasdBox) wasdBox.style.display = (mode === 'wasd') ? 'block' : 'none';
       if (stepBox) stepBox.style.display = (mode === 'step') ? 'block' : 'none';
       if (patternBox) patternBox.style.display = (mode === 'pattern') ? 'block' : 'none';
       if (trackerBox) trackerBox.style.display = (mode === 'tracker') ? 'block' : 'none';
+      if (colBox) colBox.style.display = (mode === 'collision') ? 'block' : 'none';
 
       if (mode === 'step') {
         updateStepLabels();
@@ -4467,10 +4730,19 @@
     window.addEventListener('keydown', (e) => {
       if (e.repeat) return;
       // Bỏ qua nếu đang nhập liệu trong ô input
-      if (e.target.tagName === 'INPUT') return;
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
 
       const k = e.key.toLowerCase();
       const code = e.code;
+
+      // Phím tắt thu thập dữ liệu AI Né Vật Cản: F = Free, B = Blocked
+      if (k === 'f' || code === 'KeyF') {
+        captureCollisionSample('free');
+        return;
+      } else if (k === 'b' || code === 'KeyB') {
+        captureCollisionSample('blocked');
+        return;
+      }
 
       if (currentControlMode === 'step') {
         if (k === 'w' || code === 'KeyW' || k === 'arrowup') { executeStep('linear', 'forward'); }

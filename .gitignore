@@ -22,4 +22,14 @@ Thumbs.db
 desktop.ini
 .vscode/
 .idea/
+*.code-workspace
 backup_checkpoint_*/
+
+# Dataset images and model weights
+dataset/collision/free/*.jpg
+dataset/collision/blocked/*.jpg
+*.zip
+models/*.pth
+models/*.trt
+models/*.onnx
+

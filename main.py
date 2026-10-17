@@ -65,6 +65,7 @@ from modules.scan_matcher import CorrelativeScanMatcher2D
 from modules.path_planner import PathPlanner
 from modules.navigator import AutonomousNavigator
 from modules.frame_recorder import FrameRecorder
+from modules.collision_manager import CollisionManager
 
 # Kiểm tra môi trường ROS
 try:
@@ -208,6 +209,9 @@ class JetBotMasterSystem:
             self.follower.set_enabled(True)
             print("👤 [TRACKER] Đã kích hoạt chế độ tự hành bám mục tiêu!")
 
+        # 5.1. Khởi tạo Module AI Collision Avoidance (Thu thập dữ liệu, Train PyTorch & Né vật cản)
+        self.collision_mgr = CollisionManager(workspace_dir=os.path.dirname(os.path.abspath(__file__)))
+
         # 6. Khởi tạo Module Phanh khẩn cấp & Cản ảo 3D (Độc lập, dễ kiểm thử)
         brake_active = bool(getattr(self.flags, 'brake', getattr(config, 'ENABLE_SAFETY_BRAKE', False)))
         self.safety_brake = EmergencyBrake(
@@ -307,7 +311,13 @@ class JetBotMasterSystem:
             self.web.debug_step_cb = self.request_debug_step
             self.web.tracker_mode_cb = self.set_tracker_mode
             self.web.tracker_roi_cb = self.init_tracker_roi
+            self.web.collision_mgr = self.collision_mgr
+            self.web.collision_capture_cb = self.capture_collision_sample
+            self.web.collision_undo_cb = self.undo_collision_sample
+            self.web.collision_train_cb = self.start_collision_train
+            self.web.collision_toggle_avoid_cb = self.toggle_collision_avoidance
             self.web.start()
+
 
         # Kết nối ROS trong nền nếu có roscore
         self.ros_cmd_pub = None
@@ -1249,49 +1259,51 @@ class JetBotMasterSystem:
                     v_real = v / lin_scale
                     w_real = w / turn_scale
 
-                    # Tích phân quãng đường & góc quay chuyến đi (Trip Odometer) theo vận tốc thực tế:
-                    dist_step = abs(v_real) * dt
-                    rot_step = abs(w_real) * dt
-                    self.total_distance_m += dist_step
-                    self.trip_distance_m += dist_step
-                    self.trip_turn_rad += rot_step
-                    self.trip_active_time_s += dt
+                    # Chỉ tích phân Odometry khi KHÔNG đang chạy bước định lượng (vì _step_worker đã tự tích phân S-curve chính xác từng mm)
+                    if not getattr(self, 'is_step_running', False):
+                        # Tích phân quãng đường & góc quay chuyến đi (Trip Odometer) theo vận tốc thực tế:
+                        dist_step = abs(v_real) * dt
+                        rot_step = abs(w_real) * dt
+                        self.total_distance_m += dist_step
+                        self.trip_distance_m += dist_step
+                        self.trip_turn_rad += rot_step
+                        self.trip_active_time_s += dt
 
-                    # Cập nhật liên tục góc quay từ cảm biến IMU phần cứng nếu có:
-                    if self.camera and hasattr(self.camera, 'get_imu_heading'):
-                        c_has_imu, _, c_raw_yaw = self.camera.get_imu_heading()
-                        if c_has_imu:
-                            if getattr(self, '_imu_yaw_anchor', None) is None:
-                                self._imu_yaw_anchor = c_raw_yaw - self.robot_yaw
-                            calib_yaw = c_raw_yaw - self._imu_yaw_anchor
-                            calib_yaw = math.atan2(math.sin(calib_yaw), math.cos(calib_yaw))
-                            self.latest_imu_yaw_val = calib_yaw
-                            self.last_imu_time = now
-                            self.has_active_imu = True
+                        # Cập nhật liên tục góc quay từ cảm biến IMU phần cứng nếu có:
+                        if self.camera and hasattr(self.camera, 'get_imu_heading'):
+                            c_has_imu, _, c_raw_yaw = self.camera.get_imu_heading()
+                            if c_has_imu:
+                                if getattr(self, '_imu_yaw_anchor', None) is None:
+                                    self._imu_yaw_anchor = c_raw_yaw - self.robot_yaw
+                                calib_yaw = c_raw_yaw - self._imu_yaw_anchor
+                                calib_yaw = math.atan2(math.sin(calib_yaw), math.cos(calib_yaw))
+                                self.latest_imu_yaw_val = calib_yaw
+                                self.last_imu_time = now
+                                self.has_active_imu = True
 
-                    # KIỂM TRA NGUỒN ODOMETRY THỰC (Ưu tiên tuyệt đối ROS & IMU phần cứng):
-                    has_ros_odom = (now - getattr(self, 'last_real_ros_odom_time', 0.0)) < 0.80
-                    has_real_imu = (now - getattr(self, 'last_imu_time', 0.0)) < 1.00
+                        # KIỂM TRA NGUỒN ODOMETRY THỰC (Ưu tiên tuyệt đối ROS & IMU phần cứng):
+                        has_ros_odom = (now - getattr(self, 'last_real_ros_odom_time', 0.0)) < 0.80
+                        has_real_imu = (now - getattr(self, 'last_imu_time', 0.0)) < 1.00
 
-                    if not has_ros_odom:
-                        # Chỉ tích phân góc quay từ w khi không có cảm biến IMU thực
-                        if not has_real_imu:
-                            self.robot_yaw += w_real * dt
-                            self.robot_yaw = math.atan2(math.sin(self.robot_yaw), math.cos(self.robot_yaw))
-                        elif getattr(config, 'ENABLE_CLOSED_LOOP_IMU', False) and not getattr(self, 'is_step_running', False):
-                            self.robot_yaw = getattr(self, 'latest_imu_yaw_val', self.robot_yaw)
+                        if not has_ros_odom:
+                            # Chỉ tích phân góc quay từ w khi không có cảm biến IMU thực
+                            if not has_real_imu:
+                                self.robot_yaw += w_real * dt
+                                self.robot_yaw = math.atan2(math.sin(self.robot_yaw), math.cos(self.robot_yaw))
+                            elif getattr(config, 'ENABLE_CLOSED_LOOP_IMU', False):
+                                self.robot_yaw = getattr(self, 'latest_imu_yaw_val', self.robot_yaw)
 
-                        # Tích phân tọa độ không gian (X, Y) theo vận tốc thực tế
-                        self.robot_x += v_real * dt * math.cos(self.robot_yaw)
-                        self.robot_y += v_real * dt * math.sin(self.robot_yaw)
+                            # Tích phân tọa độ không gian (X, Y) theo vận tốc thực tế
+                            self.robot_x += v_real * dt * math.cos(self.robot_yaw)
+                            self.robot_y += v_real * dt * math.sin(self.robot_yaw)
 
-                    # Cập nhật vết lịch sử đường đi (path history) khi di chuyển đủ 2cm
-                    if not self.path_history or (
-                        (self.robot_x - self.path_history[-1][0])**2 + (self.robot_y - self.path_history[-1][1])**2 > 0.0004
-                    ):
-                        self.path_history.append([round(self.robot_x, 3), round(self.robot_y, 3), 0.02])
-                        if len(self.path_history) > 400:
-                            self.path_history.pop(0)
+                        # Cập nhật vết lịch sử đường đi (path history) khi di chuyển đủ 2cm
+                        if not self.path_history or (
+                            (self.robot_x - self.path_history[-1][0])**2 + (self.robot_y - self.path_history[-1][1])**2 > 0.0004
+                        ):
+                            self.path_history.append([round(self.robot_x, 3), round(self.robot_y, 3), 0.02])
+                            if len(self.path_history) > 400:
+                                self.path_history.pop(0)
 
     def _control_loop(self):
         """Vòng lặp tự hành bám mục tiêu thị giác (Visual & Person Tracking Autopilot - Yahboom Course)"""
@@ -1307,7 +1319,33 @@ class JetBotMasterSystem:
                     time.sleep(0.04)
                     continue
 
-                # 2. Xử lý bộ bám thị giác (Person Follower, Color Tracker, Object Tracker)
+                # 2. Xử lý AI Collision Avoidance Autopilot (Né vật cản tự hành bằng Deep Learning)
+                if getattr(self, 'collision_mgr', None) and self.collision_mgr.is_avoiding:
+                    frame = self.latest_raw_bgr if self.latest_raw_bgr is not None else (getattr(self.camera, 'latest_bgr', None) if self.camera else None)
+                    if frame is not None:
+                        p_free, p_blocked = self.collision_mgr.predict(frame)
+                        v, w, desc = self.collision_mgr.compute_avoidance_cmd(p_blocked)
+                        if v is not None and w is not None:
+                            # Khóa an toàn Virtual Bumper phanh cứng nếu có
+                            if self.safety_brake and self.safety_brake.is_enabled and v > 0.01:
+                                v, w, alert = self.safety_brake.evaluate_velocity(v, w, self.obstacle_distance)
+                                if alert == "EMERGENCY_STOP":
+                                    v = 0.0
+
+                            with self.lock:
+                                self.current_v = v
+                                self.current_w = w
+                                self.last_cmd_vel_time = now
+
+                            if self.motors:
+                                if abs(v) < 0.01 and abs(w) < 0.01:
+                                    self.motors.stop()
+                                else:
+                                    self.motors.set_cmd_vel(v, w)
+                    time.sleep(0.04)
+                    continue
+
+                # 3. Xử lý bộ bám thị giác (Person Follower, Color Tracker, Object Tracker)
                 if self.follower and self.follower.is_enabled:
                     v, w = self.follower.compute_command(detections=self.detections, frame=self.latest_raw_bgr)
                     if v is not None and w is not None:
@@ -1633,6 +1671,7 @@ class JetBotMasterSystem:
             "camera_source": f"{cam_src} [{cam_mode_str}]",
             "calc_fps": cam_fps,
             "camera_mode": getattr(self.camera, 'view_mode', 'ai') if self.camera else 'ai',
+            "collision": self.collision_mgr.get_status() if getattr(self, 'collision_mgr', None) else {},
             "system_version": getattr(config, 'SYSTEM_VERSION', 'v2.4.0-SAFETY-DUAL-ROS'),
             "system_codename": getattr(config, 'VERSION_CODENAME', 'Aegis JetBot'),
             "system_build": getattr(config, 'BUILD_TAG', 'v2.4.0-safety-dual-ros'),
@@ -1737,6 +1776,33 @@ class JetBotMasterSystem:
             self.soft_stop_enabled = True
             print("🛑 [CHẾ ĐỘ DỪNG] Luôn duy trì phanh từ từ (Soft Stop), không cho phép tắt về phanh gấp.")
             return True
+        return False
+
+    def capture_collision_sample(self, label='free'):
+        """Chụp 1 mẫu ảnh gán nhãn Free/Blocked cho bài toán Né vật cản"""
+        frame = self.latest_raw_bgr
+        if frame is None and self.camera:
+            frame = getattr(self.camera, 'latest_bgr', None)
+        if getattr(self, 'collision_mgr', None):
+            return self.collision_mgr.save_sample(frame, label=label)
+        return False, "Chưa khởi tạo CollisionManager", {}
+
+    def undo_collision_sample(self):
+        """Hoàn tác / Xóa ảnh vừa chụp gần nhất"""
+        if getattr(self, 'collision_mgr', None):
+            return self.collision_mgr.undo_last_sample()
+        return False, "Chưa khởi tạo CollisionManager", {}
+
+    def start_collision_train(self, epochs=15, batch_size=8, lr=0.001, model_type='resnet18'):
+        """Kích hoạt huấn luyện PyTorch Transfer Learning cho Collision Avoidance"""
+        if getattr(self, 'collision_mgr', None):
+            return self.collision_mgr.start_training(epochs=epochs, batch_size=batch_size, lr=lr, model_type=model_type)
+        return False, "Chưa khởi tạo CollisionManager"
+
+    def toggle_collision_avoidance(self):
+        """Bật / Tắt chế độ Tự hành né vật cản thời gian thực"""
+        if getattr(self, 'collision_mgr', None):
+            return self.collision_mgr.toggle_avoidance()
         return False
 
     def set_debug_paused(self, paused=True):
