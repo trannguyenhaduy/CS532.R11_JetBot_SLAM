@@ -202,8 +202,11 @@ class JetBotMasterSystem:
         # 4. Khởi tạo Module Nhận diện AI
         self.yolo = SpatialPerceptionEngine() if self.flags.yolo else None
 
-        # 5. Module Bám người HRI: ĐÃ KHÓA CỨNG VĨNH VIỄN (Triệt tiêu 100% việc tự ý chạy động cơ)
-        self.follower = None
+        # 5. Module Bám mục tiêu Thị giác & HRI (Visual & Person Tracker - Yahboom Course)
+        self.follower = PersonTracker(target_dist=getattr(config, 'FOLLOWER_TARGET_DIST_M', 0.85))
+        if getattr(self.flags, 'follower', False):
+            self.follower.set_enabled(True)
+            print("👤 [TRACKER] Đã kích hoạt chế độ tự hành bám mục tiêu!")
 
         # 6. Khởi tạo Module Phanh khẩn cấp & Cản ảo 3D (Độc lập, dễ kiểm thử)
         brake_active = bool(getattr(self.flags, 'brake', getattr(config, 'ENABLE_SAFETY_BRAKE', False)))
@@ -1289,9 +1292,43 @@ class JetBotMasterSystem:
                             self.path_history.pop(0)
 
     def _control_loop(self):
-        """Vòng lặp tự hành - ĐÃ KHÓA CỨNG AN TOÀN (Tuyệt đối không can thiệp động cơ)"""
+        """Vòng lặp tự hành bám mục tiêu thị giác (Visual & Person Tracking Autopilot - Yahboom Course)"""
         while self.running:
-            time.sleep(0.5)
+            try:
+                now = time.time()
+                # 1. Ưu tiên quyền điều khiển lái tay thủ công từ Web Cockpit trong 0.4s gần nhất
+                is_manual_active = (now - getattr(self, 'last_manual_drive_time', 0.0) < 0.40)
+                is_step_active = getattr(self, 'is_step_running', False)
+                is_nav_active = (getattr(self, 'navigator', None) and self.navigator.is_running)
+
+                if is_manual_active or is_step_active or is_nav_active:
+                    time.sleep(0.04)
+                    continue
+
+                # 2. Xử lý bộ bám thị giác (Person Follower, Color Tracker, Object Tracker)
+                if self.follower and self.follower.is_enabled:
+                    v, w = self.follower.compute_command(detections=self.detections, frame=self.latest_raw_bgr)
+                    if v is not None and w is not None:
+                        # Kiểm tra an toàn Virtual Bumper
+                        if self.safety_brake and self.safety_brake.is_enabled and v > 0.01:
+                            v, w, alert = self.safety_brake.evaluate_velocity(v, w, self.obstacle_distance)
+                            if alert == "EMERGENCY_STOP":
+                                v = 0.0
+
+                        with self.lock:
+                            self.current_v = v
+                            self.current_w = w
+                            self.last_cmd_vel_time = now
+
+                        if self.motors:
+                            if abs(v) < 0.01 and abs(w) < 0.01:
+                                self.motors.stop()
+                            else:
+                                self.motors.set_cmd_vel(v, w)
+
+            except Exception:
+                pass
+            time.sleep(0.04)  # 25 Hz
 
     def _ai_inference_loop(self):
         """Luồng suy luận AI bất đồng bộ (Zero-Latency Async Worker):
@@ -1587,38 +1624,53 @@ class JetBotMasterSystem:
             "motor_trim_right": round(getattr(self.motors, 'trim_right', 1.0), 3) if self.motors else 1.0,
             "calibration": self.get_calibration_params(),
             "follower_enabled": bool(self.follower.is_enabled) if self.follower else False,
-                "mapper_enabled": bool(self.flags.mapper),
-                "camera_source": f"{cam_src} [{cam_mode_str}]",
-                "calc_fps": cam_fps,
-                "camera_mode": getattr(self.camera, 'view_mode', 'ai') if self.camera else 'ai',
-                "system_version": getattr(config, 'SYSTEM_VERSION', 'v2.4.0-SAFETY-DUAL-ROS'),
-                "system_codename": getattr(config, 'VERSION_CODENAME', 'Aegis JetBot'),
-                "system_build": getattr(config, 'BUILD_TAG', 'v2.4.0-safety-dual-ros'),
-                "benchmark": {
-                    "tv1": {
-                        "total_score": 29, "max_score": 30, "grade": "XUẤT SẮC",
-                        "score_hw": 14, "max_hw": 15, "score_motion": 15, "max_motion": 15,
-                        "cpu_pct": 32, "ram_gb": 1.4, "battery_v": v, "battery_pct": pct,
-                        "bumper_status": "VÙNG AN TOÀN" if (self.obstacle_distance is None or self.obstacle_distance >= brake_dist + 0.1) else ("[PHANH KHẨN CẤP]" if self.obstacle_distance <= brake_dist else "[CẢNH BÁO]"),
-                        "diag_text": "Hệ thống động cơ & nguồn điện INA219 ổn định."
-                    },
-                    "tv2": {
-                        "status_badge": "HOẠT ĐỘNG TỐT", "fps": cam_fps, "fps_pct": min(100, int(cam_fps / 25.0 * 100)),
-                        "valid_depth_pct": 88, "num_obj": len(self.detections), "avg_confidence": 90,
-                        "target_info": "Đang khóa mục tiêu người dùng" if has_person else "Đang quét không gian phía trước",
-                        "obstacle_distance": self.obstacle_distance,
-                        "dist_pct": int(min(100, max(15, (self.obstacle_distance or 2.5) * 35))),
-                        "diag_text": f"Chế độ {cam_mode_str} | FPS: {cam_fps:.1f} | Cự ly cản: {f'{self.obstacle_distance*100:.1f} cm' if self.obstacle_distance is not None else 'ĐƯỜNG THOÁNG'} (Ngưỡng phanh {int(brake_dist*100)}cm)."
-                    },
-                    "tv3": {
-                        "total_score": 58, "max_score": 60, "grade": "XUẤT SẮC",
-                        "score_s": 34, "max_s": 35, "odom_hz": cam_fps, "num_pts": len(pts),
-                        "score_sem": 24, "max_sem": 25, "num_obj": len(confirmed_objs) if confirmed_objs else len(self.detections),
-                        "status_badge": "BẢN ĐỒ SẠCH",
-                        "diag_text": f"Bản đồ RTAB-Map: Đã ghi nhận {len(confirmed_objs)} mốc ngữ nghĩa không gian." if confirmed_objs else "Bản đồ RTAB-Map hoạt động chuẩn xác."
-                    }
+            "tracker_mode": getattr(self.follower, 'mode', 'off') if self.follower else 'off',
+            "tracker_color": getattr(self.follower, 'color_name', 'red') if self.follower else 'red',
+            "tracker_status": getattr(self.follower, 'status_text', 'TẮT') if self.follower else 'TẮT',
+            "mapper_enabled": bool(self.flags.mapper),
+            "camera_source": f"{cam_src} [{cam_mode_str}]",
+            "calc_fps": cam_fps,
+            "camera_mode": getattr(self.camera, 'view_mode', 'ai') if self.camera else 'ai',
+            "system_version": getattr(config, 'SYSTEM_VERSION', 'v2.4.0-SAFETY-DUAL-ROS'),
+            "system_codename": getattr(config, 'VERSION_CODENAME', 'Aegis JetBot'),
+            "system_build": getattr(config, 'BUILD_TAG', 'v2.4.0-safety-dual-ros'),
+            "benchmark": {
+                "tv1": {
+                    "total_score": 29, "max_score": 30, "grade": "XUẤT SẮC",
+                    "score_hw": 14, "max_hw": 15, "score_motion": 15, "max_motion": 15,
+                    "cpu_pct": 32, "ram_gb": 1.4, "battery_v": v, "battery_pct": pct,
+                    "bumper_status": "VÙNG AN TOÀN" if (self.obstacle_distance is None or self.obstacle_distance >= brake_dist + 0.1) else ("[PHANH KHẨN CẤP]" if self.obstacle_distance <= brake_dist else "[CẢNH BÁO]"),
+                    "diag_text": "Hệ thống động cơ & nguồn điện INA219 ổn định."
+                },
+                "tv2": {
+                    "status_badge": "HOẠT ĐỘNG TỐT", "fps": cam_fps, "fps_pct": min(100, int(cam_fps / 25.0 * 100)),
+                    "valid_depth_pct": 88, "num_obj": len(self.detections), "avg_confidence": 90,
+                    "target_info": "Đang khóa mục tiêu người dùng" if has_person else "Đang quét không gian phía trước",
+                    "obstacle_distance": self.obstacle_distance,
+                    "dist_pct": int(min(100, max(15, (self.obstacle_distance or 2.5) * 35))),
+                    "diag_text": f"Chế độ {cam_mode_str} | FPS: {cam_fps:.1f} | Cự ly cản: {f'{self.obstacle_distance*100:.1f} cm' if self.obstacle_distance is not None else 'ĐƯỜNG THOÁNG'} (Ngưỡng phanh {int(brake_dist*100)}cm)."
+                },
+                "tv3": {
+                    "total_score": 58, "max_score": 60, "grade": "XUẤT SẮC",
+                    "score_s": 34, "max_s": 35, "odom_hz": cam_fps, "num_pts": len(pts),
+                    "score_sem": 24, "max_sem": 25, "num_obj": len(confirmed_objs) if confirmed_objs else len(self.detections),
+                    "status_badge": "BẢN ĐỒ SẠCH",
+                    "diag_text": f"Bản đồ RTAB-Map: Đã ghi nhận {len(confirmed_objs)} mốc ngữ nghĩa không gian." if confirmed_objs else "Bản đồ RTAB-Map hoạt động chuẩn xác."
                 }
             }
+        }
+
+    def set_tracker_mode(self, mode: str, color: str = 'red'):
+        """Kích hoạt chế độ bám mục tiêu thị giác: person | color | object | off"""
+        if not self.follower:
+            return False
+        return self.follower.set_mode(mode, color)
+
+    def init_tracker_roi(self, bbox):
+        """Khởi tạo vùng vật thể theo dõi KCF/MIL (x, y, w, h)"""
+        if not self.follower or self.latest_raw_bgr is None:
+            return False
+        return self.follower.init_object_roi(self.latest_raw_bgr, bbox)
 
     def toggle_feature(self, flag_name):
         """Bật/tắt tính năng trực tiếp từ Web Cockpit"""
@@ -1628,10 +1680,36 @@ class JetBotMasterSystem:
                 mode = flag_name.replace("cam_mode_", "").replace("cam_", "").strip()
                 res = self.camera.set_view_mode(mode)
                 return res
-        if "follow" in flag_name:
-            print("🛡️ [KHÓA CỨNG AN TOÀN] Tính năng bám người HRI đã bị VÔ HIỆU HÓA HOÀN TOÀN để bảo vệ động cơ JetBot!")
+        if "follow" in flag_name or flag_name in ["tracker_person", "track_person"]:
+            if self.follower:
+                if self.follower.is_enabled and self.follower.mode == 'person':
+                    self.follower.set_enabled(False)
+                    res = False
+                else:
+                    self.follower.set_mode('person')
+                    res = True
+                print(f"🔄 [TOGGLE] Bám người tự hành (Person Follower): {'BẬT' if res else 'TẮT'}")
+                return res
+            return False
+        elif flag_name.startswith("tracker_color") or flag_name.startswith("track_color"):
+            color = flag_name.split("_")[-1] if "_" in flag_name else "red"
+            if color not in ("red", "green", "blue", "yellow"): color = "red"
+            if self.follower:
+                self.follower.set_mode('color', color)
+                print(f"🎨 [TOGGLE] Bám màu sắc HSV [{color.upper()}]: BẬT")
+                return True
+            return False
+        elif flag_name in ("tracker_object", "track_object"):
+            if self.follower:
+                self.follower.set_mode('object')
+                print("🎯 [TOGGLE] Bám vật thể (Object Tracker): BẬT")
+                return True
+            return False
+        elif flag_name in ("tracker_off", "track_off", "stop_track"):
             if self.follower:
                 self.follower.set_enabled(False)
+                print("🛑 [TOGGLE] Tắt bộ bám thị giác: ĐÃ TẮT")
+                return False
             return False
         elif "map" in flag_name:
             if self.mapper is None:

@@ -140,6 +140,41 @@ class WebHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(json.dumps({"status": "OK", "mode": res_mode}).encode())
             return
+        elif self.path.startswith('/api/tracker/set_mode'):
+            mode = 'person'
+            color = 'red'
+            if '?' in self.path:
+                for p in self.path.split('?')[1].split('&'):
+                    if p.startswith('mode='): mode = p.split('=')[1].lower()
+                    if p.startswith('color='): color = p.split('=')[1].lower()
+            res = False
+            if inst and hasattr(inst, 'set_tracker_mode'):
+                res = inst.set_tracker_mode(mode, color)
+            elif inst and hasattr(inst, 'follower') and inst.follower:
+                res = inst.follower.set_mode(mode, color)
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps({"status": "OK", "mode": mode, "color": color, "result": res}).encode())
+            return
+        elif self.path.startswith('/api/tracker/select_roi'):
+            bx, by, bw, bh = 0, 0, 0, 0
+            if '?' in self.path:
+                for p in self.path.split('?')[1].split('&'):
+                    if p.startswith('x='): bx = int(float(p.split('=')[1]))
+                    if p.startswith('y='): by = int(float(p.split('=')[1]))
+                    if p.startswith('w='): bw = int(float(p.split('=')[1]))
+                    if p.startswith('h='): bh = int(float(p.split('=')[1]))
+            res = False
+            if inst and hasattr(inst, 'init_tracker_roi'):
+                res = inst.init_tracker_roi((bx, by, bw, bh))
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps({"status": "OK" if res else "ERROR", "roi": [bx, by, bw, bh]}).encode())
+            return
         elif self.path.startswith('/api/map/save'):
             map_name = "room_map"
             if '?' in self.path:

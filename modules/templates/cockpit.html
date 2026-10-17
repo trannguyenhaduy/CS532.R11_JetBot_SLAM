@@ -1263,6 +1263,8 @@
           <button class="tab-btn active" id="btn-mode-wasd" onclick="switchControlMode('wasd')">🎮 WASD</button>
           <button class="tab-btn" id="btn-mode-step" onclick="switchControlMode('step')"
             style="color:var(--emerald); border-color:var(--emerald);">📏 BƯỚC (CM & ĐỘ)</button>
+          <button class="tab-btn" id="btn-mode-tracker" onclick="switchControlMode('tracker')"
+            style="color:var(--amber); border-color:var(--amber);">🎯 BÁM THỊ GIÁC</button>
         </div>
       </div>
 
@@ -1374,6 +1376,42 @@
             <button class="btn-drive" id="btn-step-back" onclick="executeStep('linear','backward')"
               style="width:150px; height:42px; font-size:0.80rem; font-weight:700;">▼ LÙI 20CM</button>
           </div>
+        </div>
+      </div>
+
+      <!-- 3. CHẾ ĐỘ BÁM THỊ GIÁC YAHBOOM (VISUAL TRACKER SUITE) -->
+      <div id="tracker-ctrl-container" style="display:none; padding:12px 14px;">
+        <div id="tracker-status-banner"
+          style="margin-bottom:10px; padding:8px 12px; border-radius:6px; font-size:0.75rem; text-align:center; font-weight:700; border:1px solid var(--amber); color:var(--amber); background:rgba(255, 184, 0, 0.1);">
+          [CHẾ ĐỘ BÁM THỊ GIÁC] ĐANG TẮT
+        </div>
+
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px; margin-bottom:10px;">
+          <button class="tab-btn" id="btn-track-person" onclick="setTrackerMode('person')"
+            style="padding:8px 10px; font-size:0.75rem; font-weight:700; border-color:var(--cyan); color:var(--cyan); background:rgba(0,240,255,0.08); cursor:pointer;">
+            👤 BÁM NGƯỜI
+          </button>
+          <button class="tab-btn" id="btn-track-object" onclick="setTrackerMode('object')"
+            style="padding:8px 10px; font-size:0.75rem; font-weight:700; border-color:var(--emerald); color:var(--emerald); background:rgba(0,255,163,0.08); cursor:pointer;">
+            🎯 BÁM VẬT THỂ
+          </button>
+        </div>
+
+        <div style="background:rgba(255,255,255,0.02); border:1px solid var(--border); border-radius:8px; padding:8px 10px; margin-bottom:10px;">
+          <div style="font-size:0.72rem; color:var(--dim); font-weight:700; margin-bottom:6px; text-align:center;">🎨 BÁM THEO MÀU SẮC (HSV)</div>
+          <div style="display:flex; gap:6px; justify-content:center; flex-wrap:wrap;">
+            <button class="tab-btn" onclick="setTrackerMode('color', 'red')" style="padding:4px 10px; font-size:0.70rem; color:#ff4d4f; border-color:#ff4d4f; cursor:pointer;">🔴 ĐỎ</button>
+            <button class="tab-btn" onclick="setTrackerMode('color', 'green')" style="padding:4px 10px; font-size:0.70rem; color:#52c41a; border-color:#52c41a; cursor:pointer;">🟢 XANH LÁ</button>
+            <button class="tab-btn" onclick="setTrackerMode('color', 'blue')" style="padding:4px 10px; font-size:0.70rem; color:#1890ff; border-color:#1890ff; cursor:pointer;">🔵 XANH DƯƠNG</button>
+            <button class="tab-btn" onclick="setTrackerMode('color', 'yellow')" style="padding:4px 10px; font-size:0.70rem; color:#fadb14; border-color:#fadb14; cursor:pointer;">🟡 VÀNG</button>
+          </div>
+        </div>
+
+        <div style="display:flex; justify-content:center;">
+          <button class="tab-btn" onclick="setTrackerMode('off')"
+            style="padding:6px 20px; font-size:0.75rem; font-weight:700; border-color:var(--rose); color:var(--rose); background:rgba(255,50,50,0.12); cursor:pointer;">
+            🛑 TẮT BỘ BÁM
+          </button>
         </div>
       </div>
     </div>
@@ -3739,6 +3777,13 @@
         }
 
 
+        if (d.tracker_status) {
+          const banner = document.getElementById('tracker-status-banner');
+          if (banner && typeof currentControlMode !== 'undefined' && currentControlMode === 'tracker') {
+            banner.innerText = `[${(d.tracker_mode || 'OFF').toUpperCase()}] ${d.tracker_status}`;
+          }
+        }
+
         // Cập nhật Nhãn Nguồn Camera & Reconnect phục hồi
         if (d.camera_source) {
           const badge = document.getElementById('cam-source-badge');
@@ -4097,9 +4142,11 @@
       const bWasd = document.getElementById('btn-mode-wasd');
       const bStep = document.getElementById('btn-mode-step');
       const bPattern = document.getElementById('btn-mode-pattern');
+      const bTracker = document.getElementById('btn-mode-tracker');
       const wasdBox = document.getElementById('wasd-ctrl-container');
       const stepBox = document.getElementById('step-ctrl-container');
       const patternBox = document.getElementById('pattern-ctrl-container');
+      const trackerBox = document.getElementById('tracker-ctrl-container');
 
       if (bWasd) {
         bWasd.classList.toggle('active', mode === 'wasd');
@@ -4113,16 +4160,50 @@
         bPattern.classList.toggle('active', mode === 'pattern');
         bPattern.style.color = (mode === 'pattern') ? '#000' : 'var(--amber)';
       }
+      if (bTracker) {
+        bTracker.classList.toggle('active', mode === 'tracker');
+        bTracker.style.color = (mode === 'tracker') ? '#000' : 'var(--amber)';
+      }
 
       if (wasdBox) wasdBox.style.display = (mode === 'wasd') ? 'block' : 'none';
       if (stepBox) stepBox.style.display = (mode === 'step') ? 'block' : 'none';
       if (patternBox) patternBox.style.display = (mode === 'pattern') ? 'block' : 'none';
+      if (trackerBox) trackerBox.style.display = (mode === 'tracker') ? 'block' : 'none';
 
       if (mode === 'step') {
         updateStepLabels();
       } else if (mode === 'wasd') {
         emergencyStop();
       }
+    }
+
+    function setTrackerMode(mode, color) {
+      const col = color || 'red';
+      fetch('/api/tracker/set_mode?mode=' + encodeURIComponent(mode) + '&color=' + encodeURIComponent(col))
+        .then(r => r.json())
+        .then(data => {
+          console.log('🎯 [TRACKER] Cập nhật chế độ:', data);
+          const banner = document.getElementById('tracker-status-banner');
+          if (banner) {
+            if (mode === 'off') {
+              banner.innerText = '[CHẾ ĐỘ BÁM THỊ GIÁC] ĐÃ TẮT';
+              banner.style.color = 'var(--dim)';
+              banner.style.borderColor = 'var(--border)';
+            } else if (mode === 'color') {
+              banner.innerText = `[BÁM MÀU SẮC] ĐANG BÁM MÀU ${col.toUpperCase()}`;
+              banner.style.color = 'var(--emerald)';
+              banner.style.borderColor = 'var(--emerald)';
+            } else if (mode === 'object') {
+              banner.innerText = '[BÁM VẬT THỂ] ĐÃ KÍCH HOẠT (CHỜ KHÓA MỤC TIÊU)';
+              banner.style.color = 'var(--cyan)';
+              banner.style.borderColor = 'var(--cyan)';
+            } else {
+              banner.innerText = '[BÁM NGƯỜI] TỰ HÀNH BÁM NGƯỜI THỜI GIAN THỰC';
+              banner.style.color = 'var(--cyan)';
+              banner.style.borderColor = 'var(--cyan)';
+            }
+          }
+        }).catch(e => console.error(e));
     }
 
     function setStepDist(cm) {
