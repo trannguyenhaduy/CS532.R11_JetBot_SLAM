@@ -30,6 +30,7 @@ dataset/collision/free/*.jpg
 dataset/collision/blocked/*.jpg
 *.zip
 models/*.pth
+!models/best_collision_model.pth
 models/*.trt
 models/*.onnx
 
