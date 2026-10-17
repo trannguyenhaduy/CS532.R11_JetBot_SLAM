@@ -559,25 +559,48 @@ class CameraStreamer:
                 fw = frame.shape[1] if frame is not None else 640
                 fh = frame.shape[0] if frame is not None else 480
                 for d in in_nn.detections:
+                    conf = float(getattr(d, 'confidence', 0.0))
+                    # Lọc ngay từ nguồn: Bỏ qua các detection độ tin cậy thấp (< 38%)
+                    if conf < 0.38:
+                        continue
+
                     lbl = labels_map[d.label] if (hasattr(d, 'label') and d.label < len(labels_map)) else "OBJECT"
-                    x_m = round(float(d.spatialCoordinates.x) / 1000.0, 2)
-                    y_m = round(float(d.spatialCoordinates.y) / 1000.0, 2)
-                    z_m = round(float(d.spatialCoordinates.z) / 1000.0, 2)
+                    try:
+                        x_raw = float(d.spatialCoordinates.x)
+                        y_raw = float(d.spatialCoordinates.y)
+                        z_raw = float(d.spatialCoordinates.z)
+                    except Exception:
+                        continue
+
+                    # Bỏ qua tọa độ bất thường (NaN / Inf) hoặc độ sâu ngoài dải [8cm - 4.5m]
+                    if math.isnan(z_raw) or math.isinf(z_raw) or z_raw < 80.0 or z_raw > 4500.0:
+                        continue
+
+                    x_m = round(x_raw / 1000.0, 2)
+                    y_m = round(y_raw / 1000.0, 2)
+                    z_m = round(z_raw / 1000.0, 2)
+
                     bx1 = max(0, min(fw - 2, int(d.xmin * fw)))
                     by1 = max(0, min(fh - 2, int(d.ymin * fh)))
                     bx2 = max(bx1 + 10, min(fw - 1, int(d.xmax * fw)))
                     by2 = max(by1 + 10, min(fh - 1, int(d.ymax * fh)))
+
+                    # Lọc bỏ nhiễu pixel quá nhỏ
+                    if (bx2 - bx1) < 18 or (by2 - by1) < 18:
+                        continue
+
                     vpu_dets.append({
                         "id": 0,
                         "class": lbl.upper(),
                         "name": lbl.upper(),
-                        "score": round(float(d.confidence), 2),
+                        "score": round(conf, 2),
                         "x": x_m, "y": y_m, "z": z_m,
                         "distance": z_m,
                         "bbox": [bx1, by1, bx2, by2],
                         "source": "OAK-D VPU"
                     })
                 self.latest_vpu_detections = vpu_dets
+                self.has_new_vpu_dets = True
 
             # Chỉ xuất bản các Topics ROS khi được cấu hình làm ROS Publisher Node độc lập
             if getattr(self, 'as_ros_publisher', False):

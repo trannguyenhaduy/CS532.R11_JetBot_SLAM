@@ -39,9 +39,27 @@ LABEL_SYNONYMS = {
     "keyboard": (66, "KEYBOARD"), "mouse": (64, "MOUSE"), "stop sign": (11, "STOP SIGN / DOOR")
 }
 
+def compute_box_iou(box1, box2):
+    """Tính Intersection over Union (IoU) giữa 2 khung hộp [x1, y1, x2, y2]"""
+    if not box1 or not box2 or len(box1) < 4 or len(box2) < 4:
+        return 0.0
+    x1 = max(box1[0], box2[0])
+    y1 = max(box1[1], box2[1])
+    x2 = min(box1[2], box2[2])
+    y2 = min(box1[3], box2[3])
+    w = max(0, x2 - x1)
+    h = max(0, y2 - y1)
+    inter = w * h
+    if inter <= 0:
+        return 0.0
+    area1 = max(1, (box1[2] - box1[0]) * (box1[3] - box1[1]))
+    area2 = max(1, (box2[2] - box2[0]) * (box2[3] - box2[1]))
+    return inter / float(area1 + area2 - inter)
+
+
 class TemporalTracker:
-    """Bộ lọc thời gian làm mượt quỹ đạo và chống chập chờn (Coasting / Anti-Flicker)"""
-    def __init__(self, max_age_seconds=0.6):
+    """Bộ lọc thời gian làm mượt quỹ đạo và chống rung giật bounding box (EMA Smoothing & Anti-Jitter)"""
+    def __init__(self, max_age_seconds=0.55):
         self.max_age = max_age_seconds
         self.tracks = {}
 
@@ -67,38 +85,76 @@ class TemporalTracker:
 
             if best_k is not None:
                 old = self.tracks[best_k]
-                sx = round(0.70 * x + 0.30 * old['x'], 2)
-                sy = round(0.70 * y + 0.30 * old['y'], 2)
-                sz = round(0.70 * z + 0.30 * old['z'], 2)
+                sx = round(0.65 * x + 0.35 * old['x'], 2)
+                sy = round(0.65 * y + 0.35 * old['y'], 2)
+                sz = round(0.65 * z + 0.35 * old['z'], 2)
+
+                # Làm mượt tọa độ Bounding Box 2D bằng Exponential Moving Average (EMA)
+                # Triệt tiêu hiện tượng giật rung khung hình (pixel jitter)
+                smooth_bbox = None
+                old_bbox = old.get('bbox')
+                if bbox and old_bbox:
+                    iou_val = compute_box_iou(bbox, old_bbox)
+                    if iou_val > 0.20:
+                        sbx1 = int(round(0.55 * bbox[0] + 0.45 * old_bbox[0]))
+                        sby1 = int(round(0.55 * bbox[1] + 0.45 * old_bbox[1]))
+                        sbx2 = int(round(0.55 * bbox[2] + 0.45 * old_bbox[2]))
+                        sby2 = int(round(0.55 * bbox[3] + 0.45 * old_bbox[3]))
+                        smooth_bbox = [sbx1, sby1, sbx2, sby2]
+                    else:
+                        smooth_bbox = [int(v) for v in bbox]
+                elif bbox:
+                    smooth_bbox = [int(v) for v in bbox]
+                elif old_bbox:
+                    smooth_bbox = old_bbox
+
                 updated[best_k] = {
                     "id": det.get('id', 0),
                     "name": name,
                     "score": max(det.get('score', 0.8), round(old['score'] * 0.96, 2)),
                     "x": sx, "y": sy, "z": sz,
-                    "bbox": bbox if bbox else old.get('bbox'),
+                    "bbox": smooth_bbox,
                     "last_seen": now
                 }
             else:
-                k = f"{name}_{now}_{len(updated)}"
+                k = f"{name}_{now:.3f}_{len(updated)}"
                 updated[k] = {
                     "id": det.get('id', 0),
                     "name": name,
                     "score": det.get('score', 0.8),
                     "x": round(x, 2), "y": round(y, 2), "z": round(z, 2),
-                    "bbox": bbox,
+                    "bbox": [int(v) for v in bbox] if bbox else None,
                     "last_seen": now
                 }
 
-        # Coasting: Giữ lại track vừa mất dấu trong 0.6s để không bị nhấp nháy
+        # Coasting: Giữ lại track vừa mất dấu trong 0.55s với độ tin cậy suy giảm nhẹ để không bị nhấp nháy
         for k, trk in self.tracks.items():
             if k not in updated and (now - trk['last_seen'] < self.max_age):
-                trk['score'] = round(trk['score'] * 0.92, 2)
-                updated[k] = trk
+                trk['score'] = round(trk['score'] * 0.90, 2)
+                if trk['score'] >= 0.35:
+                    updated[k] = trk
 
         self.tracks = updated
 
+        # Khử trùng lặp (NMS) giữa các track để không vẽ 2 khung đè lên nhau
+        sorted_tracks = sorted(self.tracks.values(), key=lambda t: t['score'], reverse=True)
+        final_tracks = []
+        for trk in sorted_tracks:
+            dup = False
+            for kept in final_tracks:
+                if trk.get('bbox') and kept.get('bbox'):
+                    if compute_box_iou(trk['bbox'], kept['bbox']) > 0.45:
+                        dup = True
+                        break
+                d3d = math.sqrt((trk['x'] - kept['x'])**2 + (trk['y'] - kept['y'])**2 + (trk['z'] - kept['z'])**2)
+                if d3d < 0.35 and trk['name'] == kept['name']:
+                    dup = True
+                    break
+            if not dup:
+                final_tracks.append(trk)
+
         res = []
-        for trk in self.tracks.values():
+        for trk in final_tracks:
             item = {
                 "id": trk["id"],
                 "name": trk["name"],
@@ -557,16 +613,29 @@ class SpatialPerceptionEngine:
 
     @staticmethod
     def draw_detections(img, detections, fx=450.0, fy=450.0, cx=320.0, cy=200.0):
-        """Vẽ khung hộp nhận diện phong cách Sci-Fi sắc nét, không dùng icon gây lỗi '???'"""
-        if img is None: return img
+        """Vẽ khung hộp nhận diện phong cách Tactical Sci-Fi sắc nét, chống rung lắc, ổn định 100%"""
+        if img is None or not detections:
+            return img
         h, w = img.shape[:2]
+
+        # Khử trùng lặp sơ bộ và sắp xếp theo score để vẽ hộp quan trọng lên trên
+        valid_dets = []
         for det in detections:
+            if not isinstance(det, dict): continue
+            sc = float(det.get('score', 0.8))
+            if sc < 0.35: continue
+            valid_dets.append(det)
+
+        valid_dets.sort(key=lambda d: float(d.get('score', 0.8)))
+
+        for det in valid_dets:
             try:
-                xm, ym, zm = float(det['x']), float(det['y']), float(det['z'])
-                name = str(det.get('name', 'OBJ'))
+                xm, ym, zm = float(det.get('x', 0.0)), float(det.get('y', 0.0)), float(det.get('z', 1.0))
+                name = str(det.get('name', 'OBJ')).upper()
                 score = float(det.get('score', 0.8))
 
-                # Ưu tiên số 1: Bounding Box 2D thật từ mạng YOLO / Fallback
+                # Chỉ hiển thị khi có Bounding Box 2D thực tế đã được làm mượt
+                # Triệt tiêu hoàn toàn khung ảo (synthetic phantom box) gây giật màn hình
                 if 'bbox' in det and det['bbox'] is not None:
                     raw_b = det['bbox']
                     if len(raw_b) == 4:
@@ -575,46 +644,92 @@ class SpatialPerceptionEngine:
                             bx1, by1, bx2, by2 = b0, b1, b2, b3
                         else:
                             bx1, by1, bx2, by2 = b0, b1, b0 + b2, b1 + b3
-                        x1 = max(0, min(w - 2, int(bx1)))
-                        y1 = max(0, min(h - 2, int(by1)))
-                        x2 = max(x1 + 10, min(w - 1, int(bx2)))
-                        y2 = max(y1 + 10, min(h - 1, int(by2)))
+                        x1 = max(0, min(w - 2, int(round(bx1))))
+                        y1 = max(0, min(h - 2, int(round(by1))))
+                        x2 = max(x1 + 10, min(w - 1, int(round(bx2))))
+                        y2 = max(y1 + 10, min(h - 1, int(round(by2))))
                     else:
                         continue
-                elif zm > 0.15:
-                    u = int(cx + (xm * fx / zm))
-                    v = int(cy + (ym * fy / zm))
-                    bw = max(60, min(int(w * 0.6), int(260.0 / zm)))
-                    bh = max(140, min(h - 10, int(480.0 / zm)))
-                    y2 = min(h - 5, max(int(h * 0.7), v + 40))
-                    y1 = max(0, y2 - bh)
-                    x1 = max(0, u - bw // 2)
-                    x2 = min(w - 1, u + bw // 2)
-                else: continue
+                else:
+                    # Không có bounding box thật -> bỏ qua để giữ luồng hình ảnh sạch sẽ
+                    continue
 
-                # Bảng màu neon chuyên nghiệp
-                col = (0, 0, 255) if zm <= 0.25 else ((0, 180, 255) if zm < 0.45 else (0, 255, 163))
+                bw = x2 - x1
+                bh = y2 - y1
+                # Bỏ qua các hộp quá bé (nhiễu pixel < 18px)
+                if bw < 18 or bh < 18:
+                    continue
 
-                # Vẽ khung góc kiểu Tactical Sci-Fi
-                cv2.rectangle(img, (x1, y1), (x2, y2), col, 1)
-                c_len = min(18, max(8, int((x2 - x1) * 0.2)))
-                cv2.line(img, (x1, y1), (x1 + c_len, y1), col, 2)
-                cv2.line(img, (x1, y1), (x1, y1 + c_len), col, 2)
-                cv2.line(img, (x2, y1), (x2 - c_len, y1), col, 2)
-                cv2.line(img, (x2, y1), (x2, y1 + c_len), col, 2)
-                cv2.line(img, (x1, y2), (x1 + c_len, y2), col, 2)
-                cv2.line(img, (x1, y2), (x1, y2 - c_len), col, 2)
-                cv2.line(img, (x2, y2), (x2 - c_len, y2), col, 2)
-                cv2.line(img, (x2, y2), (x2, y2 - c_len), col, 2)
+                # Bảng màu Tactical Sci-Fi:
+                # - <= 20cm: Đỏ cảnh báo phanh khẩn cấp (Emergency Stop)
+                # - 20cm - 45cm: Cam neon cảnh báo thận trọng
+                # - > 45cm: Xanh lục Cyber / Neon Mint an toàn
+                if zm <= 0.20:
+                    col = (0, 0, 255)       # Đỏ rực
+                    zone_tag = "STOP"
+                elif zm <= 0.45:
+                    col = (0, 165, 255)     # Cam neon
+                    zone_tag = "WARN"
+                else:
+                    col = (0, 255, 170)     # Cyber Mint
+                    zone_tag = ""
 
-                # Nhãn hiển thị cm nếu < 1m
-                dist_str = f" ({int(zm*100)}cm)" if zm < 1.0 else f" ({zm:.2f}m)"
-                label_txt = f"{name} {int(score*100)}%{dist_str}"
-                (tw, th), _ = cv2.getTextSize(label_txt, cv2.FONT_HERSHEY_SIMPLEX, 0.44, 1)
-                ty = max(16, y1 - 4)
-                cv2.rectangle(img, (x1, ty - th - 3), (x1 + tw + 6, ty + 2), col, -1)
-                cv2.putText(img, label_txt, (x1 + 3, ty - 2), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (0, 0, 0), 1, cv2.LINE_AA)
-            except Exception: pass
+                # 1. Khung chữ nhật mỏng nền (Border 1px)
+                cv2.rectangle(img, (x1, y1), (x2, y2), col, 1, lineType=cv2.LINE_AA)
+
+                # 2. Bốn góc Tactical Sci-Fi đậm nét (Corner Brackets 2px)
+                c_len = min(22, max(8, int(min(bw, bh) * 0.22)))
+                # Góc trên - trái
+                cv2.line(img, (x1, y1), (x1 + c_len, y1), col, 2, lineType=cv2.LINE_AA)
+                cv2.line(img, (x1, y1), (x1, y1 + c_len), col, 2, lineType=cv2.LINE_AA)
+                # Góc trên - phải
+                cv2.line(img, (x2, y1), (x2 - c_len, y1), col, 2, lineType=cv2.LINE_AA)
+                cv2.line(img, (x2, y1), (x2, y1 + c_len), col, 2, lineType=cv2.LINE_AA)
+                # Góc dưới - trái
+                cv2.line(img, (x1, y2), (x1 + c_len, y2), col, 2, lineType=cv2.LINE_AA)
+                cv2.line(img, (x1, y2), (x1, y2 - c_len), col, 2, lineType=cv2.LINE_AA)
+                # Góc dưới - phải
+                cv2.line(img, (x2, y2), (x2 - c_len, y2), col, 2, lineType=cv2.LINE_AA)
+                cv2.line(img, (x2, y2), (x2, y2 - c_len), col, 2, lineType=cv2.LINE_AA)
+
+                # 3. Hồng tâm trung tâm (Center Reticle Target Lock)
+                cx_box = (x1 + x2) // 2
+                cy_box = (y1 + y2) // 2
+                ret_sz = 4
+                cv2.line(img, (cx_box - ret_sz, cy_box), (cx_box + ret_sz, cy_box), col, 1, lineType=cv2.LINE_AA)
+                cv2.line(img, (cx_box, cy_box - ret_sz), (cx_box, cy_box + ret_sz), col, 1, lineType=cv2.LINE_AA)
+
+                # 4. Nhãn thẻ thông tin sắc nét (Tactical Info Badge)
+                if zm < 1.0:
+                    dist_str = f"{int(zm * 100)}cm"
+                else:
+                    dist_str = f"{zm:.2f}m"
+
+                if zone_tag:
+                    label_txt = f"[{zone_tag}] {name} {int(score * 100)}% | {dist_str}"
+                else:
+                    label_txt = f"{name} {int(score * 100)}% | {dist_str}"
+
+                font_scale = 0.42
+                (tw, th), baseline = cv2.getTextSize(label_txt, cv2.FONT_HERSHEY_SIMPLEX, font_scale, 1)
+
+                # Vị trí đặt nhãn (đặt phía trên box, nếu sát mép trên màn hình thì đặt lọt vào trong box)
+                if y1 - th - 6 > 4:
+                    bg_y1 = y1 - th - 6
+                    bg_y2 = y1
+                    txt_y = y1 - 4
+                else:
+                    bg_y1 = y1
+                    bg_y2 = y1 + th + 6
+                    txt_y = y1 + th + 2
+
+                # Vẽ nền badge vững chắc nổi bật
+                cv2.rectangle(img, (x1, bg_y1), (min(w - 1, x1 + tw + 8), bg_y2), col, -1, lineType=cv2.LINE_AA)
+                # Chữ tương phản cao: Màu đen đậm trên nền Neon
+                cv2.putText(img, label_txt, (x1 + 4, txt_y), cv2.FONT_HERSHEY_SIMPLEX, font_scale, (0, 0, 0), 1, cv2.LINE_AA)
+
+            except Exception:
+                pass
         return img
 
 

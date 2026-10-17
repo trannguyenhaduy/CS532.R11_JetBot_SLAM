@@ -453,11 +453,12 @@ class JetBotMasterSystem:
             data = json.loads(msg.data)
             if isinstance(data, list):
                 filtered = self.yolo.filter_detections(data)
+                tracked = self.yolo.tracker.update(filtered)
                 with self.lock:
-                    self.detections = filtered
+                    self.detections = tracked
                     self.last_vpu_det_time = time.time()
-                    if filtered:
-                        forward_objs = [d['z'] for d in filtered if abs(d.get('x', 0.0)) <= 0.35 and d.get('z', 99.0) > 0.08]
+                    if tracked:
+                        forward_objs = [d['z'] for d in tracked if abs(d.get('x', 0.0)) <= 0.35 and 0.06 <= d.get('z', 99.0) <= 2.0]
                         self.last_yolo_clearance = min(forward_objs) if forward_objs else 99.0
                     else:
                         self.last_yolo_clearance = 99.0
@@ -1436,16 +1437,31 @@ class JetBotMasterSystem:
                 except Exception as ex_cam:
                     live_frame, live_depth, src_name = None, None, "ERROR"
 
-                # Đọc nhận diện 3D từ phần cứng VPU OAK-D nếu có
+                # Đọc nhận diện 3D từ phần cứng VPU OAK-D và lọc/làm mượt qua TemporalTracker
                 vpu_dets = getattr(self.camera, 'latest_vpu_detections', [])
-                if vpu_dets:
+                has_new_vpu = getattr(self.camera, 'has_new_vpu_dets', False)
+                if has_new_vpu:
+                    self.camera.has_new_vpu_dets = False
+                    if self.yolo:
+                        filtered = self.yolo.filter_detections(vpu_dets)
+                        tracked = self.yolo.tracker.update(filtered)
+                    else:
+                        tracked = vpu_dets
                     with self.lock:
-                        self.detections = vpu_dets
+                        self.detections = tracked
                         self.last_vpu_det_time = now
-                        vpu_dists = [d['z'] for d in vpu_dets if 'z' in d and 0.06 <= d['z'] <= 2.0]
-                        if vpu_dists:
-                            self.last_yolo_clearance = min(vpu_dists)
+                        vpu_dists = [d['z'] for d in tracked if 'z' in d and 0.06 <= d['z'] <= 2.0]
+                        self.last_yolo_clearance = min(vpu_dists) if vpu_dists else 99.0
                     self._update_fused_obstacle_clearance()
+                elif (now - getattr(self, 'last_vpu_det_time', 0.0)) > 0.55:
+                    # Duy trì coasting mượt mà khi VPU không bắt được vật thể
+                    if self.yolo and self.detections:
+                        tracked = self.yolo.tracker.update([])
+                        with self.lock:
+                            self.detections = tracked
+                            if not tracked:
+                                self.last_yolo_clearance = 99.0
+                        self._update_fused_obstacle_clearance()
                 if live_depth is not None:
                     self.latest_depth_np = live_depth
 
