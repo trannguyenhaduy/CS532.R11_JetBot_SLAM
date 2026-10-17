@@ -61,8 +61,8 @@ CAMERA_HEIGHT_M          = 0.120  # [Trục Z] Chiều cao từ mặt sàn lên 
 CAMERA_PITCH_DEG         = 0.0    # [Góc Pitch] Độ nghiêng thấu kính camera (độ, Dương: cúp xuống sàn, Âm: ngửa lên trời, 0.0: song song sàn)
 CAMERA_MAX_MAP_DIST_M    = 2.80   # Cự ly tin cậy tối đa cho Stereo Depth 2D (tránh nhiễu tán xạ > 2.8m)
 RAY_SAMPLE_COUNT         = 120    # Số tia quét phân bố đều trên FOV ngang của OAK-D
-MAPPING_DEFAULT_SPEED_V  = 0.15   # Tốc độ tiến chuẩn khi lập bản đồ (15% PWM) - Triệt tiêu nhòe camera
-MAPPING_DEFAULT_SPEED_W  = 0.85   # Tốc độ quay chuẩn khi lập bản đồ (~48 deg/s) - Cho điểm quét sắc nét
+MAPPING_DEFAULT_SPEED_V  = 0.08   # Tốc độ tiến chuẩn khi lập bản đồ (8% PWM) - Rất êm dịu, triệt tiêu nhòe camera
+MAPPING_DEFAULT_SPEED_W  = 0.60   # Tốc độ quay chuẩn khi lập bản đồ (~34 deg/s) - Cho điểm quét sắc nét, không trượt bánh
 
 # ─── CẤU HÌNH ĐẢO KÊNH ĐỘNG CƠ (MOTOR ORIENTATION) ────────────────────────────
 SWAP_MOTORS        = False  # False: Khắc phục lỗi xoay trái/phải bị ngược (chuẩn theo lệnh phím A/D)
@@ -82,10 +82,10 @@ IMAGE_SKIP_FRAMES = 1       # Phát stream liên tục mượt mà 20-30 FPS (kh
 
 # ─── THÔNG SỐ TỰ QUÉT 360 ĐỘ & ĐỊNH HƯỚNG THỊ GIÁC CAMERA (VISUAL ANCHOR 360° SCAN) ───
 AUTO_SCAN_MODE        = "visual_anchor" # Tự động đánh dấu khung hình mốc & quay chậm đều khép vòng lặp Camera
-AUTO_SCAN_SPEED_PWM   = 0.12            # Mức xung PWM quay đều êm dịu (12% PWM) chống nhòe camera
-AUTO_SCAN_CREEP_PWM   = 0.09            # Mức xung PWM bò chậm khi đến gần 360° (score >= 0.50) để hãm đà quán tính
+AUTO_SCAN_SPEED_PWM   = 0.085           # Mức xung PWM quay đều êm dịu (8.5% PWM) chống nhòe camera
+AUTO_SCAN_CREEP_PWM   = 0.065           # Mức xung PWM bò chậm khi đến gần 360° (score >= 0.50) để hãm đà quán tính
 AUTO_SCAN_TARGET_DEG  = 360.0           # Góc mục tiêu chuẩn 1 vòng tròn 360 độ (2*pi rad)
-AUTO_SCAN_DURATION_S  = 4.8             # Thời gian dự phòng khi pin 11.1V (tự bù áp theo INA219)
+AUTO_SCAN_DURATION_S  = 6.5             # Thời gian quay từ tốn (tự bù áp theo INA219)
 
 # ─── THÔNG SỐ HIỆU CHUẨN ĐỒNG NHẤT HỆ THỐNG (UNIFIED MOTION CALIBRATION) ────────────
 # [DÙNG CHUNG DUY NHẤT 1 BỘ THAM SỐ CHO CẢ 2 CHẾ ĐỘ: BƯỚC ĐỊNH LƯỢNG & LÁI THỦ CÔNG / ODOMETRY]
@@ -98,7 +98,7 @@ STEP_FORWARD_SCALE       = 0.42  # Hệ số hiệu chuẩn TIẾN (dùng chung 
 STEP_BACKWARD_SCALE      = 0.48  # Hệ số hiệu chuẩn LÙI (bù lực cản bánh mắt trâu khi bị kéo ngược)
 STEP_TURN_LEFT_SCALE     = 0.60  # Hệ số hiệu chuẩn QUAY TRÁI (CCW - dự phòng vòng hở khi không có IMU)
 STEP_TURN_RIGHT_SCALE    = 0.60  # Hệ số hiệu chuẩn QUAY PHẢI (CW - dự phòng vòng hở khi không có IMU)
-DEFAULT_SPEED_PWM        = 0.08  # Mức ga cơ bản chạy thẳng (8% PWM - chạy êm, đầm, không trượt bánh)
+DEFAULT_SPEED_PWM        = 0.06  # Mức ga cơ bản chạy thẳng (6% PWM - chạy êm, đầm, không trượt bánh, không nhòe cam)
 
 # ─── BÙ MÔ-MEN XOAY TẠI CHỖ (IN-PLACE TURN TORQUE COMPENSATION) ────────────────
 STEP_TURN_MIN_PWM        = 0.11  # Mức xung PWM tối thiểu khi quay tại chỗ (11% đủ thắng ma sát trượt ngang)

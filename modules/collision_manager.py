@@ -518,13 +518,13 @@ class CollisionManager:
         except Exception as e:
             return 1.0, 0.0
 
-    def compute_avoidance_cmd(self, prob_blocked, base_speed=0.08, turn_speed=1.20):
+    def compute_avoidance_cmd(self, prob_blocked, base_speed=0.045, turn_speed=0.85):
         """
         Tính toán lệnh vận tốc vi sai (v, w) theo xác suất vật cản P(blocked):
-        - Có cơ chế trễ (Hysteresis): Khi đã phát hiện cản, tiếp tục quay cho đến khi
-          đường hoàn toàn thoáng (< 20%) mới được tiến tiếp, tránh tình trạng vừa chớm
-          thoáng đã lao tiếp rồi đâm vào cạnh vật cản.
-        - Phản xạ nhạy bén: Chỉ cần P(blocked) >= 0.35 là dừng tiến ngay và quay né!
+        - Tốc độ tiến dịu dàng (0.045 m/s) giúp triệt tiêu nhòe camera OAK, quét vật cản chuẩn nét.
+        - Tốc độ quay êm ái (0.85 rad/s) giúp robot chuyển hướng đầm, không văng lệch khung hình.
+        - Phản xạ nhạy: P(blocked) >= 0.30 là dừng hẳn tiến và quay né.
+        - Hysteresis: Quay đến khi góc nhìn thoáng sạch (< 18%) mới tiến tiếp.
         """
         # Nếu chưa bật tự hành
         if not self.is_avoiding:
@@ -534,7 +534,7 @@ class CollisionManager:
             self._is_turning_away = False
 
         # ── 1. PHÁT HIỆN CẢN: DỪNG TIẾN VÀ QUAY TẠI CHỖ NÉ ──
-        if prob_blocked >= 0.35 or (self._is_turning_away and prob_blocked >= 0.20):
+        if prob_blocked >= 0.30 or (self._is_turning_away and prob_blocked >= 0.18):
             self._is_turning_away = True
             v = 0.0  # Dừng hẳn tiến để không đâm vào cản
             w = turn_speed * self.avoid_turn_dir
