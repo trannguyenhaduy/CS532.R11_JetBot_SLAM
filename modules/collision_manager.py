@@ -20,16 +20,27 @@ import threading
 import numpy as np
 import cv2
 
+TORCH_IMPORT_ERROR = None
 try:
     import torch
     import torch.nn as nn
-    import torchvision
-    import torchvision.transforms as transforms
-    from torchvision.datasets import ImageFolder
-    from torch.utils.data import DataLoader, random_split
     HAS_TORCH = True
-except ImportError:
+except Exception as _e_torch:
     HAS_TORCH = False
+    TORCH_IMPORT_ERROR = str(_e_torch)
+
+HAS_TORCHVISION = False
+if HAS_TORCH:
+    try:
+        import torchvision
+        import torchvision.transforms as transforms
+        from torchvision.datasets import ImageFolder
+        from torch.utils.data import DataLoader, random_split
+        HAS_TORCHVISION = True
+    except Exception as _e_tv:
+        HAS_TORCHVISION = False
+        if not TORCH_IMPORT_ERROR:
+            TORCH_IMPORT_ERROR = f"Thiếu torchvision: {_e_tv}"
 
 
 class CollisionManager:
@@ -370,11 +381,67 @@ class CollisionManager:
     # 3. SUY LUẬN & ĐIỀU KHIỂN TỰ HÀNH NÉ VẬT CẢN (LIVE AUTOPILOT)
     # ══════════════════════════════════════════════════════════════════════════
 
+    def _build_resnet18_native(self, num_classes=2):
+        """Khung mạng ResNet18 thuần PyTorch, không phụ thuộc vào thư viện torchvision"""
+        class BasicBlock(nn.Module):
+            expansion = 1
+            def __init__(self, in_planes, planes, stride=1, downsample=None):
+                super().__init__()
+                self.conv1 = nn.Conv2d(in_planes, planes, kernel_size=3, stride=stride, padding=1, bias=False)
+                self.bn1 = nn.BatchNorm2d(planes)
+                self.relu = nn.ReLU(inplace=True)
+                self.conv2 = nn.Conv2d(planes, planes, kernel_size=3, stride=1, padding=1, bias=False)
+                self.bn2 = nn.BatchNorm2d(planes)
+                self.downsample = downsample
+            def forward(self, x):
+                identity = x
+                out = self.relu(self.bn1(self.conv1(x)))
+                out = self.bn2(self.conv2(out))
+                if self.downsample is not None:
+                    identity = self.downsample(x)
+                out += identity
+                return self.relu(out)
+
+        class ResNetNative(nn.Module):
+            def __init__(self, block, layers, num_classes=2):
+                super().__init__()
+                self.in_planes = 64
+                self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3, bias=False)
+                self.bn1 = nn.BatchNorm2d(64)
+                self.relu = nn.ReLU(inplace=True)
+                self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
+                self.layer1 = self._make_layer(block, 64, layers[0])
+                self.layer2 = self._make_layer(block, 128, layers[1], stride=2)
+                self.layer3 = self._make_layer(block, 256, layers[2], stride=2)
+                self.layer4 = self._make_layer(block, 512, layers[3], stride=2)
+                self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+                self.fc = nn.Linear(512 * block.expansion, num_classes)
+            def _make_layer(self, block, planes, blocks, stride=1):
+                downsample = None
+                if stride != 1 or self.in_planes != planes * block.expansion:
+                    downsample = nn.Sequential(
+                        nn.Conv2d(self.in_planes, planes * block.expansion, kernel_size=1, stride=stride, bias=False),
+                        nn.BatchNorm2d(planes * block.expansion),
+                    )
+                layers = [block(self.in_planes, planes, stride, downsample)]
+                self.in_planes = planes * block.expansion
+                for _ in range(1, blocks):
+                    layers.append(block(self.in_planes, planes))
+                return nn.Sequential(*layers)
+            def forward(self, x):
+                x = self.maxpool(self.relu(self.bn1(self.conv1(x))))
+                x = self.layer4(self.layer3(self.layer2(self.layer1(x))))
+                x = self.avgpool(x)
+                x = torch.flatten(x, 1)
+                return self.fc(x)
+
+        return ResNetNative(BasicBlock, [2, 2, 2, 2], num_classes=num_classes)
+
     def _try_load_model(self):
         """Nạp model PyTorch đã train từ đĩa"""
         if not HAS_TORCH:
             if not getattr(self, '_logged_torch_missing', False):
-                print("⚠️ [AI COLLISION] Không thể nạp mô hình do môi trường Python chưa nhận PyTorch (cần cài libopenblas-base)")
+                print(f"⚠️ [AI COLLISION] Không thể nạp mô hình: {TORCH_IMPORT_ERROR}")
                 self._logged_torch_missing = True
             return False
 
@@ -385,13 +452,23 @@ class CollisionManager:
             return False
 
         try:
-            # Khởi tạo khung ResNet18
-            try:
-                weights = torchvision.models.ResNet18_Weights.DEFAULT
-                net = torchvision.models.resnet18(weights=weights)
-            except Exception:
-                net = torchvision.models.resnet18(pretrained=False)
-            net.fc = nn.Linear(net.fc.in_features, 2)
+            # 1. Thử dùng torchvision nếu có sẵn
+            net = None
+            if HAS_TORCHVISION:
+                try:
+                    weights = torchvision.models.ResNet18_Weights.DEFAULT
+                    net = torchvision.models.resnet18(weights=weights)
+                except Exception:
+                    try:
+                        net = torchvision.models.resnet18(pretrained=False)
+                    except Exception:
+                        net = None
+                if net is not None:
+                    net.fc = nn.Linear(net.fc.in_features, 2)
+
+            # 2. Dự phòng: Dùng khung ResNet18 thuần PyTorch (chạy mượt 100% không cần cài torchvision)
+            if net is None:
+                net = self._build_resnet18_native(num_classes=2)
 
             state_dict = torch.load(self.model_path, map_location=self.device)
             net.load_state_dict(state_dict)
