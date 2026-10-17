@@ -83,6 +83,7 @@ class CollisionManager:
 
         # Trạng thái Tự hành né vật cản (Live Autopilot)
         self.is_avoiding = False
+        self.blocked_threshold = 0.50  # Chuẩn NVIDIA live_demo: < 0.5 tiến thẳng, >= 0.5 quay né
         self.last_prob_blocked = 0.0
         self.last_prob_free = 1.0
         self.last_action_desc = "CHỜ KÍCH HOẠT"
@@ -518,34 +519,32 @@ class CollisionManager:
         except Exception as e:
             return 1.0, 0.0
 
-    def compute_avoidance_cmd(self, prob_blocked, base_speed=0.045, turn_speed=0.85):
+    def compute_avoidance_cmd(self, prob_blocked, base_speed=0.06, turn_speed=0.85):
         """
-        Tính toán lệnh vận tốc vi sai (v, w) theo xác suất vật cản P(blocked):
-        - Tốc độ tiến dịu dàng (0.045 m/s) giúp triệt tiêu nhòe camera OAK, quét vật cản chuẩn nét.
-        - Tốc độ quay êm ái (0.85 rad/s) giúp robot chuyển hướng đầm, không văng lệch khung hình.
-        - Phản xạ nhạy: P(blocked) >= 0.30 là dừng hẳn tiến và quay né.
-        - Hysteresis: Quay đến khi góc nhìn thoáng sạch (< 18%) mới tiến tiếp.
+        Tính toán lệnh vận tốc vi sai (v, w) theo logic chuẩn của notebook live_demo.ipynb:
+        - Chuẩn NVIDIA JetBot:
+            if prob_blocked < 0.50:
+                robot.forward(speed)
+            else:
+                robot.left(speed)
+        - Ngưỡng 0.50 chuẩn xác, loại bỏ hoàn toàn các ngưỡng phụ (0.18-0.20) gây kẹt quay tròn vô tận!
         """
-        # Nếu chưa bật tự hành
         if not self.is_avoiding:
             return None, None, "CHƯA BẬT TỰ HÀNH"
 
-        if not hasattr(self, '_is_turning_away'):
-            self._is_turning_away = False
+        thresh = getattr(self, 'blocked_threshold', 0.50)
 
-        # ── 1. PHÁT HIỆN CẢN: DỪNG TIẾN VÀ QUAY TẠI CHỖ NÉ ──
-        if prob_blocked >= 0.30 or (self._is_turning_away and prob_blocked >= 0.18):
-            self._is_turning_away = True
-            v = 0.0  # Dừng hẳn tiến để không đâm vào cản
-            w = turn_speed * self.avoid_turn_dir
-            side_str = "TRÁI ↺" if self.avoid_turn_dir > 0 else "PHẢI ↻"
-            desc = f"🛑 GẶP CẢN ({int(prob_blocked*100)}%) -> QUAY {side_str}"
-        # ── 2. ĐƯỜNG ĐÃ THẬT SỰ THOÁNG: TIẾN THẲNG TỪ TỐN ──
-        else:
-            self._is_turning_away = False
+        # ── 1. ĐƯỜNG THOÁNG (< 0.50): TIẾN THẲNG ──
+        if prob_blocked < thresh:
             v = base_speed
             w = 0.0
             desc = f"TIẾN THẲNG (Đường thoáng {int(self.last_prob_free*100)}%)"
+        # ── 2. GẶP CẢN (>= 0.50): DỪNG TIẾN VÀ QUAY NÉ TẠI CHỖ ──
+        else:
+            v = 0.0
+            w = turn_speed * self.avoid_turn_dir
+            side_str = "TRÁI ↺" if self.avoid_turn_dir > 0 else "PHẢI ↻"
+            desc = f"🛑 GẶP CẢN ({int(prob_blocked*100)}%) -> QUAY {side_str}"
 
         self.last_action_desc = desc
         return v, w, desc
