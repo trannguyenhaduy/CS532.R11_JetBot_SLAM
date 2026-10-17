@@ -406,8 +406,9 @@ class CollisionManager:
         Trả về: (prob_free, prob_blocked)
         """
         if self.model is None:
-            # Nếu chưa có model nạp, trả về mặc định
-            return 1.0, 0.0
+            # Tự động nạp lại mô hình nếu file vừa được tải về
+            if not self._try_load_model():
+                return 1.0, 0.0
 
         if frame_bgr is None or frame_bgr.size == 0:
             return 1.0, 0.0
@@ -434,33 +435,34 @@ class CollisionManager:
         except Exception as e:
             return 1.0, 0.0
 
-    def compute_avoidance_cmd(self, prob_blocked, base_speed=0.12, turn_speed=1.10):
+    def compute_avoidance_cmd(self, prob_blocked, base_speed=0.08, turn_speed=1.20):
         """
         Tính toán lệnh vận tốc vi sai (v, w) theo xác suất vật cản P(blocked):
-        - Nếu P(blocked) < 0.40: Đường hoàn toàn thoáng -> Chạy tiến thẳng êm ái.
-        - Nếu 0.40 <= P(blocked) < 0.65: Chớm thấy vật cản -> Giảm tốc và rà hướng né.
-        - Nếu P(blocked) >= 0.65: Gặp cản rõ nét -> Dừng tiến và quay tròn tại chỗ né cản!
+        - Có cơ chế trễ (Hysteresis): Khi đã phát hiện cản, tiếp tục quay cho đến khi
+          đường hoàn toàn thoáng (< 20%) mới được tiến tiếp, tránh tình trạng vừa chớm
+          thoáng đã lao tiếp rồi đâm vào cạnh vật cản.
+        - Phản xạ nhạy bén: Chỉ cần P(blocked) >= 0.35 là dừng tiến ngay và quay né!
         """
         # Nếu chưa bật tự hành
         if not self.is_avoiding:
             return None, None, "CHƯA BẬT TỰ HÀNH"
 
-        if prob_blocked < 0.40:
-            # Đường hoàn toàn thoáng
-            v = base_speed
-            w = 0.0
-            desc = f"TIẾN THẲNG (Đường thoáng {int(self.last_prob_free*100)}%)"
-        elif prob_blocked < 0.65:
-            # Chớm có vật cản phía trước -> Đi chậm lại và chủ động bẻ lái né nhẹ
-            v = base_speed * 0.45
-            w = (turn_speed * 0.60) * self.avoid_turn_dir
-            desc = f"GIẢM TỐC & LƯỢN NÉ ({int(prob_blocked*100)}% cản)"
-        else:
-            # Vật cản chắn ngang mặt -> Dừng hẳn và quay tại chỗ cho đến khi thoáng
-            v = 0.0
+        if not hasattr(self, '_is_turning_away'):
+            self._is_turning_away = False
+
+        # ── 1. PHÁT HIỆN CẢN: DỪNG TIẾN VÀ QUAY TẠI CHỖ NÉ ──
+        if prob_blocked >= 0.35 or (self._is_turning_away and prob_blocked >= 0.20):
+            self._is_turning_away = True
+            v = 0.0  # Dừng hẳn tiến để không đâm vào cản
             w = turn_speed * self.avoid_turn_dir
             side_str = "TRÁI ↺" if self.avoid_turn_dir > 0 else "PHẢI ↻"
             desc = f"🛑 GẶP CẢN ({int(prob_blocked*100)}%) -> QUAY {side_str}"
+        # ── 2. ĐƯỜNG ĐÃ THẬT SỰ THOÁNG: TIẾN THẲNG TỪ TỐN ──
+        else:
+            self._is_turning_away = False
+            v = base_speed
+            w = 0.0
+            desc = f"TIẾN THẲNG (Đường thoáng {int(self.last_prob_free*100)}%)"
 
         self.last_action_desc = desc
         return v, w, desc
