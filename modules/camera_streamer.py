@@ -300,8 +300,36 @@ class CameraStreamer:
                 yolo_blob = next((p for p in yolo_candidates if os.path.exists(p)), None)
                 mobilenet_blob = os.path.join(res_dir, "mobilenet-ssd.blob")
 
+                ai_model_pref = str(getattr(config, 'AI_MODEL', 'mobilenet')).lower()
+
                 if getattr(config, 'ENABLE_YOLO', False) and has_stereo:
-                    if yolo_blob is not None:
+                    # Ưu tiên 1: MobileNet-SSD nếu chọn mobilenet (20 lớp Pascal VOC, tối ưu chuẩn JetBot)
+                    if ai_model_pref == 'mobilenet' and os.path.exists(mobilenet_blob):
+                        try:
+                            cam_rgb.setPreviewSize(300, 300)
+                            spatial_nn = pipeline.create(dai.node.MobileNetSpatialDetectionNetwork)
+                            spatial_nn.setBlobPath(mobilenet_blob)
+                            spatial_nn.setConfidenceThreshold(0.40)
+                            spatial_nn.input.setBlocking(False)
+                            spatial_nn.setBoundingBoxScaleFactor(0.5)
+                            spatial_nn.setDepthLowerThreshold(100)
+                            spatial_nn.setDepthUpperThreshold(5000)
+
+                            cam_rgb.preview.link(spatial_nn.input)
+                            stereo.depth.link(spatial_nn.inputDepth)
+
+                            xout_nn = pipeline.create(dai.node.XLinkOut)
+                            xout_nn.setStreamName("nn")
+                            spatial_nn.out.link(xout_nn.input)
+                            self._nn_labels = MOBILENET_LABELS
+                            has_vpu_nn = True
+                            print(f"🧠 [OAK-D VPU] ĐÃ NẠP THÀNH CÔNG MOBILENET-SSD VÀO VPU CAMERA: {mobilenet_blob}")
+                        except Exception as ex_mb:
+                            print(f"⚠️ [OAK-D VPU] Lỗi nạp MobileNet Blob: {ex_mb}")
+                            has_vpu_nn = False
+
+                    # Ưu tiên 2: YOLOv4-Tiny (80 lớp COCO) nếu chọn yolo hoặc mobilenet không có sẵn
+                    if not has_vpu_nn and yolo_blob is not None:
                         try:
                             cam_rgb.setPreviewSize(416, 416)
                             spatial_nn = pipeline.create(dai.node.YoloSpatialDetectionNetwork)
@@ -309,7 +337,7 @@ class CameraStreamer:
                             spatial_nn.setConfidenceThreshold(0.40)
                             spatial_nn.input.setBlocking(False)
                             spatial_nn.setBoundingBoxScaleFactor(0.5)
-                            spatial_nn.setDepthLowerThreshold(150)
+                            spatial_nn.setDepthLowerThreshold(100)
                             spatial_nn.setDepthUpperThreshold(5000)
 
                             # Cấu hình chuẩn kiến trúc YOLOv4-Tiny COCO:
@@ -327,33 +355,9 @@ class CameraStreamer:
                             spatial_nn.out.link(xout_nn.input)
                             self._nn_labels = COCO_80_LABELS
                             has_vpu_nn = True
-                            print(f"🚀 [OAK-D VPU] Đã nạp thành công mô hình YOLOv4-Tiny (80 lớp COCO) trực tiếp vào chip VPU Myriad X: {yolo_blob}")
+                            print(f"🚀 [OAK-D VPU] Đã nạp thành công mô hình YOLOv4-Tiny (80 lớp COCO) vào chip VPU Myriad X: {yolo_blob}")
                         except Exception as ex_yolo:
                             print(f"⚠️ [OAK-D VPU] Lỗi nạp YOLO Blob: {ex_yolo}")
-                            has_vpu_nn = False
-
-                    elif os.path.exists(mobilenet_blob):
-                        try:
-                            cam_rgb.setPreviewSize(300, 300)
-                            spatial_nn = pipeline.create(dai.node.MobileNetSpatialDetectionNetwork)
-                            spatial_nn.setBlobPath(mobilenet_blob)
-                            spatial_nn.setConfidenceThreshold(0.45)
-                            spatial_nn.input.setBlocking(False)
-                            spatial_nn.setBoundingBoxScaleFactor(0.5)
-                            spatial_nn.setDepthLowerThreshold(150)
-                            spatial_nn.setDepthUpperThreshold(5000)
-
-                            cam_rgb.preview.link(spatial_nn.input)
-                            stereo.depth.link(spatial_nn.inputDepth)
-
-                            xout_nn = pipeline.create(dai.node.XLinkOut)
-                            xout_nn.setStreamName("nn")
-                            spatial_nn.out.link(xout_nn.input)
-                            self._nn_labels = MOBILENET_LABELS
-                            has_vpu_nn = True
-                            print(f"🧠 [OAK-D VPU] Đã nạp mô hình MobileNet-SSD vào chip VPU Myriad X: {mobilenet_blob}")
-                        except Exception as ex_nn:
-                            print(f"⚠️ [OAK-D VPU] Bỏ qua nạp Blob AI: {ex_nn}")
                             has_vpu_nn = False
 
                 # Kích hoạt cảm biến quán tính IMU phần cứng trên OAK-D S2 nếu có
