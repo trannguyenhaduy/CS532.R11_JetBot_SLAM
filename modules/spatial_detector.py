@@ -126,15 +126,10 @@ class SpatialPerceptionEngine:
         self._last_dnn_time = 0.0
         self._cached_dnn_boxes = []
 
-        # Khởi tạo mô hình AI Deep Learning (MobileNetV3 SSDLite COCO 80 lớp) chạy dự phòng khi không có OAK-D VPU
-        try:
-            import torchvision.models.detection as tv_det
-            self._dnn_model = tv_det.ssdlite320_mobilenet_v3_large(weights=tv_det.SSDLite320_MobileNet_V3_Large_Weights.DEFAULT).eval()
-            self._coco_labels = tv_det.SSDLite320_MobileNet_V3_Large_Weights.DEFAULT.meta['categories']
-            print("🚀 [AI ENGINE] Đã nạp mô hình AI nhận diện 80 lớp COCO (Person, Chair, Bottle, Laptop, Backpack...)!")
-        except Exception:
-            self._dnn_model = None
-            self._coco_labels = None
+        # Ưu tiên nhận diện 100% bằng phần cứng VPU OAK-D (Myriad X) để tiết kiệm tài nguyên.
+        # Tuyệt đối không nạp PyTorch MobileNet lên CPU nhằm triệt tiêu hiện tượng nghẽn CPU 100% trên Jetson Nano.
+        self._dnn_model = None
+        self._coco_labels = None
 
         try:
             import os
@@ -216,13 +211,19 @@ class SpatialPerceptionEngine:
             if target_name == "PERSON":
                 if score < 0.35: continue
                 if "bbox" in det and det["bbox"] is not None:
-                    bx1, by1, bx2, by2 = det["bbox"]
-                    bw = abs(bx2 - bx1)
-                    bh = abs(by2 - by1)
-                    if bh > 0:
-                        aspect = bw / float(bh)
-                        if aspect < 0.15 or aspect > 2.2:
-                            continue
+                    raw_b = det["bbox"]
+                    if len(raw_b) == 4:
+                        b0, b1, b2, b3 = raw_b
+                        if b2 > b0 and b3 > b1:
+                            bx1, by1, bx2, by2 = b0, b1, b2, b3
+                        else:
+                            bx1, by1, bx2, by2 = b0, b1, b0 + b2, b1 + b3
+                        bw = abs(bx2 - bx1)
+                        bh = abs(by2 - by1)
+                        if bh > 0:
+                            aspect = bw / float(bh)
+                            if aspect < 0.15 or aspect > 2.2:
+                                continue
             elif target_name == "OBSTACLE":
                 if score < 0.30: continue
             else:
@@ -567,11 +568,19 @@ class SpatialPerceptionEngine:
 
                 # Ưu tiên số 1: Bounding Box 2D thật từ mạng YOLO / Fallback
                 if 'bbox' in det and det['bbox'] is not None:
-                    bx1, by1, bx2, by2 = det['bbox']
-                    x1 = max(0, min(w - 2, int(bx1)))
-                    y1 = max(0, min(h - 2, int(by1)))
-                    x2 = max(x1 + 5, min(w - 1, int(bx2)))
-                    y2 = max(y1 + 5, min(h - 1, int(by2)))
+                    raw_b = det['bbox']
+                    if len(raw_b) == 4:
+                        b0, b1, b2, b3 = raw_b
+                        if b2 > b0 and b3 > b1:
+                            bx1, by1, bx2, by2 = b0, b1, b2, b3
+                        else:
+                            bx1, by1, bx2, by2 = b0, b1, b0 + b2, b1 + b3
+                        x1 = max(0, min(w - 2, int(bx1)))
+                        y1 = max(0, min(h - 2, int(by1)))
+                        x2 = max(x1 + 10, min(w - 1, int(bx2)))
+                        y2 = max(y1 + 10, min(h - 1, int(by2)))
+                    else:
+                        continue
                 elif zm > 0.15:
                     u = int(cx + (xm * fx / zm))
                     v = int(cy + (ym * fy / zm))

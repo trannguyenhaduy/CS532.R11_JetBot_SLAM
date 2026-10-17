@@ -180,7 +180,7 @@ class JetBotMasterSystem:
                 invert_linear=getattr(self.flags, 'invert_linear', getattr(config, 'INVERT_LINEAR', False)),
                 invert_left=getattr(config, 'INVERT_LEFT_MOTOR', False),
                 invert_right=getattr(config, 'INVERT_RIGHT_MOTOR', False),
-                enable_brake=bool(getattr(self.flags, 'brake', getattr(config, 'ENABLE_SAFETY_BRAKE', False)))
+                enable_brake=bool(getattr(self.flags, 'brake', getattr(config, 'ENABLE_SAFETY_BRAKE', True)))
             )
 
         # 2. Khởi tạo Module Pin
@@ -213,7 +213,7 @@ class JetBotMasterSystem:
         self.collision_mgr = CollisionManager(workspace_dir=os.path.dirname(os.path.abspath(__file__)))
 
         # 6. Khởi tạo Module Phanh khẩn cấp & Cản ảo 3D (Độc lập, dễ kiểm thử)
-        brake_active = bool(getattr(self.flags, 'brake', getattr(config, 'ENABLE_SAFETY_BRAKE', False)))
+        brake_active = bool(getattr(self.flags, 'brake', getattr(config, 'ENABLE_SAFETY_BRAKE', True)))
         self.safety_brake = EmergencyBrake(
             brake_dist_m=getattr(config, 'SAFETY_BRAKE_DIST_M', 0.20),
             warning_dist_m=getattr(config, 'SAFETY_WARNING_DIST_M', 0.40),
@@ -1066,7 +1066,7 @@ class JetBotMasterSystem:
             self.navigator.cancel_navigation("Người dùng lái tay WASD")
         print(f"🎮 [WEB LÁI TAY] Lệnh nhận được: v={v:.2f}, w={w:.2f}")
 
-        brake_thresh = getattr(config, 'SAFETY_BRAKE_DIST_M', 0.22)
+        brake_thresh = getattr(config, 'SAFETY_BRAKE_DIST_M', 0.20)
         warn_thresh = getattr(config, 'SAFETY_WARN_DIST_M', 0.45)
 
         # 1. Đánh giá qua EmergencyBrake nếu có
@@ -1558,7 +1558,7 @@ class JetBotMasterSystem:
             scan_dur = getattr(self, 'auto_scan_duration', 16.0)
             scan_mode = getattr(self, 'auto_scan_mode', 'step')
             last_ros_t = self.last_ros_img_time
-            brake_dist = getattr(config, 'SAFETY_BRAKE_DIST_M', 0.22)
+            brake_dist = getattr(config, 'SAFETY_BRAKE_DIST_M', 0.20)
             warn_dist = getattr(config, 'SAFETY_WARN_DIST_M', 0.45)
             cam_fps = float(self.camera.calc_fps) if (self.camera and hasattr(self.camera, 'calc_fps') and self.camera.calc_fps > 0) else 15.0
             now_t = time.time()
@@ -2801,7 +2801,7 @@ class JetBotMasterSystem:
             "manual_decel_time_ms": int(getattr(config, 'MANUAL_DECEL_TIME_MS', 180)),
             "step_turn_start_latency_s": round(getattr(config, 'STEP_TURN_START_LATENCY_S', 0.08), 3),
             "heading_lock_kp": round(getattr(config, 'HEADING_LOCK_KP', 0.50), 2),
-            "safety_brake_dist_m": round(getattr(config, 'SAFETY_BRAKE_DIST_M', 0.22), 2),
+            "safety_brake_dist_m": round(getattr(config, 'SAFETY_BRAKE_DIST_M', 0.20), 2),
             "safety_warn_dist_m": round(getattr(config, 'SAFETY_WARN_DIST_M', 0.45), 2),
             "camera_offset_forward_m": round(getattr(config, 'CAMERA_OFFSET_FORWARD_M', 0.09), 3),
             "camera_offset_lateral_m": round(getattr(config, 'CAMERA_OFFSET_LATERAL_M', -0.015), 3),
@@ -2871,7 +2871,7 @@ class JetBotMasterSystem:
                 "manual_decel_time_ms": int(p.get("manual_decel_time_ms", base.get("manual_decel_time_ms", 180))),
                 "step_turn_start_latency_s": round(float(p.get("step_turn_start_latency_s", base.get("step_turn_start_latency_s", 0.080))), 3),
                 "heading_lock_kp": round(float(p.get("heading_lock_kp", base.get("heading_lock_kp", 0.50))), 2),
-                "safety_brake_dist_m": round(float(p.get("safety_brake_dist_m", base.get("safety_brake_dist_m", 0.22))), 2),
+                "safety_brake_dist_m": round(float(p.get("safety_brake_dist_m", base.get("safety_brake_dist_m", 0.20))), 2),
                 "safety_warn_dist_m": round(float(p.get("safety_warn_dist_m", base.get("safety_warn_dist_m", 0.45))), 2),
                 "created_at": now_str
             }

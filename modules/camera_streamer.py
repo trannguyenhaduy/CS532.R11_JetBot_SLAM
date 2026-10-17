@@ -318,21 +318,16 @@ class CameraStreamer:
                     for m_type in order:
                         if m_type == 'mobilenet' and mobilenet_blob is not None and not has_vpu_nn:
                             try:
+                                cam_rgb.setPreviewSize(300, 300)
                                 spatial_nn = pipeline.create(dai.node.MobileNetSpatialDetectionNetwork)
                                 spatial_nn.setBlobPath(mobilenet_blob)
-                                spatial_nn.setConfidenceThreshold(0.25)
+                                spatial_nn.setConfidenceThreshold(0.40)
                                 spatial_nn.input.setBlocking(False)
                                 spatial_nn.setBoundingBoxScaleFactor(0.5)
-                                spatial_nn.setDepthLowerThreshold(100)
+                                spatial_nn.setDepthLowerThreshold(150)
                                 spatial_nn.setDepthUpperThreshold(5000)
 
-                                manip = pipeline.create(dai.node.ImageManip)
-                                manip.initialConfig.setResize(300, 300)
-                                manip.initialConfig.setFrameType(dai.RawImgFrame.Type.BGR888p)
-                                manip.inputConfig.setWaitForMessage(False)
-
-                                cam_rgb.preview.link(manip.inputImage)
-                                manip.out.link(spatial_nn.input)
+                                cam_rgb.preview.link(spatial_nn.input)
                                 stereo.depth.link(spatial_nn.inputDepth)
 
                                 xout_nn = pipeline.create(dai.node.XLinkOut)
@@ -347,12 +342,13 @@ class CameraStreamer:
 
                         elif m_type == 'yolo' and yolo_blob is not None and not has_vpu_nn:
                             try:
+                                cam_rgb.setPreviewSize(416, 416)
                                 spatial_nn = pipeline.create(dai.node.YoloSpatialDetectionNetwork)
                                 spatial_nn.setBlobPath(yolo_blob)
-                                spatial_nn.setConfidenceThreshold(0.25)
+                                spatial_nn.setConfidenceThreshold(0.40)
                                 spatial_nn.input.setBlocking(False)
                                 spatial_nn.setBoundingBoxScaleFactor(0.5)
-                                spatial_nn.setDepthLowerThreshold(100)
+                                spatial_nn.setDepthLowerThreshold(150)
                                 spatial_nn.setDepthUpperThreshold(5000)
 
                                 # Cấu hình chuẩn kiến trúc YOLOv4-Tiny COCO:
@@ -362,13 +358,7 @@ class CameraStreamer:
                                 spatial_nn.setAnchorMasks({"side26": [1, 2, 3], "side13": [3, 4, 5]})
                                 spatial_nn.setIouThreshold(0.5)
 
-                                manip = pipeline.create(dai.node.ImageManip)
-                                manip.initialConfig.setResize(416, 416)
-                                manip.initialConfig.setFrameType(dai.RawImgFrame.Type.BGR888p)
-                                manip.inputConfig.setWaitForMessage(False)
-
-                                cam_rgb.preview.link(manip.inputImage)
-                                manip.out.link(spatial_nn.input)
+                                cam_rgb.preview.link(spatial_nn.input)
                                 stereo.depth.link(spatial_nn.inputDepth)
 
                                 xout_nn = pipeline.create(dai.node.XLinkOut)
@@ -566,15 +556,17 @@ class CameraStreamer:
             if in_nn is not None and hasattr(in_nn, 'detections'):
                 vpu_dets = []
                 labels_map = getattr(self, '_nn_labels', MOBILENET_LABELS)
+                fw = frame.shape[1] if frame is not None else 640
+                fh = frame.shape[0] if frame is not None else 480
                 for d in in_nn.detections:
                     lbl = labels_map[d.label] if (hasattr(d, 'label') and d.label < len(labels_map)) else "OBJECT"
                     x_m = round(float(d.spatialCoordinates.x) / 1000.0, 2)
                     y_m = round(float(d.spatialCoordinates.y) / 1000.0, 2)
                     z_m = round(float(d.spatialCoordinates.z) / 1000.0, 2)
-                    bx = max(0, min(640, int(d.xmin * 640)))
-                    by = max(0, min(480, int(d.ymin * 480)))
-                    bw = max(10, min(640 - bx, int((d.xmax - d.xmin) * 640)))
-                    bh = max(10, min(480 - by, int((d.ymax - d.ymin) * 480)))
+                    bx1 = max(0, min(fw - 2, int(d.xmin * fw)))
+                    by1 = max(0, min(fh - 2, int(d.ymin * fh)))
+                    bx2 = max(bx1 + 10, min(fw - 1, int(d.xmax * fw)))
+                    by2 = max(by1 + 10, min(fh - 1, int(d.ymax * fh)))
                     vpu_dets.append({
                         "id": 0,
                         "class": lbl.upper(),
@@ -582,7 +574,7 @@ class CameraStreamer:
                         "score": round(float(d.confidence), 2),
                         "x": x_m, "y": y_m, "z": z_m,
                         "distance": z_m,
-                        "bbox": [bx, by, bw, bh],
+                        "bbox": [bx1, by1, bx2, by2],
                         "source": "OAK-D VPU"
                     })
                 self.latest_vpu_detections = vpu_dets
@@ -842,7 +834,8 @@ class CameraStreamer:
             forward_clearance_mm = 9999.0  # Đường thoáng (> 4.0m)
 
         c_cm = forward_clearance_mm / 10.0
-        self.is_emergency_braked = bool(self.obstacle_distance is not None and forward_clearance_mm <= 200.0)
+        brake_dist_cm = float(getattr(config, 'SAFETY_BRAKE_DIST_M', 0.20)) * 100.0
+        self.is_emergency_braked = bool(self.obstacle_distance is not None and c_cm <= (brake_dist_cm + 0.5))
 
         # ─── 1. CHẾ ĐỘ CAMERA NHIỆT (THERMAL HEATMAP) ───
         if self.view_mode == 'thermal':
@@ -862,7 +855,7 @@ class CameraStreamer:
                 stat_txt = "> 4.0 m"
             elif self.is_emergency_braked:
                 col = (0, 0, 255)
-                stat_txt = f"BRAKE! {c_cm:.1f} cm"
+                stat_txt = f"BRAKE! {c_cm:.1f} cm (<= {brake_dist_cm:.0f}cm)"
             elif c_cm < 40.0:
                 col = (0, 200, 255)
                 stat_txt = f"{c_cm:.1f} cm"
@@ -874,24 +867,24 @@ class CameraStreamer:
 
             # 3. Thanh cảnh báo đáy màn hình khi nguy cấp (Không icon)
             if self.is_emergency_braked:
-                cv2.rectangle(display_frame, (2, 2), (w - 2, h - 2), (0, 0, 255), 3)
-                banner_w = 460
+                cv2.rectangle(display_frame, (2, 2), (w - 2, h - 2), (0, 0, 255), 4)
+                banner_w = min(560, w - 20)
                 bx1 = (w - banner_w) // 2
-                cv2.rectangle(display_frame, (bx1, h - 42), (bx1 + banner_w, h - 10), (0, 0, 220), -1)
-                cv2.rectangle(display_frame, (bx1, h - 42), (bx1 + banner_w, h - 10), (255, 255, 255), 1)
-                msg = f"[PHANH KHAN CAP] CAN SAT < 25CM ({c_cm:.1f}cm)"
-                (mw, _), _ = cv2.getTextSize(msg, cv2.FONT_HERSHEY_SIMPLEX, 0.48, 1)
-                cv2.putText(display_frame, msg, (bx1 + (banner_w - mw) // 2, h - 21),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 255, 255), 1, cv2.LINE_AA)
+                cv2.rectangle(display_frame, (bx1, h - 48), (bx1 + banner_w, h - 8), (0, 0, 220), -1)
+                cv2.rectangle(display_frame, (bx1, h - 48), (bx1 + banner_w, h - 8), (255, 255, 255), 2)
+                msg = f"[PHANH KHAN CAP] CAN SAT < 20CM ({c_cm:.1f}cm) - KHOA TIEN"
+                (mw, _), _ = cv2.getTextSize(msg, cv2.FONT_HERSHEY_SIMPLEX, 0.52, 2)
+                cv2.putText(display_frame, msg, (bx1 + (banner_w - mw) // 2, h - 22),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.52, (255, 255, 255), 2, cv2.LINE_AA)
             elif forward_clearance_mm < 450.0:
-                banner_w = 400
+                banner_w = min(460, w - 20)
                 bx1 = (w - banner_w) // 2
-                cv2.rectangle(display_frame, (bx1, h - 40), (bx1 + banner_w, h - 10), (0, 160, 255), -1)
-                cv2.rectangle(display_frame, (bx1, h - 40), (bx1 + banner_w, h - 10), (255, 255, 255), 1)
+                cv2.rectangle(display_frame, (bx1, h - 42), (bx1 + banner_w, h - 10), (0, 160, 255), -1)
+                cv2.rectangle(display_frame, (bx1, h - 42), (bx1 + banner_w, h - 10), (255, 255, 255), 1)
                 msg = f"[CANH BAO] GIAM TOC: {c_cm:.1f} cm"
-                (mw, _), _ = cv2.getTextSize(msg, cv2.FONT_HERSHEY_SIMPLEX, 0.44, 1)
-                cv2.putText(display_frame, msg, (bx1 + (banner_w - mw) // 2, h - 21),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.44, (0, 0, 0), 1, cv2.LINE_AA)
+                (mw, _), _ = cv2.getTextSize(msg, cv2.FONT_HERSHEY_SIMPLEX, 0.46, 1)
+                cv2.putText(display_frame, msg, (bx1 + (banner_w - mw) // 2, h - 22),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.46, (0, 0, 0), 1, cv2.LINE_AA)
 
             pass
 
