@@ -273,6 +273,7 @@ class CameraStreamer:
                     stereo.initialConfig.setMedianFilter(dai.MedianFilter.KERNEL_5x5) # KERNEL_5x5 nhanh gấp đôi 7x7
                     stereo.setLeftRightCheck(True)
                     stereo.setExtendedDisparity(False) # Tắt quét lặp 192 disparity, mở khóa 25-30 FPS phần cứng VPU
+                    stereo.setDepthAlign(dai.CameraBoardSocket.RGB) # Khớp tọa độ 3D sâu chính xác với ống kính RGB
 
                     mono_l.out.link(stereo.left)
                     mono_r.out.link(stereo.right)

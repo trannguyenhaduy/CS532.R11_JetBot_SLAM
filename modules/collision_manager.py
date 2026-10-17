@@ -373,9 +373,15 @@ class CollisionManager:
     def _try_load_model(self):
         """Nạp model PyTorch đã train từ đĩa"""
         if not HAS_TORCH:
+            if not getattr(self, '_logged_torch_missing', False):
+                print("⚠️ [AI COLLISION] Không thể nạp mô hình do môi trường Python chưa nhận PyTorch (cần cài libopenblas-base)")
+                self._logged_torch_missing = True
             return False
 
         if not os.path.exists(self.model_path):
+            if not getattr(self, '_logged_model_missing', False):
+                print(f"⚠️ [AI COLLISION] Chưa tìm thấy file mô hình tại: {self.model_path}. Hãy chạy 'git pull' trên robot!")
+                self._logged_model_missing = True
             return False
 
         try:
