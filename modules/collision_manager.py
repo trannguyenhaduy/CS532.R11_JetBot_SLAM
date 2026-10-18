@@ -20,27 +20,56 @@ import threading
 import numpy as np
 import cv2
 
-TORCH_IMPORT_ERROR = None
-try:
-    import torch
-    import torch.nn as nn
-    HAS_TORCH = True
-except Exception as _e_torch:
-    HAS_TORCH = False
-    TORCH_IMPORT_ERROR = str(_e_torch)
+import importlib.util
 
-HAS_TORCHVISION = False
-if HAS_TORCH:
+HAS_TORCH = None
+HAS_TORCHVISION = None
+TORCH_IMPORT_ERROR = None
+
+torch = None
+nn = None
+torchvision = None
+transforms = None
+ImageFolder = None
+DataLoader = None
+random_split = None
+
+def _ensure_torch():
+    """Chỉ nạp PyTorch & Torchvision khi thực sự cần (Lazy Import) để tiết kiệm 1.5GB RAM lúc khởi động"""
+    global HAS_TORCH, HAS_TORCHVISION, TORCH_IMPORT_ERROR
+    global torch, nn, torchvision, transforms, ImageFolder, DataLoader, random_split
+
+    if HAS_TORCH is not None:
+        return HAS_TORCH
+
     try:
-        import torchvision
-        import torchvision.transforms as transforms
-        from torchvision.datasets import ImageFolder
-        from torch.utils.data import DataLoader, random_split
+        import torch as _t
+        import torch.nn as _nn
+        torch = _t
+        nn = _nn
+        HAS_TORCH = True
+    except Exception as _e_torch:
+        HAS_TORCH = False
+        TORCH_IMPORT_ERROR = str(_e_torch)
+        return False
+
+    try:
+        import torchvision as _tv
+        import torchvision.transforms as _tf
+        from torchvision.datasets import ImageFolder as _IF
+        from torch.utils.data import DataLoader as _DL, random_split as _rs
+        torchvision = _tv
+        transforms = _tf
+        ImageFolder = _IF
+        DataLoader = _DL
+        random_split = _rs
         HAS_TORCHVISION = True
     except Exception as _e_tv:
         HAS_TORCHVISION = False
         if not TORCH_IMPORT_ERROR:
             TORCH_IMPORT_ERROR = f"Thiếu torchvision: {_e_tv}"
+
+    return True
 
 
 class CollisionManager:
@@ -62,7 +91,7 @@ class CollisionManager:
 
         self.model_path = os.path.join(self.models_dir, "best_collision_model.pth")
         self.model = None
-        self.device = torch.device('cuda' if (HAS_TORCH and torch.cuda.is_available()) else 'cpu') if HAS_TORCH else None
+        self.device = None
 
         # Trạng thái ảnh chụp
         self.last_saved_filepath = None
@@ -91,9 +120,6 @@ class CollisionManager:
         self._turn_phase_start = 0.0
         self._total_turn_elapsed = 0.0
         self._consecutive_blocked = 0
-
-        # Tự động nạp model có sẵn nếu tồn tại
-        self._try_load_model()
 
     # ══════════════════════════════════════════════════════════════════════════
     # 1. THU THẬP DỮ LIỆU (DATA COLLECTION & DATASET MANAGEMENT)
@@ -215,8 +241,8 @@ class CollisionManager:
 
     def start_training(self, epochs=15, batch_size=8, lr=0.001, model_type='alexnet'):
         """Kích hoạt tiến trình huấn luyện PyTorch trong luồng nền (non-blocking)"""
-        if not HAS_TORCH:
-            return False, "Hệ thống chưa cài đặt PyTorch/Torchvision"
+        if not _ensure_torch():
+            return False, f"Hệ thống chưa cài đặt PyTorch/Torchvision ({TORCH_IMPORT_ERROR})"
 
         if self.is_training:
             return False, "Tiến trình huấn luyện đang chạy"
@@ -458,18 +484,21 @@ class CollisionManager:
         return ResNetNative(BasicBlock, [2, 2, 2, 2], num_classes=num_classes)
 
     def _try_load_model(self):
-        """Nạp model PyTorch đã train từ đĩa"""
-        if not HAS_TORCH:
+        """Nạp model PyTorch đã train từ đĩa (Lazy on-demand khi kích hoạt tự hành né cản)"""
+        if not _ensure_torch():
             if not getattr(self, '_logged_torch_missing', False):
-                print(f"⚠️ [AI COLLISION] Không thể nạp mô hình: {TORCH_IMPORT_ERROR}")
+                print(f"ℹ️ [AI COLLISION] PyTorch chưa được nạp: {TORCH_IMPORT_ERROR}")
                 self._logged_torch_missing = True
             return False
 
         if not os.path.exists(self.model_path):
             if not getattr(self, '_logged_model_missing', False):
-                print(f"⚠️ [AI COLLISION] Chưa tìm thấy file mô hình tại: {self.model_path}. Hãy chạy 'git pull' trên robot!")
+                print(f"ℹ️ [AI COLLISION] Chưa có file mô hình tại: {self.model_path}")
                 self._logged_model_missing = True
             return False
+
+        if self.device is None and torch is not None:
+            self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
         try:
             state_dict = torch.load(self.model_path, map_location=self.device)
@@ -665,6 +694,7 @@ class CollisionManager:
         self._total_turn_elapsed = 0.0
         self._consecutive_blocked = 0
         if self.is_avoiding:
+            self._try_load_model()
             # Đổi ngẫu nhiên chiều quay né tránh (trái hoặc phải) mỗi lần bắt đầu
             self.avoid_turn_dir = 1.0 if (time.time() % 2 > 1.0) else -1.0
             self.last_action_desc = "ĐANG TỰ HÀNH NÉ VẬT CẢN"
@@ -675,9 +705,10 @@ class CollisionManager:
     def get_status(self):
         """Tổng hợp toàn bộ trạng thái hệ thống cho Web API"""
         counts = self.get_counts()
+        has_t = HAS_TORCH if (HAS_TORCH is not None) else (importlib.util.find_spec('torch') is not None)
         return {
             "counts": counts,
-            "has_torch": HAS_TORCH,
+            "has_torch": bool(has_t),
             "has_model": (self.model is not None),
             "model_path": self.model_path if (self.model is not None) else None,
             "device": str(self.device) if self.device else "N/A",
