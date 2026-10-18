@@ -24,6 +24,8 @@ desktop.ini
 .idea/
 *.code-workspace
 backup_checkpoint_*/
+.ipynb_checkpoints/
+*.ipynb
 
 # Dataset images and model weights
 dataset/collision/free/*.jpg
