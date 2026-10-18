@@ -1215,6 +1215,14 @@
           <button class="tab-btn" id="btn-map-auto-scan" onclick="toggleAutoScan()"
             style="padding:4px 8px; font-size:11px; background:rgba(10,14,23,0.85); color:var(--cyan); border-color:var(--cyan); font-weight:bold;"
             title="JetBot tự xoay chậm đều 360° để quét bản đồ">🔄 QUÉT 360°</button>
+          <select id="sel-scan-steps" onchange="localStorage.setItem('jetbot_scan_steps', this.value)"
+            style="padding:3px 5px; font-size:10px; background:rgba(10,14,23,0.85); color:var(--cyan); border:1px solid var(--cyan); border-radius:4px; font-weight:bold; cursor:pointer;"
+            title="Chọn số góc dừng quét toàn cảnh 360°">
+            <option value="24" selected>24 góc (15°/nấc)</option>
+            <option value="20">20 góc (18°/nấc)</option>
+            <option value="18">18 góc (20°/nấc)</option>
+            <option value="12">12 góc (30°/nấc)</option>
+          </select>
           <button class="tab-btn" id="btn-follow-toggle" onclick="toggleFollowRobot()"
             style="padding:4px 8px; font-size:11px; background:rgba(10,14,23,0.85); color:var(--dim); border-color:var(--border);"
             title="Khóa tâm camera bản đồ 2D theo vị trí JetBot (KHÔNG PHẢI xe bám theo người)">🔓 TÂM XE: TẮT (TỰ DO)</button>
@@ -4254,7 +4262,9 @@
       const willStart = !mainBtn || (!mainBtn.innerText.includes('ĐANG') && !mainBtn.innerText.includes('DỪNG'));
       updateAutoScanBtn(willStart);
 
-      const params = new URLSearchParams({ t: Date.now() });
+      const stepsEl = document.getElementById('sel-scan-steps');
+      const stepsVal = stepsEl ? stepsEl.value : (localStorage.getItem('jetbot_scan_steps') || '24');
+      const params = new URLSearchParams({ t: Date.now(), steps: stepsVal });
 
       fetch('/api/auto_scan?' + params.toString(), { cache: 'no-store' })
         .then(r => r.json())
@@ -6439,8 +6449,11 @@
         });
     }
 
-    // Tự động nạp cấu hình ban đầu để đồng bộ Profile Badge
+    // Tự động nạp cấu hình ban đầu để đồng bộ Profile Badge & Số góc quét
     window.addEventListener('DOMContentLoaded', () => {
+      const savedSteps = localStorage.getItem('jetbot_scan_steps');
+      const stepsEl = document.getElementById('sel-scan-steps');
+      if (savedSteps && stepsEl) stepsEl.value = savedSteps;
       setTimeout(loadConfigFull, 500);
     });
 

@@ -82,10 +82,11 @@ IMAGE_SKIP_FRAMES = 1       # Phát stream liên tục mượt mà 20-30 FPS (kh
 
 # ─── THÔNG SỐ TỰ QUÉT 360 ĐỘ & ĐỊNH HƯỚNG THỊ GIÁC CAMERA (VISUAL ANCHOR 360° SCAN) ───
 AUTO_SCAN_MODE        = "visual_anchor" # Tự động đánh dấu khung hình mốc & quay chậm đều khép vòng lặp Camera
+AUTO_SCAN_STEPS       = 24              # Số nấc quay quét toàn cảnh 360° (24 nấc x 15° = 360° siêu mịn, quét kỹ mọi góc chết)
 AUTO_SCAN_SPEED_PWM   = 0.11            # Mức xung PWM quay quét từ tốn, triệt tiêu mờ camera (11% PWM)
 AUTO_SCAN_CREEP_PWM   = 0.07            # Mức xung PWM bò chậm khi đến gần 360° để hãm đà quán tính
 AUTO_SCAN_TARGET_DEG  = 360.0           # Góc mục tiêu chuẩn 1 vòng tròn 360 độ (2*pi rad)
-AUTO_SCAN_DURATION_S  = 6.5             # Thời gian quay từ tốn (tự bù áp theo INA219)
+AUTO_SCAN_DURATION_S  = 13.5            # Thời gian quét toàn cảnh ước tính (24 nấc)
 
 # ─── THÔNG SỐ HIỆU CHUẨN ĐỒNG NHẤT HỆ THỐNG (UNIFIED MOTION CALIBRATION) ────────────
 # [DÙNG CHUNG DUY NHẤT 1 BỘ THAM SỐ CHO CẢ 2 CHẾ ĐỘ: BƯỚC ĐỊNH LƯỢNG & LÁI THỦ CÔNG / ODOMETRY]

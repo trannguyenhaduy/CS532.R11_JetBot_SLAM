@@ -2463,7 +2463,7 @@ class JetBotMasterSystem:
             if self.motors:
                 self.motors.stop()
 
-    def toggle_auto_scan(self, duration=None, mode=None, pwm=None):
+    def toggle_auto_scan(self, duration=None, mode=None, pwm=None, steps=None):
         """Bật/Tắt chế độ tự động xoay chậm đều đúng 360 độ (Closed-Loop IMU 360° Panorama Spin)"""
         with self.lock:
             if self.is_auto_scanning:
@@ -2480,12 +2480,15 @@ class JetBotMasterSystem:
                 self.is_auto_scanning = True
                 self.current_v = 0.0
                 self.current_w = 0.0
+                num_steps = int(steps) if steps and int(steps) >= 4 else int(getattr(config, 'AUTO_SCAN_STEPS', 24))
+                step_deg = round(360.0 / float(num_steps), 2)
                 scan_pwm = float(pwm) if pwm and 0.08 <= float(pwm) <= 0.25 else float(getattr(config, 'STEP_TURN_MIN_PWM', getattr(config, 'AUTO_SCAN_SPEED_PWM', 0.11)))
-                scan_dur = float(duration) if duration and float(duration) > 0 else float(getattr(config, 'AUTO_SCAN_DURATION_S', 4.8))
+                total_time_est = num_steps * (0.35 + 0.30)
+                scan_dur = float(duration) if duration and float(duration) > 0 else total_time_est
                 self.auto_scan_duration = scan_dur
                 self.auto_scan_remaining = scan_dur
-                threading.Thread(target=self._auto_scan_worker, args=(scan_dur, scan_pwm), daemon=True).start()
-                print(f"🔄 [AUTO SCAN 360°] Bắt đầu chế độ quét toàn cảnh 8 nấc x 45° Dừng-Chụp...")
+                threading.Thread(target=self._auto_scan_worker, args=(scan_dur, scan_pwm, num_steps), daemon=True).start()
+                print(f"🔄 [AUTO SCAN 360°] Bắt đầu chế độ quét toàn cảnh {num_steps} nấc x {step_deg:.1f}° Dừng-Chụp...")
                 return True
 
     def _capture_static_scan_keyframe(self, fixed_x=None, fixed_y=None, fixed_yaw=None):
@@ -2521,28 +2524,21 @@ class JetBotMasterSystem:
         except Exception as ex:
             print(f"⚠️ [KEYFRAME SCAN] Lỗi nạp keyframe: {ex}")
 
-    def _auto_scan_worker(self, scan_duration=None, scan_pwm=None):
+    def _auto_scan_worker(self, scan_duration=None, scan_pwm=None, num_steps=None):
         """
         Luồng điều khiển tự động quét toàn cảnh 360 độ RỜI RẠC TỪNG BƯỚC (Stepped 360° Panorama):
-        1. Chia vòng tròn 360 độ thành 8 nấc rời rạc, mỗi nấc đúng 45 độ (CCW).
-        2. Tại mỗi nấc (0°, 45°, 90°, 135°, 180°, 225°, 270°, 315°):
-           - Xe dừng tĩnh hoàn toàn trong 0.45 giây để triệt tiêu đà quán tính và chống mờ chuyển động.
-           - Trong lúc xe đứng yên: Camera chụp khung hình tĩnh sắc nét nhất (Keyframe),
-             bắn 120 tia quét vào Occupancy Grid và gọi Correlative Scan Matching để tự cân bằng.
-           - Sau đó, xe thực hiện bước quay 45 độ (CCW) với bộ điều khiển vi sai chuẩn hóa.
-        3. Khóa cứng vật cản ban đầu (Anchor Wall Freezing):
-           - Khi hoàn tất đủ 8 nấc (360 độ), hệ thống tự động gọi self.mapper.freeze_anchor_walls()
-             để khóa kiên cố toàn bộ các ô tường mốc thành 'Bờ Tường Bất Tử' (Immutable Anchor Walls).
-           - Các bức tường mốc này không bao giờ bị xóa hay ăn mòn bởi các tia quét sau này.
+        - Hỗ trợ linh hoạt 20 hoặc 24 nấc (15°/nấc hoặc 18°/nấc) siêu mịn.
+        - Tại mỗi nấc dừng tĩnh 0.30s triệt tiêu rung mờ, camera chụp keyframe rõ nét và gán vào Occupancy Grid SLAM.
+        - Kết thúc chu trình tự động khóa vĩnh viễn bờ tường mốc (Anchor Wall Freezing).
         """
-        steps = 12
-        step_deg = 30.0
-        total_time_est = steps * (0.65 + 0.35)
+        steps = int(num_steps) if num_steps and int(num_steps) >= 4 else int(getattr(config, 'AUTO_SCAN_STEPS', 24))
+        step_deg = round(360.0 / float(steps), 2)
+        total_time_est = steps * (0.32 + 0.28)
         self.auto_scan_duration = total_time_est
         self.auto_scan_remaining = total_time_est
         t_start_total = time.time()
 
-        print("🔄 [STEPPED 360° SCAN] Bắt đầu chu trình quét toàn cảnh 12 nấc x 30° Dừng-Chụp kỹ lưỡng (không bỏ sót cửa/lối đi)...")
+        print(f"🔄 [STEPPED 360° SCAN] Bắt đầu chu trình quét toàn cảnh {steps} nấc x {step_deg:.1f}° Dừng-Chụp kỹ lưỡng (không bỏ sót cửa/lối đi)...")
 
         try:
             with self.lock:
@@ -2553,7 +2549,7 @@ class JetBotMasterSystem:
             # Nấc 0 (Tại góc xuất phát 0°): Dừng tĩnh để chụp bức tường mốc ban đầu từ tâm neo
             time.sleep(0.30)
             self._capture_static_scan_keyframe(anchor_x, anchor_y, anchor_yaw)
-            print("📸 [NẤC 1/12] Đã ghi nhận khung hình mốc ban đầu tại 0°.")
+            print(f"📸 [NẤC 1/{steps}] Đã ghi nhận khung hình mốc ban đầu tại 0°.")
 
             for i in range(1, steps + 1):
                 if not self.is_auto_scanning:
@@ -2562,7 +2558,7 @@ class JetBotMasterSystem:
 
                 target_heading_deg = i * step_deg
                 pct_done = int((i - 1) / steps * 100)
-                print(f" ▶️ [NẤC {i}/{steps}] Đang quay 30° CCW hướng tới mốc {target_heading_deg:.0f}°... ({pct_done}%)")
+                print(f" ▶️ [NẤC {i}/{steps}] Đang quay {step_deg:.1f}° CCW hướng tới mốc {target_heading_deg:.0f}°... ({pct_done}%)")
 
                 # 1. Quay 30 độ CCW bằng _step_worker (tốc độ cao dứt khoát 16% PWM)
                 with self.lock:
