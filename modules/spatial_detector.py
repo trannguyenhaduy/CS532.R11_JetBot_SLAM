@@ -89,9 +89,15 @@ class TemporalTracker:
 
             if best_k is not None:
                 old = self.tracks[best_k]
-                sx = round(0.65 * x + 0.35 * old['x'], 2)
-                sy = round(0.65 * y + 0.35 * old['y'], 2)
-                sz = round(0.65 * z + 0.35 * old['z'], 2)
+                # Khi vật cản đang tiến gần lại xe (z < old['z']), ưu tiên cập nhật nhanh (85%) để phanh khẩn cấp lập tức
+                if z < old.get('z', 99.0):
+                    sx = round(0.85 * x + 0.15 * old['x'], 2)
+                    sy = round(0.85 * y + 0.15 * old['y'], 2)
+                    sz = round(0.85 * z + 0.15 * old['z'], 2)
+                else:
+                    sx = round(0.65 * x + 0.35 * old['x'], 2)
+                    sy = round(0.65 * y + 0.35 * old['y'], 2)
+                    sz = round(0.65 * z + 0.35 * old['z'], 2)
 
                 # Làm mượt tọa độ Bounding Box 2D bằng Exponential Moving Average (EMA)
                 # Triệt tiêu hiện tượng giật rung khung hình (pixel jitter)
@@ -535,23 +541,24 @@ class SpatialPerceptionEngine:
             if depth_frame is not None and isinstance(depth_frame, np.ndarray):
                 try:
                     dh, dw = depth_frame.shape[:2]
-                    du1 = max(0, min(dw - 1, int(bx * dw / w)))
-                    dv1 = max(0, min(dh - 1, int(by * dh / h)))
-                    du2 = max(0, min(dw - 1, int((bx + bw) * dw / w)))
-                    dv2 = max(0, min(dh - 1, int((by + bh) * dh / h)))
-                    roi = depth_frame[dv1:dv2, du1:du2]
-                    valid = roi[(roi > 50) & (roi < 4500)]
-                    if len(valid) > 10:
-                        z_m = float(np.median(valid)) / 1000.0
+                    # Lấy vùng trung tâm 40% của Bounding Box để không bị dính nền/tường phía sau
+                    du1 = max(0, min(dw - 1, int((bx + bw * 0.30) * dw / w)))
+                    dv1 = max(0, min(dh - 1, int((by + bh * 0.25) * dh / h)))
+                    du2 = max(0, min(dw - 1, int((bx + bw * 0.70) * dw / w)))
+                    dv2 = max(0, min(dh - 1, int((by + bh * 0.75) * dh / h)))
+                    if du2 > du1 and dv2 > dv1:
+                        roi = depth_frame[dv1:dv2, du1:du2]
+                        valid = roi[(roi >= 50) & (roi <= 4500)]
+                        if len(valid) >= 5:
+                            # Lấy phân vị 20% (bề mặt gần nhất của vật thể)
+                            z_m = float(np.percentile(valid, 20)) / 1000.0
                 except Exception: pass
 
-            # Tính cự ly quang học chuẩn xác (tương quan với test_emergency_brake.py):
-            # Ngồi cách laptop 60-70cm: bw ~ 180-210px -> z ~ 0.65m
-            # Đưa tay/người sát camera (<25cm): bw ~ 400-500px -> z giảm sát 0.20m (20cm)
-            if z_m < 0.15 or z_m > 5.0:
+            # CHỈ KHI HOÀN TOÀN KHÔNG CÓ DEPTH MAP THẬT MỚI DÙNG ƯỚC LƯỢNG QUANG HỌC
+            if z_m <= 0.05 or z_m > 5.0:
                 d_optical = max(bw, int(bh * 0.65))
                 z_m = round(float(fx * 0.26 / max(d_optical, 1)), 2)
-                z_m = max(0.18, min(3.5, z_m))
+                z_m = max(0.08, min(3.5, z_m))
 
             x_m = round(float((u_center - cx) * z_m / fx), 2)
             y_m = round(float((v_center - cy) * z_m / fy), 2)

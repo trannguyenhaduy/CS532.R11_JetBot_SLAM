@@ -1455,7 +1455,7 @@ class JetBotMasterSystem:
                 # Đọc nhận diện 3D từ phần cứng VPU OAK-D và lọc/làm mượt qua TemporalTracker
                 vpu_dets = getattr(self.camera, 'latest_vpu_detections', [])
                 has_new_vpu = getattr(self.camera, 'has_new_vpu_dets', False)
-                if has_new_vpu:
+                if has_new_vpu and vpu_dets:
                     self.camera.has_new_vpu_dets = False
                     if self.yolo:
                         filtered = self.yolo.filter_detections(vpu_dets)
@@ -1465,10 +1465,22 @@ class JetBotMasterSystem:
                     with self.lock:
                         self.detections = tracked
                         self.last_vpu_det_time = now
-                        # Chỉ xét các vật thể trong hành lang di chuyển phía trước mũi xe (|x| <= 0.28m)
-                        vpu_dists = [d['z'] for d in tracked if 'z' in d and 0.06 <= d['z'] <= 2.0 and abs(d.get('x', 0.0)) <= 0.28]
+                        # Chỉ xét các vật thể trong hành lang di chuyển phía trước mũi xe (|x| <= 0.35m)
+                        vpu_dists = [d['z'] for d in tracked if 'z' in d and 0.06 <= d['z'] <= 2.5 and abs(d.get('x', 0.0)) <= 0.35]
                         self.last_yolo_clearance = min(vpu_dists) if vpu_dists else 99.0
                     self._update_fused_obstacle_clearance()
+                elif self.yolo and (not getattr(self.camera, 'is_oak_connected', False) or getattr(self.camera, '_oak_q_nn', None) is None):
+                    # KHI KHÔNG CÓ VPU NN (ví dụ DepthAI v3 trên Windows hoặc khi camera chạy Stereo thuần):
+                    if (now - getattr(self, '_last_fallback_det_time', 0.0)) >= 0.066:
+                        self._last_fallback_det_time = now
+                        fb_dets = self.yolo.detect_fallback(live_frame, live_depth)
+                        filtered = self.yolo.filter_detections(fb_dets)
+                        tracked = self.yolo.tracker.update(filtered)
+                        with self.lock:
+                            self.detections = tracked
+                            fb_dists = [d['z'] for d in tracked if 'z' in d and 0.06 <= d['z'] <= 2.5 and abs(d.get('x', 0.0)) <= 0.35]
+                            self.last_yolo_clearance = min(fb_dists) if fb_dists else 99.0
+                        self._update_fused_obstacle_clearance()
                 elif (now - getattr(self, 'last_vpu_det_time', 0.0)) > 0.55:
                     # Duy trì coasting mượt mà khi VPU không bắt được vật thể
                     if self.yolo and self.detections:

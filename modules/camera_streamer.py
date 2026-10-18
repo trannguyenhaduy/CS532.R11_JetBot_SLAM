@@ -420,11 +420,33 @@ class CameraStreamer:
                     bw = max(10, min(640 - bx, int((d.xmax - d.xmin) * 640)))
                     bh = max(10, min(480 - by, int((d.ymax - d.ymin) * 480)))
 
-                    # Nếu điểm đo lọt điểm mù stereo (< 8cm hoặc = 0), ước lượng qua kích thước quang học
+                    # Nếu VPU spatial coordinates chưa tính được (z <= 0.08 hoặc > 5.0),
+                    # trích xuất trực tiếp độ sâu thực tế từ depth map tại vùng tâm Bounding Box:
+                    if depth is not None and (z_m <= 0.08 or z_m > 5.0):
+                        dh, dw = depth.shape[:2]
+                        rx1 = max(0, min(dw - 1, int(bx + bw * 0.30)))
+                        rx2 = max(0, min(dw - 1, int(bx + bw * 0.70)))
+                        ry1 = max(0, min(dh - 1, int(by + bh * 0.25)))
+                        ry2 = max(0, min(dh - 1, int(by + bh * 0.75)))
+                        if rx2 > rx1 and ry2 > ry1:
+                            roi_d = depth[ry1:ry2, rx1:rx2]
+                            val_d = roi_d[(roi_d >= 50) & (roi_d <= 4500)]
+                            if len(val_d) >= 5:
+                                z_m = round(float(np.percentile(val_d, 20)) / 1000.0, 2)
+                                center_u = bx + bw / 2.0
+                                center_v = by + bh / 2.0
+                                x_m = round(float((center_u - self.cx) * z_m / self.fx), 2)
+                                y_m = round(float((center_v - self.cy) * z_m / self.fy), 2)
+
+                    # Chỉ dùng fallback quang học thuần khi không có depth map
                     if z_m <= 0.08:
                         d_optical = max(bw, int(bh * 0.65))
-                        z_m = round(float(450.0 * 0.26 / max(20, d_optical)), 2)
+                        z_m = round(float(self.fx * 0.26 / max(20, d_optical)), 2)
                         z_m = max(0.08, min(3.5, z_m))
+                        center_u = bx + bw / 2.0
+                        center_v = by + bh / 2.0
+                        x_m = round(float((center_u - self.cx) * z_m / self.fx), 2)
+                        y_m = round(float((center_v - self.cy) * z_m / self.fy), 2)
 
                     vpu_dets.append({
                         "id": 0,
