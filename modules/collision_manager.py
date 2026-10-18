@@ -83,11 +83,14 @@ class CollisionManager:
 
         # Trạng thái Tự hành né vật cản (Live Autopilot)
         self.is_avoiding = False
-        self.blocked_threshold = 0.50  # Chuẩn NVIDIA live_demo: < 0.5 tiến thẳng, >= 0.5 quay né
+        self.blocked_threshold = 0.55  # Ngưỡng phát hiện cản tin cậy (>= 0.55 tránh giật cục vì bóng mờ sàn)
         self.last_prob_blocked = 0.0
         self.last_prob_free = 1.0
         self.last_action_desc = "CHỜ KÍCH HOẠT"
         self.avoid_turn_dir = 1.0  # 1: quay trái CCW, -1: quay phải CW
+        self._turn_phase_start = 0.0
+        self._total_turn_elapsed = 0.0
+        self._consecutive_blocked = 0
 
         # Tự động nạp model có sẵn nếu tồn tại
         self._try_load_model()
@@ -587,34 +590,70 @@ class CollisionManager:
         except Exception as e:
             return 1.0, 0.0
 
-    def compute_avoidance_cmd(self, prob_blocked, base_speed=0.05, turn_speed=0.40):
+    def compute_avoidance_cmd(self, prob_blocked, base_speed=0.10, turn_speed=0.42):
         """
-        Tính toán lệnh vận tốc vi sai (v, w) theo logic chuẩn của notebook live_demo.ipynb:
-        - Giảm tốc độ quay chậm rãi (turn_speed=0.40 rad/s ~ 23 deg/s) để camera quét kỹ từng góc nhìn,
-          không bị quay giật quá nhanh làm lướt qua (miss) các ngã rẽ, cửa mở hoặc khoảng trống trước mặt.
-        - Chuẩn NVIDIA JetBot:
-            if prob_blocked < 0.50:
-                robot.forward(speed)
-            else:
-                robot.left(speed)
-        - Ngưỡng 0.50 chuẩn xác, loại bỏ hoàn toàn các ngưỡng phụ (0.18-0.20) gây kẹt quay tròn vô tận!
+        Tính toán lệnh vận tốc vi sai (v, w) theo cơ chế Turn-Look-Go (Quay ngắt nhịp - Dừng chụp - Tiến ngay):
+        - Giảm tốc độ quay xuống mức êm ái (turn_speed ~ 0.40 - 0.45 rad/s) để triệt tiêu hoàn toàn mờ chuyển động (motion blur).
+        - Khi gặp cản (prob_blocked >= blocked_threshold):
+            + Xe quay một nhịp ngắn (0.34s, ~12-14 độ).
+            + Tạm dừng động cơ êm (0.18s) để camera chụp frame tĩnh sắc nét, triệt tiêu ảo giác cản do bóng mờ.
+            + Nếu quay cùng một chiều quá 1.8s mà chưa thấy đường thoáng: Tự động đảo chiều quay ngược lại để tìm lối thoát.
+        - Khi đường thoáng (prob_blocked < blocked_threshold):
+            + Ngay lập tức tiến thẳng (v = base_speed, w = 0.0) với phản hồi tức thì, không độ trễ.
+            + Reset toàn bộ bộ đếm quay né.
         """
         if not self.is_avoiding:
+            self._turn_phase_start = 0.0
+            self._total_turn_elapsed = 0.0
             return None, None, "CHƯA BẬT TỰ HÀNH"
 
-        thresh = getattr(self, 'blocked_threshold', 0.50)
+        thresh = getattr(self, 'blocked_threshold', 0.55)
+        now = time.time()
 
-        # ── 1. ĐƯỜNG THOÁNG (< 0.50): TIẾN THẲNG ──
+        # ── 1. ĐƯỜNG THOÁNG (< 0.55): TIẾN THẲNG NGAY LẬP TỨC ──
         if prob_blocked < thresh:
+            # Thoát cản thành công -> reset các trạng thái quay
+            self._turn_phase_start = 0.0
+            self._total_turn_elapsed = 0.0
+            self._consecutive_blocked = 0
             v = base_speed
             w = 0.0
-            desc = f"TIẾN THẲNG (Đường thoáng {int(self.last_prob_free*100)}%)"
-        # ── 2. GẶP CẢN (>= 0.50): DỪNG TIẾN VÀ QUAY CHẬM RÃI DÒ ĐƯỜNG ──
+            desc = f"TIẾN THẲNG (Đường thoáng {int(self.last_prob_free * 100)}%)"
+
+        # ── 2. GẶP CẢN (>= 0.55): CƠ CHẾ TURN-LOOK-GO (QUAY NGẮT NHỊP - DỪNG CHỤP RÕ) ──
         else:
-            v = 0.0
-            w = turn_speed * self.avoid_turn_dir
+            self._consecutive_blocked += 1
+            if self._turn_phase_start <= 0.0:
+                self._turn_phase_start = now
+
+            phase_elapsed = now - self._turn_phase_start
+            step_turn_dur = 0.34   # Thời gian quay nhịp ngắn (~13 độ ở 0.42 rad/s)
+            settle_dur = 0.18      # Thời gian dừng tĩnh để camera chụp frame nét không mờ
+            cycle_dur = step_turn_dur + settle_dur
+
+            # Chu kỳ quay lặp lại (Modulus cycle)
+            cycle_phase = phase_elapsed % cycle_dur
+
+            # Kiểm tra chống kẹt quay một chiều vô tận (> 1.8s quay liên tục không thoát)
+            self._total_turn_elapsed += 0.04
+            if self._total_turn_elapsed > 1.80:
+                self.avoid_turn_dir = -self.avoid_turn_dir
+                self._total_turn_elapsed = 0.0
+                self._turn_phase_start = now
+                cycle_phase = 0.0
+
             side_str = "TRÁI ↺" if self.avoid_turn_dir > 0 else "PHẢI ↻"
-            desc = f"🛑 GẶP CẢN ({int(prob_blocked*100)}%) -> QUAY CHẬM DÒ ĐƯỜNG {side_str}"
+
+            if cycle_phase < step_turn_dur:
+                # PHA QUAY: Nhích nhẹ góc quét ở tốc độ thấp êm ái
+                v = 0.0
+                w = turn_speed * self.avoid_turn_dir
+                desc = f"🛑 GẶP CẢN ({int(prob_blocked * 100)}%) -> QUAY NHỊP {side_str}"
+            else:
+                # PHA DỪNG TĨNH: Xe đứng yên để camera lấy frame rõ nét, giúp AI phân loại chính xác
+                v = 0.0
+                w = 0.0
+                desc = f"📸 DỪNG CHỤP TĨNH & QUAN SÁT ({int(self.last_prob_free * 100)}% thoáng)"
 
         self.last_action_desc = desc
         return v, w, desc
@@ -622,6 +661,9 @@ class CollisionManager:
     def toggle_avoidance(self):
         """Bật / Tắt chế độ Tự hành né vật cản"""
         self.is_avoiding = not self.is_avoiding
+        self._turn_phase_start = 0.0
+        self._total_turn_elapsed = 0.0
+        self._consecutive_blocked = 0
         if self.is_avoiding:
             # Đổi ngẫu nhiên chiều quay né tránh (trái hoặc phải) mỗi lần bắt đầu
             self.avoid_turn_dir = 1.0 if (time.time() % 2 > 1.0) else -1.0

@@ -82,8 +82,8 @@ IMAGE_SKIP_FRAMES = 1       # Phát stream liên tục mượt mà 20-30 FPS (kh
 
 # ─── THÔNG SỐ TỰ QUÉT 360 ĐỘ & ĐỊNH HƯỚNG THỊ GIÁC CAMERA (VISUAL ANCHOR 360° SCAN) ───
 AUTO_SCAN_MODE        = "visual_anchor" # Tự động đánh dấu khung hình mốc & quay chậm đều khép vòng lặp Camera
-AUTO_SCAN_SPEED_PWM   = 0.16            # Mức xung PWM quay quét dứt khoát (16% PWM)
-AUTO_SCAN_CREEP_PWM   = 0.08            # Mức xung PWM bò chậm khi đến gần 360° để hãm đà quán tính
+AUTO_SCAN_SPEED_PWM   = 0.11            # Mức xung PWM quay quét từ tốn, triệt tiêu mờ camera (11% PWM)
+AUTO_SCAN_CREEP_PWM   = 0.07            # Mức xung PWM bò chậm khi đến gần 360° để hãm đà quán tính
 AUTO_SCAN_TARGET_DEG  = 360.0           # Góc mục tiêu chuẩn 1 vòng tròn 360 độ (2*pi rad)
 AUTO_SCAN_DURATION_S  = 6.5             # Thời gian quay từ tốn (tự bù áp theo INA219)
 
@@ -98,10 +98,10 @@ STEP_FORWARD_SCALE       = 0.42  # Hệ số hiệu chuẩn TIẾN (dùng chung 
 STEP_BACKWARD_SCALE      = 0.48  # Hệ số hiệu chuẩn LÙI (bù lực cản bánh mắt trâu khi bị kéo ngược)
 STEP_TURN_LEFT_SCALE     = 0.60  # Hệ số hiệu chuẩn QUAY TRÁI (CCW - dự phòng vòng hở khi không có IMU)
 STEP_TURN_RIGHT_SCALE    = 0.60  # Hệ số hiệu chuẩn QUAY PHẢI (CW - dự phòng vòng hở khi không có IMU)
-DEFAULT_SPEED_PWM        = 0.12  # Mức ga cơ bản chạy thẳng (12% PWM - chạy nhanh, đầm, dứt khoát)
+DEFAULT_SPEED_PWM        = 0.08  # Mức ga cơ bản chạy thẳng êm ái (8% PWM)
 
 # ─── BÙ MÔ-MEN XOAY TẠI CHỖ (IN-PLACE TURN TORQUE COMPENSATION) ────────────────
-STEP_TURN_MIN_PWM        = 0.15  # Mức xung PWM tối thiểu khi quay tại chỗ (15% quay nhanh, dứt khoát)
+STEP_TURN_MIN_PWM        = 0.11  # Mức xung PWM tối thiểu khi quay tại chỗ (11% quay êm, triệt tiêu mờ camera)
 STEP_TURN_SPEED_RATIO    = 1.0   # Tỉ lệ điều chỉnh tốc độ quay so với tốc độ tiến
 
 # ─── GIẢM TỐC TỪ TỪ ĐỒNG NHẤT 100% (UNIFIED SMOOTH DECELERATION & SOFT STOP) ───
@@ -111,8 +111,8 @@ MANUAL_DECEL_TIME_MS     = 180   # Thời gian hạ dốc mượt mà (180ms) d�
 STEP_USE_ACTIVE_BRAKE    = False # False: Ngắt êm tự nhiên (không giật ngược). True: Dùng xung phanh ngược cứng
 # ─── THÔNG SỐ TỰ HÀNH BÁM ĐƯỜNG (AUTONOMOUS NAVIGATOR & PATH FOLLOWER) ───────────
 ENABLE_AUTONOMOUS_NAVIGATOR = True  # Bật bộ điều khiển bám đường tự hành A*
-NAV_LINEAR_SPEED            = 0.16  # Vận tốc tiến tự hành (m/s) chạy nhanh, ổn định
-NAV_TURN_SPEED              = 1.30  # Vận tốc quay tại chỗ (rad/s ~ 75 deg/s) quay nhanh dứt khoát
+NAV_LINEAR_SPEED            = 0.11  # Vận tốc tiến tự hành (m/s) đầm chắc, an toàn
+NAV_TURN_SPEED              = 0.50  # Vận tốc quay tại chỗ (rad/s ~ 28 deg/s) quay êm triệt tiêu mờ camera
 NAV_GOAL_TOLERANCE_M        = 0.06  # Bán kính chạm đích dừng xe (6cm)
 NAV_WAYPOINT_TOLERANCE_M    = 0.10  # Bán kính chuyển waypoint tiếp theo (10cm)
 NAV_HEADING_TOLERANCE_RAD   = 0.35  # Dung sai góc lệch (~20 độ) trước khi chuyển từ quay sang tiến

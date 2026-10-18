@@ -38,8 +38,8 @@ class AutonomousNavigator:
         get_pose_cb: Callable[[], Tuple[float, float, float]],
         set_cmd_vel_cb: Callable[[float, float], None],
         stop_cb: Callable[[], None],
-        linear_speed: float = 0.12,         # m/s (~15-20% PWM an toàn trong nhà)
-        turn_speed: float = 1.20,           # rad/s (~11-13% PWM quay êm)
+        linear_speed: float = 0.11,         # m/s (~15-20% PWM an toàn trong nhà)
+        turn_speed: float = 0.50,           # rad/s (~11-13% PWM quay êm, triệt tiêu mờ camera)
         goal_tolerance_m: float = 0.06,     # Dung sai chạm đích (6cm)
         waypoint_tolerance_m: float = 0.10, # Dung sai lướt qua waypoint (10cm)
         heading_tolerance_rad: float = 0.35,# Dung sai góc lệch (~20 độ)

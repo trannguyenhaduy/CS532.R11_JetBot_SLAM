@@ -28,8 +28,8 @@ except ImportError:
 
 def main():
     parser = argparse.ArgumentParser(description="Live Collision Avoidance Runner")
-    parser.add_argument("--speed", type=float, default=0.12, help="Vận tốc tiến cơ bản m/s (default: 0.12)")
-    parser.add_argument("--turn", type=float, default=1.10, help="Vận tốc quay góc khi gặp cản rad/s (default: 1.10)")
+    parser.add_argument("--speed", type=float, default=0.11, help="Vận tốc tiến cơ bản m/s (default: 0.11)")
+    parser.add_argument("--turn", type=float, default=0.45, help="Vận tốc quay góc khi gặp cản rad/s (default: 0.45)")
     parser.add_argument("--camera", type=int, default=0, help="ID camera /dev/video* (default: 0)")
     parser.add_argument("--stream_url", type=str, default="", help="MJPEG stream URL nếu lấy từ main.py (ví dụ: http://127.0.0.1:8080/stream.mjpg)")
     args = parser.parse_args()

@@ -252,7 +252,7 @@ class JetBotMasterSystem:
                 set_cmd_vel_cb=self._nav_set_cmd_vel,
                 stop_cb=self._nav_stop_robot,
                 linear_speed=getattr(config, 'NAV_LINEAR_SPEED', 0.12),
-                turn_speed=getattr(config, 'NAV_TURN_SPEED', 1.20),
+                turn_speed=getattr(config, 'NAV_TURN_SPEED', 0.45),
                 goal_tolerance_m=getattr(config, 'NAV_GOAL_TOLERANCE_M', 0.06),
                 waypoint_tolerance_m=getattr(config, 'NAV_WAYPOINT_TOLERANCE_M', 0.10),
                 heading_tolerance_rad=getattr(config, 'NAV_HEADING_TOLERANCE_RAD', 0.35),
@@ -1335,8 +1335,8 @@ class JetBotMasterSystem:
 
                         v, w, desc = self.collision_mgr.compute_avoidance_cmd(
                             p_blocked,
-                            base_speed=float(getattr(config, 'NAV_LINEAR_SPEED', 0.15)),
-                            turn_speed=float(getattr(config, 'NAV_TURN_SPEED', 1.10))
+                            base_speed=float(getattr(config, 'NAV_LINEAR_SPEED', 0.11)),
+                            turn_speed=float(getattr(config, 'NAV_TURN_SPEED', 0.45))
                         )
                         if v is not None and w is not None:
                             # Khóa an toàn Virtual Bumper phanh cứng nếu có
@@ -1831,7 +1831,17 @@ class JetBotMasterSystem:
     def toggle_collision_avoidance(self):
         """Bật / Tắt chế độ Tự hành né vật cản thời gian thực"""
         if getattr(self, 'collision_mgr', None):
-            return self.collision_mgr.toggle_avoidance()
+            res = self.collision_mgr.toggle_avoidance()
+            if res:
+                self._last_ai_pred_time = 0.0
+                self._cached_ai_pred = (1.0, 0.0)
+                self.last_manual_drive_time = 0.0
+                print("⚡ [AI COLLISION] Đã kích hoạt Tự hành né vật cản tức thì!")
+            else:
+                if self.motors:
+                    self.motors.stop()
+                print("🛑 [AI COLLISION] Đã tắt Tự hành né vật cản và dừng xe.")
+            return res
         return False
 
     def set_debug_paused(self, paused=True):
