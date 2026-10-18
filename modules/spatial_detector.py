@@ -636,7 +636,7 @@ class SpatialPerceptionEngine:
         for det in detections:
             if not isinstance(det, dict): continue
             sc = float(det.get('score', 0.8))
-            if sc < 0.35: continue
+            if sc < 0.28: continue
             valid_dets.append(det)
 
         valid_dets.sort(key=lambda d: float(d.get('score', 0.8)))
@@ -647,8 +647,7 @@ class SpatialPerceptionEngine:
                 name = str(det.get('name', 'OBJ')).upper()
                 score = float(det.get('score', 0.8))
 
-                # Chỉ hiển thị khi có Bounding Box 2D thực tế đã được làm mượt
-                # Triệt tiêu hoàn toàn khung ảo (synthetic phantom box) gây giật màn hình
+                # Ưu tiên Bounding Box 2D thực tế đã được làm mượt
                 if 'bbox' in det and det['bbox'] is not None:
                     raw_b = det['bbox']
                     if len(raw_b) == 4:
@@ -663,8 +662,17 @@ class SpatialPerceptionEngine:
                         y2 = max(y1 + 10, min(h - 1, int(round(by2))))
                     else:
                         continue
+                elif 0.08 <= zm <= 4.5:
+                    # Chiếu tọa độ không gian 3D (X, Y, Z) thành khung 2D trên camera
+                    u_proj = int(round((xm * fx / zm) + (w / 2.0)))
+                    v_proj = int(round((ym * fy / zm) + (h / 2.0)))
+                    half_w = max(22, int(round(fx * 0.20 / zm)))
+                    half_h = max(28, int(round(fy * 0.32 / zm)))
+                    x1 = max(0, min(w - 2, u_proj - half_w))
+                    y1 = max(0, min(h - 2, v_proj - half_h))
+                    x2 = max(x1 + 10, min(w - 1, u_proj + half_w))
+                    y2 = max(y1 + 10, min(h - 1, v_proj + half_h))
                 else:
-                    # Không có bounding box thật -> bỏ qua để giữ luồng hình ảnh sạch sẽ
                     continue
 
                 bw = x2 - x1

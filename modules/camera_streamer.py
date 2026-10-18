@@ -223,7 +223,7 @@ class CameraStreamer:
                         stereo.setDefaultProfilePreset(stereo.PresetMode.HIGH_DENSITY)
 
                     stereo.setLeftRightCheck(True)
-                    stereo.setExtendedDisparity(True)
+                    stereo.setExtendedDisparity(False)
                     try:
                         stereo.setDepthAlign(dai.CameraBoardSocket.RGB)
                     except Exception:
@@ -276,7 +276,7 @@ class CameraStreamer:
                     stereo.setDefaultProfilePreset(dai.node.StereoDepth.PresetMode.HIGH_DENSITY)
                     stereo.initialConfig.setMedianFilter(dai.MedianFilter.KERNEL_5x5) # KERNEL_5x5 nhanh gấp đôi 7x7
                     stereo.setLeftRightCheck(True)
-                    stereo.setExtendedDisparity(True) # Mở rộng 190 disparity: đo cự ly sát mũi xe từ 15cm - 35cm chính xác tuyệt đối
+                    stereo.setExtendedDisparity(False) # Tắt extended disparity để tương thích hoàn toàn với setDepthAlign và VPU NN Myriad X
                     try:
                         stereo.setDepthAlign(dai.CameraBoardSocket.RGB) # Khớp bản đồ chiều sâu 1:1 sang cảm biến màu RGB, triệt tiêu sai lệch tọa độ 3D AI
                     except Exception:
@@ -327,7 +327,7 @@ class CameraStreamer:
                             try:
                                 spatial_nn = pipeline.create(dai.node.MobileNetSpatialDetectionNetwork)
                                 spatial_nn.setBlobPath(mobilenet_blob)
-                                spatial_nn.setConfidenceThreshold(0.40)
+                                spatial_nn.setConfidenceThreshold(0.35)
                                 spatial_nn.input.setBlocking(False)
                                 spatial_nn.setBoundingBoxScaleFactor(0.5)
                                 spatial_nn.setDepthLowerThreshold(150)
@@ -360,7 +360,7 @@ class CameraStreamer:
                             try:
                                 spatial_nn = pipeline.create(dai.node.YoloSpatialDetectionNetwork)
                                 spatial_nn.setBlobPath(yolo_blob)
-                                spatial_nn.setConfidenceThreshold(0.40)
+                                spatial_nn.setConfidenceThreshold(0.35)
                                 spatial_nn.input.setBlocking(False)
                                 spatial_nn.setBoundingBoxScaleFactor(0.5)
                                 spatial_nn.setDepthLowerThreshold(150)

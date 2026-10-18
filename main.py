@@ -1395,9 +1395,10 @@ class JetBotMasterSystem:
             if self.flags.yolo and self.yolo and (self.latest_raw_bgr is not None):
                 try:
                     now = time.time()
-                    # Nếu đang có luồng nhận diện từ VPU của OAK-D (qua ROS trong 1.8s gần nhất hoặc OAK-D trực tiếp),
+                    # Nếu đang có luồng nhận diện từ VPU của OAK-D (qua ROS trong 1.8s gần nhất hoặc OAK-D trực tiếp có VPU queue),
                     # KHÔNG chạy fallback CPU để tránh làm nghẽn CPU 100% trên Jetson Nano
-                    vpu_active = (now - getattr(self, 'last_vpu_det_time', 0.0) < 1.8) or getattr(self.camera, 'is_oak_connected', False)
+                    vpu_has_queue = getattr(self.camera, '_oak_q_nn', None) is not None
+                    vpu_active = (now - getattr(self, 'last_vpu_det_time', 0.0) < 1.8) or (getattr(self.camera, 'is_oak_connected', False) and vpu_has_queue)
 
                     if not vpu_active:
                         frame = self.latest_raw_bgr
