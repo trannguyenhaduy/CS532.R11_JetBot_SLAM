@@ -34,4 +34,6 @@ dataset/collision/blocked/*.jpg
 models/*.pth
 models/*.trt
 models/*.onnx
+*.onnx
+*.pt
 

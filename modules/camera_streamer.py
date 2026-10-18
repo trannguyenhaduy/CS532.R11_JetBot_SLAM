@@ -33,6 +33,20 @@ MOBILENET_LABELS = [
     "motorbike", "person", "pottedplant", "sheep", "sofa", "train", "tvmonitor"
 ]
 
+# 80 nhãn lớp chuẩn của mô hình YOLO COCO trên VPU Myriad X
+COCO_80_LABELS = [
+    "person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck", "boat",
+    "traffic light", "fire hydrant", "stop sign", "parking meter", "bench", "bird", "cat",
+    "dog", "horse", "sheep", "cow", "elephant", "bear", "zebra", "giraffe", "backpack",
+    "umbrella", "handbag", "tie", "suitcase", "frisbee", "skis", "snowboard", "sports ball",
+    "kite", "baseball bat", "baseball glove", "skateboard", "surfboard", "tennis racket",
+    "bottle", "wine glass", "cup", "fork", "knife", "spoon", "bowl", "banana", "apple",
+    "sandwich", "orange", "broccoli", "carrot", "hot dog", "pizza", "donut", "cake", "chair",
+    "couch", "potted plant", "bed", "dining table", "toilet", "tv", "laptop", "mouse",
+    "remote", "keyboard", "cell phone", "microwave", "oven", "toaster", "sink", "refrigerator",
+    "book", "clock", "vase", "scissors", "teddy bear", "hair drier", "toothbrush"
+]
+
 try:
     import rospy
     from sensor_msgs.msg import Image as ROSImage
@@ -102,6 +116,7 @@ class CameraStreamer:
         self.latest_oak_depth = None
         self._cached_oak_frame = None
         self.latest_vpu_detections = []
+        self._vpu_model_type = 'mobilenet'
 
         # Đồng bộ luồng phát hình ảnh độ trễ thấp (Zero Latency Event & ID)
         import threading
@@ -258,41 +273,100 @@ class CameraStreamer:
                     print(f"⚠️ [OAK-D USB] Bỏ qua Stereo Depth: {ex_stereo}")
                     has_stereo = False
 
-                # Tích hợp mô hình VPU Spatial Detection Network nếu có sẵn blob trên Jetson Nano / Windows
+                # Tích hợp mô hình VPU Spatial Detection Network (Hỗ trợ cả YOLOv8/v6/v5/v4 và MobileNet-SSD)
                 has_vpu_nn = False
                 res_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "resources")
-                blob_candidates = [
+
+                yolo_candidates = [
+                    os.path.join(res_dir, "yolov8n.blob"),
+                    os.path.join(res_dir, "yolov8n_openvino_2022.1_6shave.blob"),
+                    os.path.join(res_dir, "yolov6n.blob"),
+                    os.path.join(res_dir, "yolov6n_coco_640x640.blob"),
+                    os.path.join(res_dir, "yolov5n.blob"),
+                    os.path.join(res_dir, "yolo-v4-tiny.blob"),
+                    "/home/jetbot/catkin_ws/src/depthai-ros/depthai_examples/resources/yolo-v4-tiny.blob",
+                ]
+                mobilenet_candidates = [
                     os.path.join(res_dir, "mobilenet-ssd.blob"),
                     os.path.join(res_dir, "mobilenet-ssd_openvino_2021.2_6shave.blob"),
                     "/home/jetbot/catkin_ws/src/depthai-ros/depthai_examples/resources/mobilenet-ssd_openvino_2021.2_6shave.blob",
                     "/home/jetbot/catkin_ws/src/depthai-ros/depthai_examples/resources/mobilenet-ssd.blob",
                 ]
-                chosen_blob = next((p for p in blob_candidates if os.path.exists(p)), None)
+
+                pref_model = str(getattr(config, 'AI_MODEL', 'yolo')).lower()
+                chosen_blob = None
+                is_yolo = False
+
+                if 'yolo' in pref_model:
+                    chosen_blob = next((p for p in yolo_candidates if os.path.exists(p)), None)
+                    if chosen_blob is not None:
+                        is_yolo = True
+                    else:
+                        chosen_blob = next((p for p in mobilenet_candidates if os.path.exists(p)), None)
+                        is_yolo = False
+                else:
+                    chosen_blob = next((p for p in mobilenet_candidates if os.path.exists(p)), None)
+                    if chosen_blob is not None:
+                        is_yolo = False
+                    else:
+                        chosen_blob = next((p for p in yolo_candidates if os.path.exists(p)), None)
+                        is_yolo = bool(chosen_blob is not None)
 
                 if chosen_blob is not None and has_stereo:
                     try:
-                        spatial_nn = pipeline.create(dai.node.MobileNetSpatialDetectionNetwork)
-                        spatial_nn.setBlobPath(chosen_blob)
-                        spatial_nn.setConfidenceThreshold(0.25)
-                        spatial_nn.input.setBlocking(False)
-                        spatial_nn.setBoundingBoxScaleFactor(0.5)
-                        spatial_nn.setDepthLowerThreshold(100)   # 10cm
-                        spatial_nn.setDepthUpperThreshold(5000)  # 5m
+                        if is_yolo and hasattr(dai.node, 'YoloSpatialDetectionNetwork'):
+                            spatial_nn = pipeline.create(dai.node.YoloSpatialDetectionNetwork)
+                            spatial_nn.setBlobPath(chosen_blob)
+                            spatial_nn.setConfidenceThreshold(0.35)
+                            spatial_nn.input.setBlocking(False)
+                            spatial_nn.setBoundingBoxScaleFactor(0.5)
+                            spatial_nn.setDepthLowerThreshold(100)   # 10cm
+                            spatial_nn.setDepthUpperThreshold(5000)  # 5m
+                            spatial_nn.setNumClasses(80)
+                            spatial_nn.setCoordinateSize(4)
+                            spatial_nn.setAnchors([10, 14, 23, 27, 37, 58, 81, 82, 135, 169, 344, 319])
+                            spatial_nn.setAnchorMasks({"side26": [1, 2, 3], "side13": [3, 4, 5]})
+                            spatial_nn.setIouThreshold(0.5)
 
-                        manip = pipeline.create(dai.node.ImageManip)
-                        manip.initialConfig.setResize(300, 300)
-                        manip.initialConfig.setFrameType(dai.RawImgFrame.Type.BGR888p)
-                        manip.inputConfig.setWaitForMessage(False)
+                            manip = pipeline.create(dai.node.ImageManip)
+                            manip.initialConfig.setResize(416, 416)
+                            manip.initialConfig.setFrameType(dai.RawImgFrame.Type.BGR888p)
+                            manip.inputConfig.setWaitForMessage(False)
 
-                        cam_rgb.preview.link(manip.inputImage)
-                        manip.out.link(spatial_nn.input)
-                        stereo.depth.link(spatial_nn.inputDepth)
+                            cam_rgb.preview.link(manip.inputImage)
+                            manip.out.link(spatial_nn.input)
+                            stereo.depth.link(spatial_nn.inputDepth)
 
-                        xout_nn = pipeline.create(dai.node.XLinkOut)
-                        xout_nn.setStreamName("nn")
-                        spatial_nn.out.link(xout_nn.input)
-                        has_vpu_nn = True
-                        print(f"🧠 [OAK-D VPU] Đã kết nối mạng VPU MobileNet-SSD: {chosen_blob}")
+                            xout_nn = pipeline.create(dai.node.XLinkOut)
+                            xout_nn.setStreamName("nn")
+                            spatial_nn.out.link(xout_nn.input)
+                            has_vpu_nn = True
+                            self._vpu_model_type = 'yolo'
+                            print(f"🧠 [OAK-D VPU] Đã kết nối mạng VPU YOLO (80 lớp COCO, bám khít): {os.path.basename(chosen_blob)}")
+                        else:
+                            spatial_nn = pipeline.create(dai.node.MobileNetSpatialDetectionNetwork)
+                            spatial_nn.setBlobPath(chosen_blob)
+                            spatial_nn.setConfidenceThreshold(0.25)
+                            spatial_nn.input.setBlocking(False)
+                            spatial_nn.setBoundingBoxScaleFactor(0.5)
+                            spatial_nn.setDepthLowerThreshold(100)   # 10cm
+                            spatial_nn.setDepthUpperThreshold(5000)  # 5m
+
+                            manip = pipeline.create(dai.node.ImageManip)
+                            manip.initialConfig.setResize(300, 300)
+                            manip.initialConfig.setFrameType(dai.RawImgFrame.Type.BGR888p)
+                            manip.inputConfig.setWaitForMessage(False)
+
+                            cam_rgb.preview.link(manip.inputImage)
+                            manip.out.link(spatial_nn.input)
+                            stereo.depth.link(spatial_nn.inputDepth)
+
+                            xout_nn = pipeline.create(dai.node.XLinkOut)
+                            xout_nn.setStreamName("nn")
+                            spatial_nn.out.link(xout_nn.input)
+                            has_vpu_nn = True
+                            self._vpu_model_type = 'mobilenet'
+                            print(f"🧠 [OAK-D VPU] Đã kết nối mạng VPU MobileNet-SSD: {os.path.basename(chosen_blob)}")
                     except Exception as ex_nn:
                         print(f"ℹ️ [OAK-D VPU] Bỏ qua nạp VPU NN ({ex_nn}), sử dụng thị giác tiêu chuẩn.")
                         has_vpu_nn = False
@@ -410,8 +484,10 @@ class CameraStreamer:
             # Xử lý kết quả nhận diện từ chip VPU OAK-D
             if in_nn is not None and hasattr(in_nn, 'detections'):
                 vpu_dets = []
+                is_yolo_model = getattr(self, '_vpu_model_type', 'mobilenet') == 'yolo'
+                labels_map = COCO_80_LABELS if is_yolo_model else MOBILENET_LABELS
                 for d in in_nn.detections:
-                    lbl = MOBILENET_LABELS[d.label] if (hasattr(d, 'label') and d.label < len(MOBILENET_LABELS)) else "OBJECT"
+                    lbl = labels_map[d.label] if (hasattr(d, 'label') and d.label < len(labels_map)) else "OBJECT"
                     x_m = round(float(d.spatialCoordinates.x) / 1000.0, 2)
                     y_m = round(float(d.spatialCoordinates.y) / 1000.0, 2)
                     z_m = round(float(d.spatialCoordinates.z) / 1000.0, 2)
