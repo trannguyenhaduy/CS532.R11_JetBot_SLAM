@@ -89,9 +89,9 @@ class EmergencyBrake:
             # Lấy phân vị 15%: Bắt chính xác mép cản gần nhất trước mặt
             clearance = float(np.percentile(valid, 15))
             self.last_clearance_m = round(clearance, 2)
-        elif roi_m.size > 0 and (np.count_nonzero(roi_m < 0.08) / float(roi_m.size)) > 0.60 and self.last_clearance_m <= (self.brake_dist_m + 0.04):
-            # HIỆN TƯỢNG ĐIỂM MÙ STEREO: Chỉ kích hoạt khi robot ĐÃ Ở CỰ LY ÁP SÁT (<= 24cm) rồi mất điểm đo
-            self.last_clearance_m = round(self.brake_dist_m * 0.90, 2)
+        elif roi_m.size > 0 and (np.count_nonzero(roi_m < 0.08) / float(roi_m.size)) > 0.60 and self.last_clearance_m <= (self.brake_dist_m + 0.15):
+            # HIỆN TƯỢNG ĐIỂM MÙ STEREO: Kích hoạt khi vật cản lọt vào cự ly áp sát (< 35cm) rồi mất điểm đo
+            self.last_clearance_m = round(self.brake_dist_m * 0.85, 2)
         else:
             # Đường thoáng (không có cản trong hành lang)
             self.last_clearance_m = 99.0

@@ -174,7 +174,7 @@ class TemporalTracker:
 
 
 class SpatialPerceptionEngine:
-    DEPTH_MIN = 0.15
+    DEPTH_MIN = 0.06
     DEPTH_MAX = 10.00
 
     def __init__(self):
@@ -614,10 +614,10 @@ class SpatialPerceptionEngine:
 
         # Fallback khi dùng Webcam Laptop hoặc khi ảnh depth chưa kịp hội tụ
         if fallback_detections:
-            front_objs = [d for d in fallback_detections if abs(d.get('x', 0.0)) <= 0.28 and d.get('z', 99) > 0.08]
+            front_objs = [d for d in fallback_detections if abs(d.get('x', 0.0)) <= 0.35 and d.get('z', 99) > 0.04]
             if front_objs:
                 min_z = min(d['z'] for d in front_objs)
-                dist_m = round(max(0.18, min_z), 2)
+                dist_m = round(max(0.08, min_z), 2)
                 cls._last_obstacle_dist = dist_m
                 return dist_m
 

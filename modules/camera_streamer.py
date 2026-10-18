@@ -626,11 +626,7 @@ class CameraStreamer:
                         y_raw = float(d.spatialCoordinates.y)
                         z_raw = float(d.spatialCoordinates.z)
                     except Exception:
-                        continue
-
-                    # Bỏ qua tọa độ bất thường (NaN / Inf) hoặc độ sâu ngoài dải [8cm - 4.5m]
-                    if math.isnan(z_raw) or math.isinf(z_raw) or z_raw < 80.0 or z_raw > 4500.0:
-                        continue
+                        x_raw, y_raw, z_raw = 0.0, 0.0, 0.0
 
                     bx1 = max(0, min(fw - 2, int(round(d.xmin * fw))))
                     by1 = max(0, min(fh - 2, int(round(d.ymin * fh))))
@@ -641,8 +637,18 @@ class CameraStreamer:
                     if (bx2 - bx1) < 18 or (by2 - by1) < 18:
                         continue
 
-                    # Đo khoảng cách thực tế chính xác bằng ma trận Depth bên trong bounding box
-                    z_m = round(z_raw / 1000.0, 2)
+                    # Bỏ qua nếu cự ly quá xa (> 4.5m)
+                    if not math.isnan(z_raw) and not math.isinf(z_raw) and z_raw > 4500.0:
+                        continue
+
+                    # Ước lượng khoảng cách quang học dự phòng khi vật cản áp sát sát mũi xe (< 35cm)
+                    d_optical = max(bx2 - bx1, int((by2 - by1) * 0.65))
+                    z_opt = round(float(450.0 * 0.26 / max(20, d_optical)), 2)
+                    z_fallback_close = max(0.08, min(0.35, z_opt))
+
+                    z_m = z_fallback_close
+                    has_valid_depth = False
+
                     if depth is not None and isinstance(depth, np.ndarray):
                         dh, dw = depth.shape[:2]
                         du1 = max(0, min(dw - 1, int(round(bx1 * dw / fw))))
@@ -660,16 +666,15 @@ class CameraStreamer:
                         # Lọc các điểm đo hợp lệ từ 80mm (8cm) đến 4500mm (4.5m)
                         valid_pts = roi_d[(roi_d >= 80) & (roi_d <= 4500)]
                         if len(valid_pts) >= 4:
-                            # Phân vị 20%: Lấy mép trước gần nhất của vật thể
                             z_m = round(float(np.percentile(valid_pts, 20)) / 1000.0, 2)
-                        elif z_raw >= 80.0:
+                            has_valid_depth = True
+
+                    if not has_valid_depth:
+                        if not math.isnan(z_raw) and not math.isinf(z_raw) and 80.0 <= z_raw <= 4500.0:
                             z_m = round(z_raw / 1000.0, 2)
                         else:
-                            # Ước lượng quang học hình học dự phòng khi điểm stereo bị bóng che sát mũi xe
-                            d_optical = max(bx2 - bx1, int((by2 - by1) * 0.65))
-                            if d_optical > 20:
-                                z_opt = round(float(450.0 * 0.26 / d_optical), 2)
-                                z_m = max(0.15, min(3.5, z_opt))
+                            # Vật cản ở cự ly áp sát < 35cm trong điểm mù stereo
+                            z_m = z_fallback_close
 
                     # Tọa độ không gian (x, y) chuẩn xác theo hình học quang học camera
                     u_center = (bx1 + bx2) / 2.0
