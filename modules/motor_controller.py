@@ -181,13 +181,14 @@ class JetBotLibDriver:
 
 class MotorController:
     """Bộ điều khiển động cơ vi sai với Phanh an toàn, Watchdog & Đảo kênh chuẩn Waveshare"""
-    def __init__(self, bus_num=1, addr=0x60, wheel_sep=0.12, max_v=0.35, max_w=1.20, brake_dist=0.35,
+    def __init__(self, bus_num=1, addr=0x60, wheel_sep=0.12, max_v=0.35, max_w=1.20, brake_dist=0.20,
                  swap_motors=False, invert_linear=False, invert_left=False, invert_right=False,
                  enable_brake=True):
         self.wheel_sep = wheel_sep
         self.max_v = max_v
         self.max_w = max_w
-        self.brake_dist = brake_dist
+        self.brake_dist = float(brake_dist)
+        self.warn_dist = 0.40
         self.swap_motors = swap_motors
         self.invert_linear = invert_linear
         self.invert_left = invert_left
@@ -204,6 +205,8 @@ class MotorController:
             import config
             self.trim_left = float(getattr(config, 'MOTOR_TRIM_LEFT', 1.0))
             self.trim_right = float(getattr(config, 'MOTOR_TRIM_RIGHT', 1.0))
+            self.brake_dist = float(getattr(config, 'SAFETY_BRAKE_DIST_M', self.brake_dist))
+            self.warn_dist = float(getattr(config, 'SAFETY_WARNING_DIST_M', 0.40))
         except Exception:
             self.trim_left = 1.0
             self.trim_right = 1.0

@@ -23,10 +23,10 @@ if hasattr(sys.stdout, 'reconfigure'):
 class EmergencyBrake:
     """Bộ giám sát an toàn và Phanh khẩn cấp Virtual Bumper cho JetBot"""
 
-    def __init__(self, brake_dist_m=0.22, warning_dist_m=0.45, min_pts_threshold=20, is_enabled=False):
+    def __init__(self, brake_dist_m=0.20, warning_dist_m=0.40, min_pts_threshold=8, is_enabled=False):
         """
-        :param brake_dist_m: Ngưỡng cự ly phanh an toàn (mặc định 22cm = 0.22m)
-        :param warning_dist_m: Ngưỡng cảnh báo giảm tốc từ từ (mặc định 45cm = 0.45m)
+        :param brake_dist_m: Ngưỡng cự ly phanh an toàn (mặc định 20cm = 0.20m)
+        :param warning_dist_m: Ngưỡng cảnh báo giảm tốc từ từ (mặc định 40cm = 0.40m)
         :param min_pts_threshold: Số điểm ảnh cản tối thiểu để xác nhận (chống nhiễu hạt)
         :param is_enabled: Bật/Tắt can thiệp phanh (Mặc định False để lái tự do)
         """
@@ -71,7 +71,7 @@ class EmergencyBrake:
         else:
             roi_m = roi.astype(np.float32)
 
-        valid_mask = (roi_m >= 0.10) & (roi_m <= 3.5)
+        valid_mask = (roi_m >= 0.08) & (roi_m <= 3.5)
 
         # Lọc cao độ hình học so với mặt sàn: Chỉ lấy điểm cao hơn sàn >= 4cm (0.04m) và <= 85cm (0.85m)
         num_rows = h_end - h_start
@@ -89,9 +89,9 @@ class EmergencyBrake:
             # Lấy phân vị 15%: Bắt chính xác mép cản gần nhất trước mặt
             clearance = float(np.percentile(valid, 15))
             self.last_clearance_m = round(clearance, 2)
-        elif roi_m.size > 0 and (np.count_nonzero(roi_m < 0.10) / float(roi_m.size)) > 0.45 and self.last_clearance_m <= 0.45:
-            # HIỆN TƯỢNG ĐIỂM MÙ STEREO: Khi vật cản che kín >45% hành lang trước mắt ở cự ly áp sát
-            self.last_clearance_m = 0.18
+        elif roi_m.size > 0 and (np.count_nonzero(roi_m < 0.08) / float(roi_m.size)) > 0.60 and self.last_clearance_m <= (self.brake_dist_m + 0.04):
+            # HIỆN TƯỢNG ĐIỂM MÙ STEREO: Chỉ kích hoạt khi robot ĐÃ Ở CỰ LY ÁP SÁT (<= 24cm) rồi mất điểm đo
+            self.last_clearance_m = round(self.brake_dist_m * 0.90, 2)
         else:
             # Đường thoáng (không có cản trong hành lang)
             self.last_clearance_m = 99.0
@@ -185,7 +185,7 @@ if __name__ == '__main__':
     # KỊCH BẢN 5: Bắt điểm mù Stereo khi tiến sát vật cản
     c5 = brake.calculate_clearance(fake_floor_zeros) # brake đang có last_clearance_m = 0.14m từ test 2
     v5, w5, alert5 = brake.evaluate_velocity(0.20, 0.0, c5)
-    print(f"  ├─ Test 5 (Khóa điểm mù khi lọt vào vùng <35cm): Cự ly={c5}m -> Lệnh v={v5}m/s [{alert5}]")
+    print(f"  ├─ Test 5 (Khóa điểm mù khi lọt vào vùng áp sát <20cm): Cự ly={c5}m -> Lệnh v={v5}m/s [{alert5}]")
     assert alert5 in ("WARNING", "EMERGENCY_STOP"), "Lỗi: Không khóa điểm mù khi mất dấu cản sát mũi!"
 
     print("═" * 70)

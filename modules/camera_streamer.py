@@ -272,7 +272,7 @@ class CameraStreamer:
                     stereo.setDefaultProfilePreset(dai.node.StereoDepth.PresetMode.HIGH_DENSITY)
                     stereo.initialConfig.setMedianFilter(dai.MedianFilter.KERNEL_5x5) # KERNEL_5x5 nhanh gấp đôi 7x7
                     stereo.setLeftRightCheck(True)
-                    stereo.setExtendedDisparity(False) # Tắt quét lặp 192 disparity, mở khóa 25-30 FPS phần cứng VPU
+                    stereo.setExtendedDisparity(True) # Mở rộng 190 disparity: đo cự ly sát mũi xe từ 15cm - 35cm chính xác tuyệt đối
 
                     mono_l.out.link(stereo.left)
                     mono_r.out.link(stereo.right)
@@ -645,11 +645,19 @@ class CameraStreamer:
                         c_v1 = dv1 + int(box_h * 0.20)
                         c_v2 = dv2 - int(box_h * 0.20)
                         roi_d = depth[c_v1:c_v2, c_u1:c_u2]
-                        # Lọc các điểm đo hợp lệ từ 100mm (10cm) đến 4500mm (4.5m)
-                        valid_pts = roi_d[(roi_d >= 100) & (roi_d <= 4500)]
-                        if len(valid_pts) >= 10:
+                        # Lọc các điểm đo hợp lệ từ 80mm (8cm) đến 4500mm (4.5m)
+                        valid_pts = roi_d[(roi_d >= 80) & (roi_d <= 4500)]
+                        if len(valid_pts) >= 4:
                             # Phân vị 20%: Lấy mép trước gần nhất của vật thể
                             z_m = round(float(np.percentile(valid_pts, 20)) / 1000.0, 2)
+                        elif z_raw >= 80.0:
+                            z_m = round(z_raw / 1000.0, 2)
+                        else:
+                            # Ước lượng quang học hình học dự phòng khi điểm stereo bị bóng che sát mũi xe
+                            d_optical = max(bx2 - bx1, int((by2 - by1) * 0.65))
+                            if d_optical > 20:
+                                z_opt = round(float(450.0 * 0.26 / d_optical), 2)
+                                z_m = max(0.15, min(3.5, z_opt))
 
                     # Tọa độ không gian (x, y) chuẩn xác theo hình học quang học camera
                     u_center = (bx1 + bx2) / 2.0

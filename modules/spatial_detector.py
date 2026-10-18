@@ -593,7 +593,7 @@ class SpatialPerceptionEngine:
                 else:
                     roi_m = roi.astype(np.float32)
 
-                valid_mask = (roi_m >= 0.10) & (roi_m <= 3.5)
+                valid_mask = (roi_m >= 0.08) & (roi_m <= 3.5)
                 num_rows = h_end - h_start
                 cy = dh / 2.0
                 fy = dh * 0.9375
@@ -603,12 +603,12 @@ class SpatialPerceptionEngine:
 
                 obs_mask = valid_mask & (z_height_above_floor >= 0.04) & (z_height_above_floor <= 0.85)
                 valid = roi_m[obs_mask]
-                if len(valid) >= 20:
+                if len(valid) >= 8:
                     dist_m = round(float(np.percentile(valid, 15)), 2)
                     cls._last_obstacle_dist = dist_m
                     return dist_m
-                elif roi_m.size > 0 and (np.count_nonzero(roi_m < 0.10) / float(roi_m.size)) > 0.45 and (cls._last_obstacle_dist is not None and cls._last_obstacle_dist <= 0.45):
-                    # Điểm mù stereo: vật cản che kín phía trước ở cự ly áp sát
+                elif roi_m.size > 0 and (np.count_nonzero(roi_m < 0.08) / float(roi_m.size)) > 0.60 and (cls._last_obstacle_dist is not None and cls._last_obstacle_dist <= 0.24):
+                    # Điểm mù stereo: vật cản che kín phía trước ở cự ly áp sát (<= 24cm)
                     cls._last_obstacle_dist = 0.18
                     return 0.18
 
