@@ -278,12 +278,8 @@ class CameraStreamer:
                 res_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "resources")
 
                 yolo_candidates = [
-                    os.path.join(res_dir, "yolov8n.blob"),
-                    os.path.join(res_dir, "yolov8n_openvino_2022.1_6shave.blob"),
-                    os.path.join(res_dir, "yolov6n.blob"),
-                    os.path.join(res_dir, "yolov6n_coco_640x640.blob"),
-                    os.path.join(res_dir, "yolov5n.blob"),
                     os.path.join(res_dir, "yolo-v4-tiny.blob"),
+                    os.path.join(res_dir, "yolo-v4-tiny-tf.blob"),
                     "/home/jetbot/catkin_ws/src/depthai-ros/depthai_examples/resources/yolo-v4-tiny.blob",
                 ]
                 mobilenet_candidates = [
