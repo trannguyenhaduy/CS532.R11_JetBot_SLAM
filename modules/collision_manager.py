@@ -587,9 +587,11 @@ class CollisionManager:
         except Exception as e:
             return 1.0, 0.0
 
-    def compute_avoidance_cmd(self, prob_blocked, base_speed=0.06, turn_speed=0.85):
+    def compute_avoidance_cmd(self, prob_blocked, base_speed=0.05, turn_speed=0.40):
         """
         Tính toán lệnh vận tốc vi sai (v, w) theo logic chuẩn của notebook live_demo.ipynb:
+        - Giảm tốc độ quay chậm rãi (turn_speed=0.40 rad/s ~ 23 deg/s) để camera quét kỹ từng góc nhìn,
+          không bị quay giật quá nhanh làm lướt qua (miss) các ngã rẽ, cửa mở hoặc khoảng trống trước mặt.
         - Chuẩn NVIDIA JetBot:
             if prob_blocked < 0.50:
                 robot.forward(speed)
@@ -607,12 +609,12 @@ class CollisionManager:
             v = base_speed
             w = 0.0
             desc = f"TIẾN THẲNG (Đường thoáng {int(self.last_prob_free*100)}%)"
-        # ── 2. GẶP CẢN (>= 0.50): DỪNG TIẾN VÀ QUAY NÉ TẠI CHỖ ──
+        # ── 2. GẶP CẢN (>= 0.50): DỪNG TIẾN VÀ QUAY CHẬM RÃI DÒ ĐƯỜNG ──
         else:
             v = 0.0
             w = turn_speed * self.avoid_turn_dir
             side_str = "TRÁI ↺" if self.avoid_turn_dir > 0 else "PHẢI ↻"
-            desc = f"🛑 GẶP CẢN ({int(prob_blocked*100)}%) -> QUAY {side_str}"
+            desc = f"🛑 GẶP CẢN ({int(prob_blocked*100)}%) -> QUAY CHẬM DÒ ĐƯỜNG {side_str}"
 
         self.last_action_desc = desc
         return v, w, desc

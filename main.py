@@ -1325,7 +1325,7 @@ class JetBotMasterSystem:
                     frame = self.latest_raw_bgr if self.latest_raw_bgr is not None else (getattr(self.camera, 'latest_bgr', None) if self.camera else None)
                     if frame is not None:
                         p_free, p_blocked = self.collision_mgr.predict(frame)
-                        v, w, desc = self.collision_mgr.compute_avoidance_cmd(p_blocked)
+                        v, w, desc = self.collision_mgr.compute_avoidance_cmd(p_blocked, base_speed=0.05, turn_speed=0.40)
                         if v is not None and w is not None:
                             # Khóa an toàn Virtual Bumper phanh cứng nếu có
                             if self.safety_brake and self.safety_brake.is_enabled and v > 0.01:
@@ -2512,14 +2512,14 @@ class JetBotMasterSystem:
              để khóa kiên cố toàn bộ các ô tường mốc thành 'Bờ Tường Bất Tử' (Immutable Anchor Walls).
            - Các bức tường mốc này không bao giờ bị xóa hay ăn mòn bởi các tia quét sau này.
         """
-        steps = 8
-        step_deg = 45.0
-        total_time_est = steps * (1.2 + 0.45)
+        steps = 12
+        step_deg = 30.0
+        total_time_est = steps * (1.1 + 0.55)
         self.auto_scan_duration = total_time_est
         self.auto_scan_remaining = total_time_est
         t_start_total = time.time()
 
-        print("🔄 [STEPPED 360° SCAN] Bắt đầu chu trình quét toàn cảnh 8 nấc x 45° Dừng-Chụp...")
+        print("🔄 [STEPPED 360° SCAN] Bắt đầu chu trình quét toàn cảnh 12 nấc x 30° Dừng-Chụp kỹ lưỡng (không bỏ sót cửa/lối đi)...")
 
         try:
             with self.lock:
@@ -2528,9 +2528,9 @@ class JetBotMasterSystem:
                 anchor_yaw = self.robot_yaw
 
             # Nấc 0 (Tại góc xuất phát 0°): Dừng tĩnh để chụp bức tường mốc ban đầu từ tâm neo
-            time.sleep(0.35)
+            time.sleep(0.40)
             self._capture_static_scan_keyframe(anchor_x, anchor_y, anchor_yaw)
-            print("📸 [NẤC 1/8] Đã ghi nhận khung hình mốc ban đầu tại 0°.")
+            print("📸 [NẤC 1/12] Đã ghi nhận khung hình mốc ban đầu tại 0°.")
 
             for i in range(1, steps + 1):
                 if not self.is_auto_scanning:
@@ -2539,9 +2539,9 @@ class JetBotMasterSystem:
 
                 target_heading_deg = i * step_deg
                 pct_done = int((i - 1) / steps * 100)
-                print(f" ▶️ [NẤC {i}/{steps}] Đang quay 45° CCW hướng tới mốc {target_heading_deg:.0f}°... ({pct_done}%)")
+                print(f" ▶️ [NẤC {i}/{steps}] Đang quay 30° CCW hướng tới mốc {target_heading_deg:.0f}°... ({pct_done}%)")
 
-                # 1. Quay 45 độ CCW bằng _step_worker (đồng bộ chuẩn xác theo STEP_TURN_MIN_PWM)
+                # 1. Quay 30 độ CCW bằng _step_worker (đồng bộ chuẩn xác theo STEP_TURN_MIN_PWM)
                 with self.lock:
                     self.is_step_running = True
                     self.step_move_type = 'turn'
@@ -2564,7 +2564,7 @@ class JetBotMasterSystem:
                     self.robot_yaw = step_target_yaw
                     self.current_v = 0.0
                     self.current_w = 0.0
-                time.sleep(0.45)
+                time.sleep(0.55)
 
                 # 3. Chụp và cập nhật Keyframe tĩnh vào bản đồ Occupancy Grid từ tâm neo chuẩn xác
                 self._capture_static_scan_keyframe(anchor_x, anchor_y, step_target_yaw)

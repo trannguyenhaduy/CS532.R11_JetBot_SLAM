@@ -111,12 +111,12 @@ MANUAL_DECEL_TIME_MS     = 180   # Thời gian hạ dốc mượt mà (180ms) d�
 STEP_USE_ACTIVE_BRAKE    = False # False: Ngắt êm tự nhiên (không giật ngược). True: Dùng xung phanh ngược cứng
 # ─── THÔNG SỐ TỰ HÀNH BÁM ĐƯỜNG (AUTONOMOUS NAVIGATOR & PATH FOLLOWER) ───────────
 ENABLE_AUTONOMOUS_NAVIGATOR = True  # Bật bộ điều khiển bám đường tự hành A*
-NAV_LINEAR_SPEED            = 0.12  # Vận tốc tiến tự hành (m/s) ~15-20% PWM đầm xe
-NAV_TURN_SPEED              = 1.20  # Vận tốc quay tại chỗ (rad/s) ~11-13% PWM êm ái
+NAV_LINEAR_SPEED            = 0.10  # Vận tốc tiến tự hành (m/s) đầm xe, ổn định camera
+NAV_TURN_SPEED              = 0.70  # Vận tốc quay tại chỗ (rad/s ~ 40 deg/s) êm dịu, không giật mất đường
 NAV_GOAL_TOLERANCE_M        = 0.06  # Bán kính chạm đích dừng xe (6cm)
 NAV_WAYPOINT_TOLERANCE_M    = 0.10  # Bán kính chuyển waypoint tiếp theo (10cm)
 NAV_HEADING_TOLERANCE_RAD   = 0.35  # Dung sai góc lệch (~20 độ) trước khi chuyển từ quay sang tiến
-NAV_KP_ANGULAR              = 1.6   # Hệ số P chỉnh lái bám đường
+NAV_KP_ANGULAR              = 1.4   # Hệ số P chỉnh lái bám đường mượt mà
 ENABLE_FRAME_RECORDER       = False # True: Ghi frame chẩn đoán xuống thư mục logs khi di chuyển
 
 # ══════════════════════════════════════════════════════════════════════════════
