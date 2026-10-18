@@ -641,12 +641,12 @@ class CameraStreamer:
                     if not math.isnan(z_raw) and not math.isinf(z_raw) and z_raw > 4500.0:
                         continue
 
-                    # Ước lượng khoảng cách quang học dự phòng khi vật cản áp sát sát mũi xe (< 35cm)
+                    # Ước lượng khoảng cách quang học dự phòng
                     d_optical = max(bx2 - bx1, int((by2 - by1) * 0.65))
                     z_opt = round(float(450.0 * 0.26 / max(20, d_optical)), 2)
-                    z_fallback_close = max(0.08, min(0.35, z_opt))
+                    z_fallback = max(0.08, min(3.5, z_opt))
 
-                    z_m = z_fallback_close
+                    z_m = z_fallback
                     has_valid_depth = False
 
                     if depth is not None and isinstance(depth, np.ndarray):
@@ -673,8 +673,7 @@ class CameraStreamer:
                         if not math.isnan(z_raw) and not math.isinf(z_raw) and 80.0 <= z_raw <= 4500.0:
                             z_m = round(z_raw / 1000.0, 2)
                         else:
-                            # Vật cản ở cự ly áp sát < 35cm trong điểm mù stereo
-                            z_m = z_fallback_close
+                            z_m = z_fallback
 
                     # Tọa độ không gian (x, y) chuẩn xác theo hình học quang học camera
                     u_center = (bx1 + bx2) / 2.0
