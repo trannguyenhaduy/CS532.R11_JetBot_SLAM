@@ -106,11 +106,16 @@ class TemporalTracker:
                 if bbox and old_bbox:
                     iou_val = compute_box_iou(bbox, old_bbox)
                     if iou_val > 0.20:
-                        sbx1 = int(round(0.55 * bbox[0] + 0.45 * old_bbox[0]))
-                        sby1 = int(round(0.55 * bbox[1] + 0.45 * old_bbox[1]))
-                        sbx2 = int(round(0.55 * bbox[2] + 0.45 * old_bbox[2]))
-                        sby2 = int(round(0.55 * bbox[3] + 0.45 * old_bbox[3]))
-                        smooth_bbox = [sbx1, sby1, sbx2, sby2]
+                        # Deadband filter: nếu box chỉ rung lắc nhẹ (< 5px), giữ nguyên để triệt tiêu hoàn toàn rung giật
+                        max_diff = max(abs(bbox[i] - old_bbox[i]) for i in range(4))
+                        if max_diff < 5:
+                            smooth_bbox = list(old_bbox)
+                        else:
+                            sbx1 = int(round(0.40 * bbox[0] + 0.60 * old_bbox[0]))
+                            sby1 = int(round(0.40 * bbox[1] + 0.60 * old_bbox[1]))
+                            sbx2 = int(round(0.40 * bbox[2] + 0.60 * old_bbox[2]))
+                            sby2 = int(round(0.40 * bbox[3] + 0.60 * old_bbox[3]))
+                            smooth_bbox = [sbx1, sby1, sbx2, sby2]
                     else:
                         smooth_bbox = [int(v) for v in bbox]
                 elif bbox:
@@ -192,10 +197,17 @@ class SpatialPerceptionEngine:
         self._last_dnn_time = 0.0
         self._cached_dnn_boxes = []
 
-        # Ưu tiên nhận diện 100% bằng phần cứng VPU OAK-D (Myriad X) để tiết kiệm tài nguyên.
-        # Tuyệt đối không nạp PyTorch MobileNet lên CPU nhằm triệt tiêu hiện tượng nghẽn CPU 100% trên Jetson Nano.
-        self._dnn_model = None
-        self._coco_labels = None
+        self._yolo_model = None
+        self._last_yolo_time = 0.0
+        self._cached_yolo_boxes = []
+
+        # Tự động nạp YOLOv8 nếu có thư viện ultralytics (chạy trên PC test mượt mà, khung bám dính như YOLOv6)
+        try:
+            from ultralytics import YOLO
+            self._yolo_model = YOLO('yolov8n.pt')
+            print("🧠 [SPATIAL AI] Đã kích hoạt mô hình YOLOv8-Nano (Khung ổn định, chống rung giật 100%)!")
+        except Exception:
+            self._yolo_model = None
 
         try:
             import os
@@ -329,73 +341,30 @@ class SpatialPerceptionEngine:
 
         found_boxes = []
 
-        # ─── 1. ƯU TIÊN 1: NHẬN DIỆN THỰC THẾ BẰNG MÔ HÌNH AI 80 LỚP COCO (MOBILE-NET V3) ───
-        if self._dnn_model is not None:
+        # ─── 1. ƯU TIÊN 1: NHẬN DIỆN THỰC THẾ BẰNG MÔ HÌNH AI YOLO (KHUNG BÁM KHÍT NHƯ YOLOV6) ───
+        if self._yolo_model is not None:
             now = time.time()
-            if (now - self._last_dnn_time >= 0.05) or not self._cached_dnn_boxes:
-                self._last_dnn_time = now
+            if (now - getattr(self, '_last_yolo_time', 0.0) >= 0.06) or not getattr(self, '_cached_yolo_boxes', []):
+                self._last_yolo_time = now
                 try:
-                    import torch
-                    infer_w, infer_h = 320, 240
-                    resized_bgr = cv2.resize(bgr_img, (infer_w, infer_h))
-                    rgb = cv2.cvtColor(resized_bgr, cv2.COLOR_BGR2RGB)
-                    tensor_img = torch.from_numpy(rgb.transpose((2, 0, 1))).float() / 255.0
-                    with torch.no_grad():
-                        preds = self._dnn_model([tensor_img])[0]
-
-                    boxes = preds['boxes'].cpu().numpy()
-                    scores = preds['scores'].cpu().numpy()
-                    labels = preds['labels'].cpu().numpy()
-
-                    scale_x = w / float(infer_w)
-                    scale_y = h / float(infer_h)
-
-                    dnn_boxes = []
-                    for box, score, lbl_idx in zip(boxes, scores, labels):
-                        if score < 0.35:
-                            continue
-                        cat_raw = self._coco_labels[lbl_idx] if (self._coco_labels and lbl_idx < len(self._coco_labels)) else "OBJ"
-                        raw_upper = str(cat_raw).upper()
-
-                        # Chuẩn hóa tên lớp COCO
-                        if raw_upper in ["CHAIR", "COUCH", "SOFA"]:
-                            final_name = "CHAIR"
-                        elif raw_upper in ["DINING TABLE", "TABLE", "DESK"]:
-                            final_name = "TABLE"
-                        elif raw_upper in ["BOTTLE"]:
-                            final_name = "BOTTLE"
-                        elif raw_upper in ["CUP", "WINE GLASS"]:
-                            final_name = "CUP"
-                        elif raw_upper in ["LAPTOP", "TVMONITOR", "TV"]:
-                            final_name = "LAPTOP"
-                        elif raw_upper in ["CELL PHONE"]:
-                            final_name = "CELL PHONE"
-                        elif raw_upper in ["BACKPACK", "HANDBAG", "SUITCASE"]:
-                            final_name = "BACKPACK"
-                        elif raw_upper in ["PERSON"]:
-                            final_name = "PERSON"
-                        elif raw_upper in ["BOOK"]:
-                            final_name = "BOOK"
-                        else:
-                            final_name = raw_upper
-
-                        bx1 = max(0, min(w - 1, int(box[0] * scale_x)))
-                        by1 = max(0, min(h - 1, int(box[1] * scale_y)))
-                        bx2 = max(0, min(w - 1, int(box[2] * scale_x)))
-                        by2 = max(0, min(h - 1, int(box[3] * scale_y)))
-                        bw = max(10, bx2 - bx1)
-                        bh = max(10, by2 - by1)
-                        dnn_boxes.append((bx1, by1, bw, bh, final_name, float(score)))
-
-                    self._cached_dnn_boxes = dnn_boxes
+                    res = self._yolo_model(bgr_img, imgsz=320, verbose=False, conf=0.35)[0]
+                    y_boxes = []
+                    for box in res.boxes:
+                        cls_id = int(box.cls[0].item())
+                        score = float(box.conf[0].item())
+                        raw_name = res.names.get(cls_id, "OBJ").upper()
+                        x1, y1, x2, y2 = [int(v.item()) for v in box.xyxy[0]]
+                        bw = max(10, x2 - x1)
+                        bh = max(10, y2 - y1)
+                        y_boxes.append((x1, y1, bw, bh, raw_name, score))
+                    self._cached_yolo_boxes = y_boxes
                 except Exception:
                     pass
+            if getattr(self, '_cached_yolo_boxes', None):
+                found_boxes = list(self._cached_yolo_boxes)
 
-            if self._cached_dnn_boxes:
-                found_boxes = list(self._cached_dnn_boxes)
-
-        # ─── 1.5. HOG PEOPLE DETECTOR (OPENCV CHUẨN, 100% OFFLINE KHÔNG CẦN MODEL NGOÀI) ───
-        if self.hog is not None and not any(b[4] == 'PERSON' for b in found_boxes):
+        # ─── 1.5. HOG PEOPLE DETECTOR (CHỈ DÙNG KHI KHÔNG CÓ YOLO) ───
+        if self._yolo_model is None and self.hog is not None and not any(b[4] == 'PERSON' for b in found_boxes):
             now = time.time()
             if (now - self._last_hog_time >= 0.08) or not self._cached_hog_boxes:
                 self._last_hog_time = now
@@ -417,9 +386,9 @@ class SpatialPerceptionEngine:
             if self._cached_hog_boxes:
                 found_boxes.extend(self._cached_hog_boxes)
 
-        # ─── 1.6. PHÁT HIỆN KHUÔN MẶT HAAR CASCADE TRƯỚC ĐỂ KHÓA CHÍNH XÁC "PERSON" ───
+        # ─── 1.6. PHÁT HIỆN KHUÔN MẶT HAAR CASCADE (CHỈ DÙNG KHI KHÔNG CÓ YOLO) ───
         detected_faces = []
-        if self.face_cascade is not None:
+        if self._yolo_model is None and self.face_cascade is not None:
             try:
                 faces = self.face_cascade.detectMultiScale(gray, scaleFactor=1.15, minNeighbors=3, minSize=(35, 35))
                 for (fx1, fy1, fw, fh) in faces:
@@ -435,8 +404,8 @@ class SpatialPerceptionEngine:
             except Exception:
                 pass
 
-        # ─── 1.7. PHÂN TÍCH VẬT THỂ & NGƯỜI TỪ ĐÁM MÂY ĐIỂM STEREO DEPTH ───
-        if depth_frame is not None and isinstance(depth_frame, np.ndarray):
+        # ─── 1.7. PHÂN TÍCH VẬT THỂ & NGƯỜI TỪ ĐÁM MÂY ĐIỂM STEREO DEPTH (CHỈ DÙNG KHI KHÔNG CÓ YOLO) ───
+        if self._yolo_model is None and depth_frame is not None and isinstance(depth_frame, np.ndarray):
             try:
                 dh, dw = depth_frame.shape[:2]
                 if dh >= 10 and dw >= 10:
@@ -496,8 +465,8 @@ class SpatialPerceptionEngine:
             except Exception:
                 pass
 
-        # ─── 2. PHƯƠNG ÁN DỰ PHÒNG 2: PHÂN TÍCH SẮC ĐỘ DA TOÀN DIỆN NẾU CHƯA THẤY NGƯỜI ───
-        if not any(b[4] == 'PERSON' for b in found_boxes):
+        # ─── 2. PHƯƠNG ÁN DỰ PHÒNG 2: PHÂN TÍCH SẮC ĐỘ DA TOÀN DIỆN (CHỈ DÙNG KHI KHÔNG CÓ YOLO) ───
+        if self._yolo_model is None and not any(b[4] == 'PERSON' for b in found_boxes):
             try:
                 ycrcb = cv2.cvtColor(bgr_img, cv2.COLOR_BGR2YCrCb)
                 skin_mask = cv2.inRange(ycrcb, np.array([0, 133, 77]), np.array([255, 173, 127]))
