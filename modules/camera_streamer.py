@@ -248,28 +248,14 @@ class CameraStreamer:
             else:
                 # ─── DEPTHAI V2 API (Jetson Nano / Ubuntu ROS) ───
                 cam_rgb = pipeline.create(dai.node.ColorCamera)
-                try:
-                    cam_rgb.setResolution(dai.ColorCameraProperties.SensorResolution.THE_1080_P)
-                except Exception:
-                    pass
+                cam_rgb.setPreviewSize(640, 480)
                 cam_rgb.setInterleaved(False)
                 cam_rgb.setColorOrder(dai.ColorCameraProperties.ColorOrder.BGR)
                 cam_rgb.setFps(30)
-                # Tắt center-crop để bảo toàn 100% góc rộng thấu kính OAK-D S2
-                try:
-                    cam_rgb.setPreviewKeepAspectRatio(False)
-                except Exception:
-                    pass
 
                 xout_rgb = pipeline.create(dai.node.XLinkOut)
                 xout_rgb.setStreamName("rgb")
-                # Ưu tiên luồng Video Full FOV không bị crop tâm (không bị phóng to)
-                try:
-                    cam_rgb.setVideoSize(640, 480)
-                    cam_rgb.video.link(xout_rgb.input)
-                except Exception:
-                    cam_rgb.setPreviewSize(640, 480)
-                    cam_rgb.preview.link(xout_rgb.input)
+                cam_rgb.preview.link(xout_rgb.input)
 
                 try:
                     mono_l = pipeline.create(dai.node.MonoCamera)
@@ -287,7 +273,6 @@ class CameraStreamer:
                     stereo.initialConfig.setMedianFilter(dai.MedianFilter.KERNEL_5x5) # KERNEL_5x5 nhanh gấp đôi 7x7
                     stereo.setLeftRightCheck(True)
                     stereo.setExtendedDisparity(False) # Tắt quét lặp 192 disparity, mở khóa 25-30 FPS phần cứng VPU
-                    stereo.setDepthAlign(dai.CameraBoardSocket.RGB) # Khớp tọa độ 3D sâu chính xác với ống kính RGB
 
                     mono_l.out.link(stereo.left)
                     mono_r.out.link(stereo.right)
@@ -332,7 +317,6 @@ class CameraStreamer:
                     for m_type in order:
                         if m_type == 'mobilenet' and mobilenet_blob is not None and not has_vpu_nn:
                             try:
-                                cam_rgb.setPreviewSize(300, 300)
                                 spatial_nn = pipeline.create(dai.node.MobileNetSpatialDetectionNetwork)
                                 spatial_nn.setBlobPath(mobilenet_blob)
                                 spatial_nn.setConfidenceThreshold(0.40)
@@ -341,7 +325,17 @@ class CameraStreamer:
                                 spatial_nn.setDepthLowerThreshold(150)
                                 spatial_nn.setDepthUpperThreshold(5000)
 
-                                cam_rgb.preview.link(spatial_nn.input)
+                                # Dùng ImageManip resize 300x300 riêng cho VPU để KHÔNG làm thay đổi kích thước hay phóng to cam_rgb.preview (vẫn giữ chuẩn 640x480)
+                                try:
+                                    manip = pipeline.create(dai.node.ImageManip)
+                                    manip.initialConfig.setResize(300, 300)
+                                    manip.initialConfig.setKeepAspectRatio(False)
+                                    manip.setWaitForConfigInput(False)
+                                    cam_rgb.preview.link(manip.inputImage)
+                                    manip.out.link(spatial_nn.input)
+                                except Exception:
+                                    cam_rgb.preview.link(spatial_nn.input)
+
                                 stereo.depth.link(spatial_nn.inputDepth)
 
                                 xout_nn = pipeline.create(dai.node.XLinkOut)
@@ -356,7 +350,6 @@ class CameraStreamer:
 
                         elif m_type == 'yolo' and yolo_blob is not None and not has_vpu_nn:
                             try:
-                                cam_rgb.setPreviewSize(416, 416)
                                 spatial_nn = pipeline.create(dai.node.YoloSpatialDetectionNetwork)
                                 spatial_nn.setBlobPath(yolo_blob)
                                 spatial_nn.setConfidenceThreshold(0.40)
@@ -372,7 +365,17 @@ class CameraStreamer:
                                 spatial_nn.setAnchorMasks({"side26": [1, 2, 3], "side13": [3, 4, 5]})
                                 spatial_nn.setIouThreshold(0.5)
 
-                                cam_rgb.preview.link(spatial_nn.input)
+                                # Dùng ImageManip resize 416x416 riêng cho VPU để KHÔNG làm thay đổi kích thước preview 640x480
+                                try:
+                                    manip_yolo = pipeline.create(dai.node.ImageManip)
+                                    manip_yolo.initialConfig.setResize(416, 416)
+                                    manip_yolo.initialConfig.setKeepAspectRatio(False)
+                                    manip_yolo.setWaitForConfigInput(False)
+                                    cam_rgb.preview.link(manip_yolo.inputImage)
+                                    manip_yolo.out.link(spatial_nn.input)
+                                except Exception:
+                                    cam_rgb.preview.link(spatial_nn.input)
+
                                 stereo.depth.link(spatial_nn.inputDepth)
 
                                 xout_nn = pipeline.create(dai.node.XLinkOut)
@@ -380,7 +383,7 @@ class CameraStreamer:
                                 spatial_nn.out.link(xout_nn.input)
                                 self._nn_labels = COCO_80_LABELS
                                 has_vpu_nn = True
-                                print(f"🚀 [OAK-D VPU] Đã nạp thành công mô hình YOLOv4-Tiny (80 lớp COCO) vào chip VPU Myriad X: {yolo_blob}")
+                                print(f"🚀 [OAK-D VPU] Đã nạp thành công mô hình YOLOv4-Tiny vào VPU Myriad X: {yolo_blob}")
                             except Exception as ex_yolo:
                                 print(f"⚠️ [OAK-D VPU] Lỗi nạp YOLO Blob: {ex_yolo}")
                                 has_vpu_nn = False
