@@ -56,6 +56,12 @@ class WebHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         pass  # Tắt log spam HTTP request
 
+    def handle_one_request(self):
+        try:
+            super().handle_one_request()
+        except (BrokenPipeError, ConnectionResetError, IOError):
+            pass
+
     def do_GET(self):
         inst = self.server_instance
         if self.path in ['/', '/index.html']:
@@ -100,11 +106,14 @@ class WebHandler(BaseHTTPRequestHandler):
                         try: client_map_ver = int(p.split('=')[1])
                         except Exception: client_map_ver = -1
             state_data = inst.get_state_dict(client_map_ver=client_map_ver) if inst else {}
-            self.send_response(200)
-            self.send_header('Content-Type', 'application/json')
-            self.send_header('Access-Control-Allow-Origin', '*')
-            self.end_headers()
-            self.wfile.write(json.dumps(state_data).encode('utf-8'))
+            try:
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps(state_data).encode('utf-8'))
+            except (BrokenPipeError, ConnectionResetError, IOError):
+                pass
         elif self.path.startswith('/api/drive'):
             v, w = 0.0, 0.0
             if '?' in self.path:
@@ -973,6 +982,14 @@ class WebHandler(BaseHTTPRequestHandler):
 class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
     daemon_threads = True
     allow_reuse_address = True
+
+    def handle_error(self, request, client_address):
+        import sys
+        exc_type, exc_val, _ = sys.exc_info()
+        if exc_type in (BrokenPipeError, ConnectionResetError) or isinstance(exc_val, (BrokenPipeError, ConnectionResetError)):
+            # Client (trình duyệt web) vừa tắt tab hoặc refresh trang F5, socket bị ngắt tự nhiên
+            return
+        super().handle_error(request, client_address)
 
     def server_bind(self):
         import socket
