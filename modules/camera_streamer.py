@@ -224,10 +224,6 @@ class CameraStreamer:
 
                     stereo.setLeftRightCheck(True)
                     stereo.setExtendedDisparity(False)
-                    try:
-                        stereo.setDepthAlign(dai.CameraBoardSocket.RGB)
-                    except Exception:
-                        pass
 
                     mono_l.out.link(stereo.left)
                     mono_r.out.link(stereo.right)
@@ -276,11 +272,7 @@ class CameraStreamer:
                     stereo.setDefaultProfilePreset(dai.node.StereoDepth.PresetMode.HIGH_DENSITY)
                     stereo.initialConfig.setMedianFilter(dai.MedianFilter.KERNEL_5x5) # KERNEL_5x5 nhanh gấp đôi 7x7
                     stereo.setLeftRightCheck(True)
-                    stereo.setExtendedDisparity(False) # Tắt extended disparity để tương thích hoàn toàn với setDepthAlign và VPU NN Myriad X
-                    try:
-                        stereo.setDepthAlign(dai.CameraBoardSocket.RGB) # Khớp bản đồ chiều sâu 1:1 sang cảm biến màu RGB, triệt tiêu sai lệch tọa độ 3D AI
-                    except Exception:
-                        pass
+                    stereo.setExtendedDisparity(False)
 
                     mono_l.out.link(stereo.left)
                     mono_r.out.link(stereo.right)
@@ -491,10 +483,6 @@ class CameraStreamer:
                             stereo.initialConfig.setMedianFilter(dai.MedianFilter.KERNEL_5x5)
                             stereo.setLeftRightCheck(True)
                             stereo.setExtendedDisparity(False)
-                            try:
-                                stereo.setDepthAlign(dai.CameraBoardSocket.RGB)
-                            except Exception:
-                                pass
                             mono_l.out.link(stereo.left)
                             mono_r.out.link(stereo.right)
                             xout_raw_depth = pipeline.create(dai.node.XLinkOut)
