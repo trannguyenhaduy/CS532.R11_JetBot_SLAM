@@ -132,8 +132,10 @@ class JetBotMasterSystem:
         self.has_active_imu = False
         self.is_auto_scanning = False
         self.auto_scan_remaining = 0.0
-        self.auto_scan_duration = float(getattr(config, 'AUTO_SCAN_DURATION_S', 16.0))
+        self.auto_scan_duration = float(getattr(config, 'AUTO_SCAN_DURATION_S', 13.5))
         self.auto_scan_mode = getattr(config, 'AUTO_SCAN_MODE', 'step')
+        self.auto_scan_steps = int(getattr(config, 'AUTO_SCAN_STEPS', 24))
+        self.auto_scan_current_step = 0
         self.is_step_running = False
         self.step_move_type = ""
         self.step_cancel_requested = False
@@ -1647,6 +1649,8 @@ class JetBotMasterSystem:
             "auto_scan_remaining": round(scan_rem, 1),
             "auto_scan_duration": round(scan_dur, 1),
             "auto_scan_mode": scan_mode,
+            "auto_scan_steps": getattr(self, 'auto_scan_steps', 24),
+            "auto_scan_current_step": getattr(self, 'auto_scan_current_step', 0),
             "semantic_objects": confirmed_objs,
             "landmarks": confirmed_objs,
             "scan_matching": getattr(config, 'ENABLE_SCAN_MATCHING', True),
@@ -2534,6 +2538,8 @@ class JetBotMasterSystem:
         steps = int(num_steps) if num_steps and int(num_steps) >= 4 else int(getattr(config, 'AUTO_SCAN_STEPS', 24))
         step_deg = round(360.0 / float(steps), 2)
         total_time_est = steps * (0.32 + 0.28)
+        self.auto_scan_steps = steps
+        self.auto_scan_current_step = 0
         self.auto_scan_duration = total_time_est
         self.auto_scan_remaining = total_time_est
         t_start_total = time.time()
@@ -2556,6 +2562,7 @@ class JetBotMasterSystem:
                     print("⏹️ [STEPPED 360° SCAN] Đã hủy quét 360° theo yêu cầu.")
                     break
 
+                self.auto_scan_current_step = i
                 target_heading_deg = i * step_deg
                 pct_done = int((i - 1) / steps * 100)
                 print(f" ▶️ [NẤC {i}/{steps}] Đang quay {step_deg:.1f}° CCW hướng tới mốc {target_heading_deg:.0f}°... ({pct_done}%)")
@@ -2607,6 +2614,7 @@ class JetBotMasterSystem:
                 self.current_v = 0.0
                 self.current_w = 0.0
                 self.auto_scan_remaining = 0.0
+                self.auto_scan_current_step = 0
             if self.motors:
                 self.motors.stop()
             print("🏁 [STEPPED 360° SCAN] Đã kết thúc chu trình quét toàn cảnh 360°.")
