@@ -36,7 +36,11 @@ LABEL_SYNONYMS = {
     "backpack": (24, "BACKPACK"), "bag": (24, "BACKPACK"), "handbag": (26, "BACKPACK"), "suitcase": (28, "BACKPACK"),
     "laptop": (63, "LAPTOP"), "phone": (67, "CELL PHONE"), "cell phone": (67, "CELL PHONE"), "cellphone": (67, "CELL PHONE"),
     "book": (73, "BOOK"), "bottle": (39, "BOTTLE"), "cup": (41, "CUP"), "wine glass": (41, "CUP"),
-    "keyboard": (66, "KEYBOARD"), "mouse": (64, "MOUSE"), "stop sign": (11, "STOP SIGN / DOOR")
+    "keyboard": (66, "KEYBOARD"), "mouse": (64, "MOUSE"), "stop sign": (11, "STOP SIGN / DOOR"),
+    "pottedplant": (58, "POTTED PLANT"), "plant": (58, "POTTED PLANT"), "dog": (16, "DOG"), "cat": (15, "CAT"),
+    "bicycle": (1, "BICYCLE"), "car": (2, "CAR"), "motorbike": (3, "MOTORCYCLE"), "bird": (14, "BIRD"),
+    "boat": (8, "BOAT"), "bus": (5, "BUS"), "train": (6, "TRAIN"), "horse": (17, "HORSE"),
+    "sheep": (18, "SHEEP"), "cow": (19, "COW"), "aeroplane": (4, "AIRPLANE"), "airplane": (4, "AIRPLANE")
 }
 
 def compute_box_iou(box1, box2):
@@ -209,7 +213,9 @@ class SpatialPerceptionEngine:
 
     TARGET_SEMANTIC_CLASSES = {
         "PERSON", "OBSTACLE", "CHAIR", "COUCH", "TABLE", "BOTTLE", "CUP", "BACKPACK",
-        "LAPTOP", "TV / MONITOR", "CELL PHONE", "BOOK", "KEYBOARD", "MOUSE", "STOP SIGN / DOOR"
+        "LAPTOP", "TV / MONITOR", "CELL PHONE", "BOOK", "KEYBOARD", "MOUSE", "STOP SIGN / DOOR",
+        "POTTED PLANT", "DOG", "CAT", "BICYCLE", "CAR", "MOTORCYCLE", "BIRD", "BOAT", "BUS",
+        "TRAIN", "HORSE", "SHEEP", "COW", "AIRPLANE"
     }
     _last_obstacle_dist = None
 

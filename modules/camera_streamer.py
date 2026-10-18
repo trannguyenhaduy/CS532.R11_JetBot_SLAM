@@ -589,11 +589,26 @@ class CameraStreamer:
                 fh = frame.shape[0] if frame is not None else 480
                 for d in in_nn.detections:
                     conf = float(getattr(d, 'confidence', 0.0))
-                    # Lọc ngay từ nguồn: Bỏ qua các detection độ tin cậy thấp (< 38%)
-                    if conf < 0.38:
+                    # Lọc ngay từ nguồn: Bỏ qua các detection độ tin cậy thấp (< 35%)
+                    if conf < 0.35:
                         continue
 
-                    lbl = labels_map[d.label] if (hasattr(d, 'label') and d.label < len(labels_map)) else "OBJECT"
+                    lbl_raw = labels_map[d.label].lower() if (hasattr(d, 'label') and d.label < len(labels_map)) else "object"
+                    # Bỏ qua lớp nền background (lớp 0 trong MobileNet-SSD VOC)
+                    if lbl_raw in ("background", "none", "", "bg"):
+                        continue
+
+                    if lbl_raw in ("diningtable", "desk"):
+                        lbl = "TABLE"
+                    elif lbl_raw in ("sofa", "couch"):
+                        lbl = "COUCH"
+                    elif lbl_raw in ("tvmonitor", "tv", "monitor"):
+                        lbl = "TV / MONITOR"
+                    elif lbl_raw in ("pottedplant", "plant"):
+                        lbl = "POTTED PLANT"
+                    else:
+                        lbl = lbl_raw.upper()
+
                     try:
                         x_raw = float(d.spatialCoordinates.x)
                         y_raw = float(d.spatialCoordinates.y)
