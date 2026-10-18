@@ -10,27 +10,8 @@ import sys
 import time
 import math
 import json
-import threading
 import numpy as np
 import cv2
-
-try:
-    import config as _config_module
-except ImportError:
-    try:
-        import sys as _s; _s.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        import config as _config_module
-    except ImportError:
-        _config_module = None
-
-class _ConfigProxy:
-    """Proxy an toàn để đọc config từ camera_streamer mà không gây lỗi import vòng."""
-    def __getattr__(self, name):
-        if _config_module is not None and hasattr(_config_module, name):
-            return getattr(_config_module, name)
-        raise AttributeError(f"Config module has no attribute '{name}'")
-
-config = _ConfigProxy()
 
 if hasattr(sys.stdout, 'reconfigure'):
     try: sys.stdout.reconfigure(encoding='utf-8')
@@ -43,29 +24,15 @@ MOBILENET_LABELS = [
     "motorbike", "person", "pottedplant", "sheep", "sofa", "train", "tvmonitor"
 ]
 
-# 80 nhãn lớp chuẩn COCO của mô hình YOLOv4-Tiny trên VPU Myriad X
-COCO_80_LABELS = [
-    "person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck", "boat", "traffic light",
-    "fire hydrant", "stop sign", "parking meter", "bench", "bird", "cat", "dog", "horse", "sheep", "cow",
-    "elephant", "bear", "zebra", "giraffe", "backpack", "umbrella", "handbag", "tie", "suitcase", "frisbee",
-    "skis", "snowboard", "sports ball", "kite", "baseball bat", "baseball glove", "skateboard", "surfboard",
-    "tennis racket", "bottle", "wine glass", "cup", "fork", "knife", "spoon", "bowl", "banana", "apple",
-    "sandwich", "orange", "broccoli", "carrot", "hot dog", "pizza", "donut", "cake", "chair", "couch",
-    "potted plant", "bed", "dining table", "toilet", "tv", "laptop", "mouse", "remote", "keyboard",
-    "cell phone", "microwave", "oven", "toaster", "sink", "refrigerator", "book", "clock", "vase",
-    "scissors", "teddy bear", "hair drier", "toothbrush"
-]
-
 try:
     import rospy
-    from sensor_msgs.msg import Image as ROSImage, Imu as ROSImu
+    from sensor_msgs.msg import Image as ROSImage
     from std_msgs.msg import Float32 as ROSFloat32
     from std_msgs.msg import String as ROSString
     HAS_ROS = True
 except ImportError:
     HAS_ROS = False
     ROSImage = object
-    ROSImu = object
     ROSFloat32 = object
     ROSString = object
 
@@ -79,7 +46,7 @@ class CameraStreamer:
     """
     VIEW_MODES = ['ai', 'thermal']
 
-    def __init__(self, depth_step=25, depth_skip=1, img_skip=1, as_ros_publisher=False):
+    def __init__(self, depth_step=25, depth_skip=5, img_skip=1, as_ros_publisher=False):
         self.depth_step = depth_step
         self.depth_skip = depth_skip
         self.img_skip = img_skip
@@ -90,7 +57,6 @@ class CameraStreamer:
 
         self.latest_jpeg = None
         self.points_3d = []
-        self.points_robot = []
         self.valid_depth_pct = 0.0
 
         # Thông số camera mặc định OAK-D S2 / Laptop Webcam
@@ -147,16 +113,16 @@ class CameraStreamer:
         self.has_imu = False
         self.latest_imu_yaw = 0.0
         self.imu_accumulated_yaw = 0.0
-        self.last_imu_read_time = 0.0
-        self._oak_q_imu = None
-        self.imu_lock = threading.Lock()
-        self.gyro_bias_z = 0.0
-        self.is_gyro_calibrated = False
-        self.gyro_calib_samples = []
-        self._last_gyro_ts = None
-        self._last_rv_yaw = None
-        self._last_raw_imu_yaw = None
-        self.latest_imu_quat = None
+
+        # Chùm tia và điểm cản tọa độ Robot
+        self.points_robot = []
+        self.last_total_rays = 0
+        self.last_obs_rays = 0
+        self.last_valid_rays = 0
+        self.last_floor_rays = 0
+        self.last_blind_rays = 0
+        self.last_ray_distances = []
+        self.last_ray_types = []
 
         # Cache tính toán Camera Nhiệt siêu tốc (< 2.5ms, FPS > 30)
         self._spatial_heat_cache = None
@@ -223,7 +189,7 @@ class CameraStreamer:
                         stereo.setDefaultProfilePreset(stereo.PresetMode.HIGH_DENSITY)
 
                     stereo.setLeftRightCheck(True)
-                    stereo.setExtendedDisparity(False)
+                    stereo.setExtendedDisparity(True)
 
                     mono_l.out.link(stereo.left)
                     mono_r.out.link(stereo.right)
@@ -261,18 +227,16 @@ class CameraStreamer:
                     mono_l = pipeline.create(dai.node.MonoCamera)
                     mono_l.setResolution(dai.MonoCameraProperties.SensorResolution.THE_400_P)
                     mono_l.setBoardSocket(dai.CameraBoardSocket.LEFT)
-                    mono_l.setFps(30)
 
                     mono_r = pipeline.create(dai.node.MonoCamera)
                     mono_r.setResolution(dai.MonoCameraProperties.SensorResolution.THE_400_P)
                     mono_r.setBoardSocket(dai.CameraBoardSocket.RIGHT)
-                    mono_r.setFps(30)
 
                     stereo = pipeline.create(dai.node.StereoDepth)
                     stereo.setDefaultProfilePreset(dai.node.StereoDepth.PresetMode.HIGH_DENSITY)
-                    stereo.initialConfig.setMedianFilter(dai.MedianFilter.KERNEL_5x5) # KERNEL_5x5 nhanh gấp đôi 7x7
+                    stereo.initialConfig.setMedianFilter(dai.MedianFilter.KERNEL_7x7)
                     stereo.setLeftRightCheck(True)
-                    stereo.setExtendedDisparity(False)
+                    stereo.setExtendedDisparity(True)
 
                     mono_l.out.link(stereo.left)
                     mono_r.out.link(stereo.right)
@@ -285,192 +249,59 @@ class CameraStreamer:
                     print(f"⚠️ [OAK-D USB] Bỏ qua Stereo Depth: {ex_stereo}")
                     has_stereo = False
 
-                # Tích hợp mô hình VPU Spatial Detection Network chạy 100% trên phần cứng Myriad X của OAK-D
+                # Tích hợp mô hình VPU Spatial Detection Network nếu có sẵn blob trên Jetson Nano / Windows
                 has_vpu_nn = False
-                root_proj = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-                res_dir = os.path.join(root_proj, "resources")
-
-                # Danh sách đường dẫn blob mở rộng trên Jetson Nano & Workspace:
-                mobilenet_candidates = [
+                res_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "resources")
+                blob_candidates = [
                     os.path.join(res_dir, "mobilenet-ssd.blob"),
                     os.path.join(res_dir, "mobilenet-ssd_openvino_2021.2_6shave.blob"),
                     "/home/jetbot/catkin_ws/src/depthai-ros/depthai_examples/resources/mobilenet-ssd_openvino_2021.2_6shave.blob",
                     "/home/jetbot/catkin_ws/src/depthai-ros/depthai_examples/resources/mobilenet-ssd.blob",
-                    "/opt/ros/melodic/share/depthai_examples/resources/mobilenet-ssd_openvino_2021.2_6shave.blob",
                 ]
-                mobilenet_blob = next((p for p in mobilenet_candidates if os.path.exists(p)), None)
+                chosen_blob = next((p for p in blob_candidates if os.path.exists(p)), None)
 
-                yolo_candidates = [
-                    os.path.join(res_dir, "yolo-v4-tiny.blob"),
-                    os.path.join(res_dir, "yolov4_tiny.blob"),
-                    os.path.join(res_dir, "yolo-v4-tiny-tf.blob"),
-                    os.path.join(res_dir, "yolo.blob"),
-                    "/home/jetbot/catkin_ws/src/depthai-ros/depthai_examples/resources/yolo-v4-tiny.blob",
-                ]
-                yolo_blob = next((p for p in yolo_candidates if os.path.exists(p)), None)
-
-                ai_model_pref = str(getattr(config, 'AI_MODEL', 'mobilenet')).lower()
-
-                if getattr(config, 'ENABLE_YOLO', False) and has_stereo:
-                    order = ['yolo', 'mobilenet'] if ai_model_pref in ('yolo', 'coco', 'yolov4') else ['mobilenet', 'yolo']
-
-                    for m_type in order:
-                        if m_type == 'mobilenet' and mobilenet_blob is not None and not has_vpu_nn:
-                            try:
-                                spatial_nn = pipeline.create(dai.node.MobileNetSpatialDetectionNetwork)
-                                spatial_nn.setBlobPath(mobilenet_blob)
-                                spatial_nn.setConfidenceThreshold(0.35)
-                                spatial_nn.input.setBlocking(False)
-                                spatial_nn.setBoundingBoxScaleFactor(0.5)
-                                spatial_nn.setDepthLowerThreshold(150)
-                                spatial_nn.setDepthUpperThreshold(5000)
-
-                                # Dùng ImageManip resize 300x300 riêng cho VPU để KHÔNG làm thay đổi kích thước hay phóng to cam_rgb.preview (vẫn giữ chuẩn 640x480)
-                                try:
-                                    manip = pipeline.create(dai.node.ImageManip)
-                                    manip.initialConfig.setResize(300, 300)
-                                    manip.initialConfig.setKeepAspectRatio(False)
-                                    manip.setWaitForConfigInput(False)
-                                    cam_rgb.preview.link(manip.inputImage)
-                                    manip.out.link(spatial_nn.input)
-                                except Exception:
-                                    cam_rgb.preview.link(spatial_nn.input)
-
-                                stereo.depth.link(spatial_nn.inputDepth)
-
-                                xout_nn = pipeline.create(dai.node.XLinkOut)
-                                xout_nn.setStreamName("nn")
-                                spatial_nn.out.link(xout_nn.input)
-                                self._nn_labels = MOBILENET_LABELS
-                                has_vpu_nn = True
-                                print(f"🧠 [OAK-D VPU] ĐÃ NẠP THÀNH CÔNG MOBILENET-SSD VÀO VPU MYRIAD X: {mobilenet_blob}")
-                            except Exception as ex_mb:
-                                print(f"⚠️ [OAK-D VPU] Lỗi nạp MobileNet Blob: {ex_mb}")
-                                has_vpu_nn = False
-
-                        elif m_type == 'yolo' and yolo_blob is not None and not has_vpu_nn:
-                            try:
-                                spatial_nn = pipeline.create(dai.node.YoloSpatialDetectionNetwork)
-                                spatial_nn.setBlobPath(yolo_blob)
-                                spatial_nn.setConfidenceThreshold(0.35)
-                                spatial_nn.input.setBlocking(False)
-                                spatial_nn.setBoundingBoxScaleFactor(0.5)
-                                spatial_nn.setDepthLowerThreshold(150)
-                                spatial_nn.setDepthUpperThreshold(5000)
-
-                                # Cấu hình chuẩn kiến trúc YOLOv4-Tiny COCO:
-                                spatial_nn.setNumClasses(80)
-                                spatial_nn.setCoordinateSize(4)
-                                spatial_nn.setAnchors([10, 14, 23, 27, 37, 58, 81, 82, 135, 169, 344, 319])
-                                spatial_nn.setAnchorMasks({"side26": [1, 2, 3], "side13": [3, 4, 5]})
-                                spatial_nn.setIouThreshold(0.5)
-
-                                # Dùng ImageManip resize 416x416 riêng cho VPU để KHÔNG làm thay đổi kích thước preview 640x480
-                                try:
-                                    manip_yolo = pipeline.create(dai.node.ImageManip)
-                                    manip_yolo.initialConfig.setResize(416, 416)
-                                    manip_yolo.initialConfig.setKeepAspectRatio(False)
-                                    manip_yolo.setWaitForConfigInput(False)
-                                    cam_rgb.preview.link(manip_yolo.inputImage)
-                                    manip_yolo.out.link(spatial_nn.input)
-                                except Exception:
-                                    cam_rgb.preview.link(spatial_nn.input)
-
-                                stereo.depth.link(spatial_nn.inputDepth)
-
-                                xout_nn = pipeline.create(dai.node.XLinkOut)
-                                xout_nn.setStreamName("nn")
-                                spatial_nn.out.link(xout_nn.input)
-                                self._nn_labels = COCO_80_LABELS
-                                has_vpu_nn = True
-                                print(f"🚀 [OAK-D VPU] Đã nạp thành công mô hình YOLOv4-Tiny vào VPU Myriad X: {yolo_blob}")
-                            except Exception as ex_yolo:
-                                print(f"⚠️ [OAK-D VPU] Lỗi nạp YOLO Blob: {ex_yolo}")
-                                has_vpu_nn = False
-
-
-
-                # Kích hoạt cảm biến quán tính IMU phần cứng trên OAK-D S2 nếu có
-                has_imu_node = False
-                if getattr(config, 'ENABLE_IMU', True) and hasattr(dai.node, 'IMU'):
+                if chosen_blob is not None and has_stereo:
                     try:
-                        imu_node = pipeline.create(dai.node.IMU)
-                        enabled_sensors = []
+                        spatial_nn = pipeline.create(dai.node.MobileNetSpatialDetectionNetwork)
+                        spatial_nn.setBlobPath(chosen_blob)
+                        spatial_nn.setConfidenceThreshold(0.25)
+                        spatial_nn.input.setBlocking(False)
+                        spatial_nn.setBoundingBoxScaleFactor(0.5)
+                        spatial_nn.setDepthLowerThreshold(100)   # 10cm
+                        spatial_nn.setDepthUpperThreshold(5000)  # 5m
 
-                        def _try_enable_imu(sensor_attr_name, rate=100):
-                            if hasattr(dai, 'IMUSensor') and hasattr(dai.IMUSensor, sensor_attr_name):
-                                s_enum = getattr(dai.IMUSensor, sensor_attr_name)
-                                # Thử chuẩn danh sách [sensor] trước (DepthAI 2.x standard)
-                                try:
-                                    imu_node.enableIMUSensor([s_enum], rate)
-                                    enabled_sensors.append(sensor_attr_name)
-                                    return True
-                                except Exception:
-                                    # Fallback sang dạng đối số đơn lẻ
-                                    try:
-                                        imu_node.enableIMUSensor(s_enum, rate)
-                                        enabled_sensors.append(sensor_attr_name)
-                                        return True
-                                    except Exception:
-                                        return False
-                            return False
+                        manip = pipeline.create(dai.node.ImageManip)
+                        manip.initialConfig.setResize(300, 300)
+                        manip.initialConfig.setFrameType(dai.RawImgFrame.Type.BGR888p)
+                        manip.inputConfig.setWaitForMessage(False)
 
-                        # 1. Thử kích hoạt các chuẩn véc-tơ định hướng 3D (Sensor Fusion)
-                        for rv_name in ['GAME_ROTATION_VECTOR', 'ROTATION_VECTOR', 'ARVR_STABILIZED_GAME_ROTATION_VECTOR', 'ARVR_STABILIZED_ROTATION_VECTOR']:
-                            if _try_enable_imu(rv_name, 100):
-                                break
+                        cam_rgb.preview.link(manip.inputImage)
+                        manip.out.link(spatial_nn.input)
+                        stereo.depth.link(spatial_nn.inputDepth)
 
-                        # 2. Luôn kích hoạt thêm con quay hồi chuyển Gyroscope làm fallback an toàn
-                        for gyro_name in ['GYROSCOPE_CALIBRATED', 'GYROSCOPE_RAW']:
-                            if _try_enable_imu(gyro_name, 100):
-                                break
+                        xout_nn = pipeline.create(dai.node.XLinkOut)
+                        xout_nn.setStreamName("nn")
+                        spatial_nn.out.link(xout_nn.input)
+                        has_vpu_nn = True
+                        print(f"🧠 [OAK-D VPU] Đã kết nối mạng VPU MobileNet-SSD: {chosen_blob}")
+                    except Exception as ex_nn:
+                        print(f"ℹ️ [OAK-D VPU] Bỏ qua nạp VPU NN ({ex_nn}), sử dụng thị giác tiêu chuẩn.")
+                        has_vpu_nn = False
 
-                        # 3. Kích hoạt thêm gia tốc kế nếu có
-                        for accel_name in ['ACCELEROMETER_CALIBRATED', 'ACCELEROMETER_RAW']:
-                            if _try_enable_imu(accel_name, 100):
-                                break
-
-                        if enabled_sensors:
-                            imu_node.setBatchReportThreshold(1)
-                            imu_node.setMaxBatchReports(10)
-                            xout_imu = pipeline.create(dai.node.XLinkOut)
-                            xout_imu.setStreamName("imu")
-                            imu_node.out.link(xout_imu.input)
-                            has_imu_node = True
-                            print(f"🧭 [OAK-D IMU] Đã cấu hình node IMU phần cứng ({', '.join(enabled_sensors)}) @ 100Hz")
-                        else:
-                            print("ℹ️ [OAK-D IMU] Không có cảm biến IMU nào được hỗ trợ trên thiết bị này.")
-                    except Exception as ex_imu:
-                        print(f"ℹ️ [OAK-D IMU] Bỏ qua IMU phần cứng: {ex_imu}")
-                        has_imu_node = False
-
-                # Khởi tạo DepthAI Device trực tiếp từ pipeline RGB + Stereo Depth + VPU NN + IMU
                 try:
                     device = dai.Device(pipeline)
                 except Exception as ex_dev:
-                    if has_vpu_nn or has_imu_node:
-                        print(f"⚠️ [OAK-D VPU/IMU] Thử lại pipeline cơ bản không VPU/IMU ({ex_dev})...")
+                    if has_vpu_nn:
+                        print(f"⚠️ [OAK-D VPU] Runtime không khớp blob VPU ({ex_dev}). Khởi chạy RGB + Stereo Depth thuần túy!")
                         pipeline = dai.Pipeline()
                         cam_rgb = pipeline.create(dai.node.ColorCamera)
-                        try:
-                            cam_rgb.setResolution(dai.ColorCameraProperties.SensorResolution.THE_1080_P)
-                        except Exception:
-                            pass
+                        cam_rgb.setPreviewSize(640, 480)
                         cam_rgb.setInterleaved(False)
                         cam_rgb.setColorOrder(dai.ColorCameraProperties.ColorOrder.BGR)
                         cam_rgb.setFps(30)
-                        try:
-                            cam_rgb.setPreviewKeepAspectRatio(False)
-                        except Exception:
-                            pass
                         xout_rgb = pipeline.create(dai.node.XLinkOut)
                         xout_rgb.setStreamName("rgb")
-                        try:
-                            cam_rgb.setVideoSize(640, 480)
-                            cam_rgb.video.link(xout_rgb.input)
-                        except Exception:
-                            cam_rgb.setPreviewSize(640, 480)
-                            cam_rgb.preview.link(xout_rgb.input)
+                        cam_rgb.preview.link(xout_rgb.input)
                         if has_stereo:
                             mono_l = pipeline.create(dai.node.MonoCamera)
                             mono_l.setResolution(dai.MonoCameraProperties.SensorResolution.THE_400_P)
@@ -480,9 +311,9 @@ class CameraStreamer:
                             mono_r.setBoardSocket(dai.CameraBoardSocket.RIGHT)
                             stereo = pipeline.create(dai.node.StereoDepth)
                             stereo.setDefaultProfilePreset(dai.node.StereoDepth.PresetMode.HIGH_DENSITY)
-                            stereo.initialConfig.setMedianFilter(dai.MedianFilter.KERNEL_5x5)
+                            stereo.initialConfig.setMedianFilter(dai.MedianFilter.KERNEL_7x7)
                             stereo.setLeftRightCheck(True)
-                            stereo.setExtendedDisparity(False)
+                            stereo.setExtendedDisparity(True)
                             mono_l.out.link(stereo.left)
                             mono_r.out.link(stereo.right)
                             xout_raw_depth = pipeline.create(dai.node.XLinkOut)
@@ -490,7 +321,6 @@ class CameraStreamer:
                             stereo.depth.link(xout_raw_depth.input)
                         device = dai.Device(pipeline)
                         has_vpu_nn = False
-                        has_imu_node = False
                     else:
                         raise ex_dev
 
@@ -500,30 +330,20 @@ class CameraStreamer:
                     self._oak_q_raw_depth = device.getOutputQueue(name="raw_depth", maxSize=1, blocking=False)
                 else:
                     self._oak_q_raw_depth = None
-                self._oak_q_nn = device.getOutputQueue(name="nn", maxSize=1, blocking=False) if has_vpu_nn else None
-                self._oak_q_imu = device.getOutputQueue(name="imu", maxSize=50, blocking=False) if has_imu_node else None
-                self.has_imu = False
-                self._imu_packet_count = 0
-                if self._oak_q_imu is not None:
-                    self._imu_worker_running = True
-                    self._imu_worker_thread = threading.Thread(target=self._imu_worker_loop, daemon=True)
-                    self._imu_worker_thread.start()
-                    print("✅ [OAK-D IMU] Đã khởi động tiến trình lắng nghe IMU phần cứng...")
+                if has_vpu_nn:
+                    self._oak_q_nn = device.getOutputQueue(name="nn", maxSize=1, blocking=False)
+                else:
+                    self._oak_q_nn = None
                 self.is_oak_connected = True
                 print("✅ [OAK-D USB] Đã kích hoạt Camera OAK-D S2 trực tiếp trên Jetson Nano thành công!")
                 return True
         except Exception as e:
             err_str = str(e)
             if "X_LINK_UNBOOTED" in err_str or "permission" in err_str.lower():
-                print(f"⚠️ [OAK-D USB] Cần cấp quyền USB trên Jetson Nano hoặc Camera đang bận ({e})")
-                print("💡 [HƯỚNG DẪN FIX]: Chạy lệnh: sudo udevadm control --reload-rules && sudo udevadm trigger")
+                print(f"⚠️ [OAK-D USB] Cần cấp quyền USB trên Jetson Nano ({e})")
+                print("💡 [HƯỚNG DẪN FIX]: Chạy lệnh sau trên Jetson Nano: sudo udevadm control --reload-rules && sudo udevadm trigger")
             else:
                 print(f"⚠️ [OAK-D USB] Không mở được OAK-D trực tiếp ({e}). Tự động fallback sang Webcam/ROS.")
-            if self._oak_device is not None:
-                try:
-                    self._oak_device.close()
-                except Exception:
-                    pass
             self._oak_device = None
             if hasattr(self, '_oak_pipeline') and self._oak_pipeline:
                 try:
@@ -536,8 +356,7 @@ class CameraStreamer:
 
     def shutdown(self):
         """Giải phóng toàn bộ tài nguyên Camera OAK-D và Webcam sạch sẽ"""
-        self._imu_worker_running = False
-        if self._oak_device is not None:
+        if self._oak_device:
             try:
                 self._oak_device.close()
             except Exception:
@@ -556,9 +375,6 @@ class CameraStreamer:
                 pass
             self._cap = None
         self._oak_q_nn = None
-        self._oak_q_rgb = None
-        self._oak_q_raw_depth = None
-        self._oak_q_imu = None
         self._cached_oak_frame = None
         self.is_oak_connected = False
 
@@ -570,6 +386,7 @@ class CameraStreamer:
             in_rgb = self._oak_q_rgb.tryGet() if self._oak_q_rgb else None
             in_depth = self._oak_q_raw_depth.tryGet() if self._oak_q_raw_depth else None
             in_nn = self._oak_q_nn.tryGet() if getattr(self, '_oak_q_nn', None) else None
+
             frame = None
             if in_rgb is not None:
                 frame = in_rgb.getCvFrame() if hasattr(in_rgb, 'getCvFrame') else (in_rgb.getFrame() if hasattr(in_rgb, 'getFrame') else None)
@@ -584,99 +401,30 @@ class CameraStreamer:
             # Xử lý kết quả nhận diện từ chip VPU OAK-D
             if in_nn is not None and hasattr(in_nn, 'detections'):
                 vpu_dets = []
-                labels_map = getattr(self, '_nn_labels', MOBILENET_LABELS)
-                fw = frame.shape[1] if frame is not None else 640
-                fh = frame.shape[0] if frame is not None else 480
                 for d in in_nn.detections:
-                    conf = float(getattr(d, 'confidence', 0.0))
-                    # Lọc ngay từ nguồn: Bỏ qua các detection độ tin cậy thấp (< 35%)
-                    if conf < 0.35:
-                        continue
+                    lbl = MOBILENET_LABELS[d.label] if (hasattr(d, 'label') and d.label < len(MOBILENET_LABELS)) else "OBJECT"
+                    x_m = round(float(d.spatialCoordinates.x) / 1000.0, 2)
+                    y_m = round(float(d.spatialCoordinates.y) / 1000.0, 2)
+                    z_m = round(float(d.spatialCoordinates.z) / 1000.0, 2)
+                    bx = max(0, min(640, int(d.xmin * 640)))
+                    by = max(0, min(480, int(d.ymin * 480)))
+                    bw = max(10, min(640 - bx, int((d.xmax - d.xmin) * 640)))
+                    bh = max(10, min(480 - by, int((d.ymax - d.ymin) * 480)))
 
-                    lbl_raw = labels_map[d.label].lower() if (hasattr(d, 'label') and d.label < len(labels_map)) else "object"
-                    # Bỏ qua lớp nền background (lớp 0 trong MobileNet-SSD VOC)
-                    if lbl_raw in ("background", "none", "", "bg"):
-                        continue
-
-                    if lbl_raw in ("diningtable", "desk"):
-                        lbl = "TABLE"
-                    elif lbl_raw in ("sofa", "couch"):
-                        lbl = "COUCH"
-                    elif lbl_raw in ("tvmonitor", "tv", "monitor"):
-                        lbl = "TV / MONITOR"
-                    elif lbl_raw in ("pottedplant", "plant"):
-                        lbl = "POTTED PLANT"
-                    else:
-                        lbl = lbl_raw.upper()
-
-                    try:
-                        x_raw = float(d.spatialCoordinates.x)
-                        y_raw = float(d.spatialCoordinates.y)
-                        z_raw = float(d.spatialCoordinates.z)
-                    except Exception:
-                        x_raw, y_raw, z_raw = 0.0, 0.0, 0.0
-
-                    bx1 = max(0, min(fw - 2, int(round(d.xmin * fw))))
-                    by1 = max(0, min(fh - 2, int(round(d.ymin * fh))))
-                    bx2 = max(bx1 + 10, min(fw - 1, int(round(d.xmax * fw))))
-                    by2 = max(by1 + 10, min(fh - 1, int(round(d.ymax * fh))))
-
-                    # Lọc bỏ nhiễu pixel quá nhỏ
-                    if (bx2 - bx1) < 18 or (by2 - by1) < 18:
-                        continue
-
-                    # Bỏ qua nếu cự ly quá xa (> 4.5m)
-                    if not math.isnan(z_raw) and not math.isinf(z_raw) and z_raw > 4500.0:
-                        continue
-
-                    # Ước lượng khoảng cách quang học dự phòng
-                    d_optical = max(bx2 - bx1, int((by2 - by1) * 0.65))
-                    z_opt = round(float(450.0 * 0.26 / max(20, d_optical)), 2)
-                    z_fallback = max(0.08, min(3.5, z_opt))
-
-                    z_m = z_fallback
-                    has_valid_depth = False
-
-                    if depth is not None and isinstance(depth, np.ndarray):
-                        dh, dw = depth.shape[:2]
-                        du1 = max(0, min(dw - 1, int(round(bx1 * dw / fw))))
-                        du2 = max(du1 + 4, min(dw, int(round(bx2 * dw / fw))))
-                        dv1 = max(0, min(dh - 1, int(round(by1 * dh / fh))))
-                        dv2 = max(dv1 + 4, min(dh, int(round(by2 * dh / fh))))
-                        # Lấy vùng tâm 60% của hộp để đo chính xác bề mặt vật thể thật
-                        box_w = du2 - du1
-                        box_h = dv2 - dv1
-                        c_u1 = du1 + int(box_w * 0.20)
-                        c_u2 = du2 - int(box_w * 0.20)
-                        c_v1 = dv1 + int(box_h * 0.20)
-                        c_v2 = dv2 - int(box_h * 0.20)
-                        roi_d = depth[c_v1:c_v2, c_u1:c_u2]
-                        # Lọc các điểm đo hợp lệ từ 80mm (8cm) đến 4500mm (4.5m)
-                        valid_pts = roi_d[(roi_d >= 80) & (roi_d <= 4500)]
-                        if len(valid_pts) >= 4:
-                            z_m = round(float(np.percentile(valid_pts, 20)) / 1000.0, 2)
-                            has_valid_depth = True
-
-                    if not has_valid_depth:
-                        if not math.isnan(z_raw) and not math.isinf(z_raw) and 80.0 <= z_raw <= 4500.0:
-                            z_m = round(z_raw / 1000.0, 2)
-                        else:
-                            z_m = z_fallback
-
-                    # Tọa độ không gian (x, y) chuẩn xác theo hình học quang học camera
-                    u_center = (bx1 + bx2) / 2.0
-                    v_center = (by1 + by2) / 2.0
-                    x_m = round(float((u_center - (fw / 2.0)) * z_m / 450.0), 2)
-                    y_m = round(float((v_center - (fh / 2.0)) * z_m / 450.0), 2)
+                    # Nếu điểm đo lọt điểm mù stereo (< 8cm hoặc = 0), ước lượng qua kích thước quang học
+                    if z_m <= 0.08:
+                        d_optical = max(bw, int(bh * 0.65))
+                        z_m = round(float(450.0 * 0.26 / max(20, d_optical)), 2)
+                        z_m = max(0.08, min(3.5, z_m))
 
                     vpu_dets.append({
                         "id": 0,
                         "class": lbl.upper(),
                         "name": lbl.upper(),
-                        "score": round(conf, 2),
+                        "score": round(float(d.confidence), 2),
                         "x": x_m, "y": y_m, "z": z_m,
                         "distance": z_m,
-                        "bbox": [bx1, by1, bx2, by2],
+                        "bbox": [bx, by, bx + bw, by + bh],
                         "source": "OAK-D VPU"
                     })
                 self.latest_vpu_detections = vpu_dets
@@ -704,7 +452,6 @@ class CameraStreamer:
                 self._ros_pub_depth = rospy.Publisher('/stereo_inertial_publisher/stereo/depth', ROSImage, queue_size=1)
                 self._ros_pub_dist = rospy.Publisher('/obstacle_distance', ROSFloat32, queue_size=1)
                 self._ros_pub_objects = rospy.Publisher('/spatial_objects', ROSString, queue_size=2)
-                self._ros_pub_imu = rospy.Publisher('/stereo_inertial_publisher/imu', ROSImu, queue_size=2)
                 self._ros_pubs_initialized = True
 
             now_ros = rospy.Time.now()
@@ -722,20 +469,6 @@ class CameraStreamer:
             if getattr(self, 'latest_vpu_detections', None) and hasattr(self, '_ros_pub_objects'):
                 try:
                     self._ros_pub_objects.publish(ROSString(data=json.dumps(self.latest_vpu_detections)))
-                except Exception:
-                    pass
-
-            if getattr(self, 'has_imu', False) and hasattr(self, '_ros_pub_imu') and getattr(self, 'latest_imu_quat', None):
-                try:
-                    imu_msg = ROSImu()
-                    imu_msg.header.stamp = now_ros
-                    imu_msg.header.frame_id = "oak-d_frame"
-                    qw, qx, qy, qz = self.latest_imu_quat
-                    imu_msg.orientation.w = qw
-                    imu_msg.orientation.x = qx
-                    imu_msg.orientation.y = qy
-                    imu_msg.orientation.z = qz
-                    self._ros_pub_imu.publish(imu_msg)
                 except Exception:
                     pass
         except Exception:
@@ -958,7 +691,7 @@ class CameraStreamer:
                 stat_txt = "> 4.0 m"
             elif self.is_emergency_braked:
                 col = (0, 0, 255)
-                stat_txt = f"BRAKE! {c_cm:.1f} cm (<= {brake_dist_cm:.0f}cm)"
+                stat_txt = f"BRAKE! {c_cm:.1f} cm"
             elif c_cm < 40.0:
                 col = (0, 200, 255)
                 stat_txt = f"{c_cm:.1f} cm"
@@ -970,24 +703,24 @@ class CameraStreamer:
 
             # 3. Thanh cảnh báo đáy màn hình khi nguy cấp (Không icon)
             if self.is_emergency_braked:
-                cv2.rectangle(display_frame, (2, 2), (w - 2, h - 2), (0, 0, 255), 4)
-                banner_w = min(560, w - 20)
+                cv2.rectangle(display_frame, (2, 2), (w - 2, h - 2), (0, 0, 255), 3)
+                banner_w = 460
                 bx1 = (w - banner_w) // 2
-                cv2.rectangle(display_frame, (bx1, h - 48), (bx1 + banner_w, h - 8), (0, 0, 220), -1)
-                cv2.rectangle(display_frame, (bx1, h - 48), (bx1 + banner_w, h - 8), (255, 255, 255), 2)
-                msg = f"[PHANH KHAN CAP] CAN SAT < 20CM ({c_cm:.1f}cm) - KHOA TIEN"
-                (mw, _), _ = cv2.getTextSize(msg, cv2.FONT_HERSHEY_SIMPLEX, 0.52, 2)
-                cv2.putText(display_frame, msg, (bx1 + (banner_w - mw) // 2, h - 22),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.52, (255, 255, 255), 2, cv2.LINE_AA)
-            elif forward_clearance_mm < 450.0:
-                banner_w = min(460, w - 20)
-                bx1 = (w - banner_w) // 2
-                cv2.rectangle(display_frame, (bx1, h - 42), (bx1 + banner_w, h - 10), (0, 160, 255), -1)
+                cv2.rectangle(display_frame, (bx1, h - 42), (bx1 + banner_w, h - 10), (0, 0, 220), -1)
                 cv2.rectangle(display_frame, (bx1, h - 42), (bx1 + banner_w, h - 10), (255, 255, 255), 1)
+                msg = f"[PHANH KHAN CAP] CAN SAT < 20CM ({c_cm:.1f}cm)"
+                (mw, _), _ = cv2.getTextSize(msg, cv2.FONT_HERSHEY_SIMPLEX, 0.48, 1)
+                cv2.putText(display_frame, msg, (bx1 + (banner_w - mw) // 2, h - 21),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 255, 255), 1, cv2.LINE_AA)
+            elif forward_clearance_mm < 450.0:
+                banner_w = 400
+                bx1 = (w - banner_w) // 2
+                cv2.rectangle(display_frame, (bx1, h - 40), (bx1 + banner_w, h - 10), (0, 160, 255), -1)
+                cv2.rectangle(display_frame, (bx1, h - 40), (bx1 + banner_w, h - 10), (255, 255, 255), 1)
                 msg = f"[CANH BAO] GIAM TOC: {c_cm:.1f} cm"
-                (mw, _), _ = cv2.getTextSize(msg, cv2.FONT_HERSHEY_SIMPLEX, 0.46, 1)
-                cv2.putText(display_frame, msg, (bx1 + (banner_w - mw) // 2, h - 22),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.46, (0, 0, 0), 1, cv2.LINE_AA)
+                (mw, _), _ = cv2.getTextSize(msg, cv2.FONT_HERSHEY_SIMPLEX, 0.44, 1)
+                cv2.putText(display_frame, msg, (bx1 + (banner_w - mw) // 2, h - 21),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.44, (0, 0, 0), 1, cv2.LINE_AA)
 
             pass
 
@@ -1119,114 +852,14 @@ class CameraStreamer:
         except Exception:
             return False, 0.0, 999.0
 
-    def _imu_worker_loop(self):
-        """Luồng chuyên dụng đọc IMU ở tần số 100Hz, hoàn toàn độc lập với FPS camera"""
-        t_start = time.time()
-        reported_status = False
-        while getattr(self, '_imu_worker_running', False) and getattr(self, 'running', True):
-            if self._oak_q_imu is not None:
-                try:
-                    while True:
-                        in_imu = self._oak_q_imu.tryGet()
-                        if in_imu is None:
-                            break
-                        if hasattr(in_imu, 'packets') and in_imu.packets:
-                            for pkt in in_imu.packets:
-                                self._process_single_imu_packet(pkt)
-                except Exception:
-                    pass
-
-            if not reported_status and (time.time() - t_start > 3.0):
-                reported_status = True
-                pkt_count = getattr(self, '_imu_packet_count', 0)
-                if pkt_count == 0:
-                    print("ℹ️ [OAK-D IMU] Chưa nhận được gói tin từ chip IMU. Hệ thống tự động kích hoạt Dead-Reckoning Odometry chuẩn xác.")
-                else:
-                    print(f"🧭 [OAK-D IMU] Cảm biến IMU phần cứng đang hoạt động ổn định ({pkt_count} gói tin đã nhận)")
-
-            time.sleep(0.005)
-
-    def _process_single_imu_packet(self, pkt):
-        """Xử lý từng gói tin IMU: Tự động phân tích trục trọng lực và tích lũy góc quay Yaw chuẩn xác"""
-        try:
-            now_t = time.time()
-
-            # 1. Nhận diện trục trọng lực từ gia tốc kế
-            accel = getattr(pkt, 'acceleroMeter', None) or getattr(pkt, 'accel', None) or getattr(pkt, 'accelerometer', None)
-            if accel is not None:
-                ay = float(getattr(accel, 'y', 0.0))
-                az = float(getattr(accel, 'z', 0.0))
-                if abs(ay) > 6.0 and abs(ay) > abs(az) + 2.0:
-                    self._imu_vertical_axis = 'y'
-                    self._imu_vertical_sign = -1.0 if ay > 0 else 1.0
-                elif abs(az) > 6.0 and abs(az) > abs(ay) + 2.0:
-                    self._imu_vertical_axis = 'z'
-                    self._imu_vertical_sign = 1.0 if az > 0 else -1.0
-
-            # ── ƯU TIÊN 1: Véc-tơ định hướng Quaternion Sensor Fusion của OAK-D S2 ──
-            rv = getattr(pkt, 'gameRotationVector', None) or getattr(pkt, 'rotationVector', None)
-            if rv is not None:
-                qx = float(getattr(rv, 'i', getattr(rv, 'x', 0.0)))
-                qy = float(getattr(rv, 'j', getattr(rv, 'y', 0.0)))
-                qz = float(getattr(rv, 'k', getattr(rv, 'z', 0.0)))
-                qw = float(getattr(rv, 'real', getattr(rv, 'w', 1.0)))
-
-                if getattr(self, '_imu_vertical_axis', 'z') == 'y':
-                    siny = -2.0 * (qw * qy + qx * qz)
-                    cosy = 1.0 - 2.0 * (qy * qy + qz * qz)
-                else:
-                    siny = 2.0 * (qw * qz + qx * qy)
-                    cosy = 1.0 - 2.0 * (qy * qy + qz * qz)
-                curr_raw_yaw = math.atan2(siny, cosy)
-
-                with self.imu_lock:
-                    self.latest_imu_quat = (qw, qx, qy, qz)
-                    if self._last_raw_imu_yaw is not None:
-                        dyaw = curr_raw_yaw - self._last_raw_imu_yaw
-                        dyaw = math.atan2(math.sin(dyaw), math.cos(dyaw))
-                        self.imu_accumulated_yaw += dyaw
-                    self._last_raw_imu_yaw = curr_raw_yaw
-                    self.latest_imu_yaw = curr_raw_yaw
-                    self.has_imu = True
-                    self._imu_packet_count = getattr(self, '_imu_packet_count', 0) + 1
-                    self.last_imu_read_time = now_t
-
-            # ── ƯU TIÊN 2: Con quay hồi chuyển Gyroscope (Fallback nếu không có rotationVector) ──
-            elif hasattr(pkt, 'gyroscope') and pkt.gyroscope is not None:
-                gyro = pkt.gyroscope
-                if getattr(self, '_imu_vertical_axis', 'z') == 'y':
-                    w_vert = float(getattr(gyro, 'y', 0.0)) * getattr(self, '_imu_vertical_sign', -1.0)
-                else:
-                    w_vert = float(getattr(gyro, 'z', 0.0)) * getattr(self, '_imu_vertical_sign', 1.0)
-
-                dt = now_t - getattr(self, '_last_gyro_ts', now_t)
-                self._last_gyro_ts = now_t
-                if 0.001 < dt < 0.2:
-                    with self.imu_lock:
-                        self.latest_imu_gyro_z = w_vert
-                        self.imu_accumulated_yaw += w_vert * dt
-                        self.latest_imu_yaw = math.atan2(math.sin(self.imu_accumulated_yaw), math.cos(self.imu_accumulated_yaw))
-                        self.has_imu = True
-                        self._imu_packet_count = getattr(self, '_imu_packet_count', 0) + 1
-                        self.last_imu_read_time = now_t
-        except Exception:
-            pass
-
     def reset_imu_heading(self):
         """Đặt lại mốc góc quay tích phân IMU về 0 rad để đo cung quay mới"""
-        with self.imu_lock:
-            self.imu_accumulated_yaw = 0.0
-            self._last_raw_imu_yaw = None
-            self._last_gyro_ts = None
+        self.imu_accumulated_yaw = 0.0
+        self._last_raw_imu_yaw = None
 
     def get_imu_heading(self):
-        """Trả về (has_imu, continuous_accumulated_yaw_rad, current_raw_yaw_rad) ở tần số thời gian thực"""
-        with self.imu_lock:
-            last_t = getattr(self, 'last_imu_read_time', 0.0)
-            if not getattr(self, 'has_imu', False) or last_t == 0.0:
-                return False, 0.0, 0.0
-            is_active = (time.time() - last_t) < 1.5
-            return is_active, float(self.imu_accumulated_yaw), float(self.latest_imu_yaw)
+        """Trả về (has_imu, continuous_accumulated_yaw_rad, current_raw_yaw_rad)"""
+        return bool(self.has_imu), float(self.imu_accumulated_yaw), float(self.latest_imu_yaw)
 
     def get_visual_keyframe(self, bgr_img=None):
         """Trích xuất ảnh mốc chuẩn (Anchor Keyframe) 160x90 float32 grayscale để khóa vòng lặp (Loop Closure)"""
@@ -1275,90 +908,78 @@ class CameraStreamer:
         v_end = int(h * 0.65)
         v_slice = depth_uint16_mm[v_start:v_end, :]
 
-        # Lấy mẫu ngang theo số lượng tia quét phân bố đều trên FOV của camera
-        ray_count = getattr(config, 'RAY_SAMPLE_COUNT', 120)
-        u_cols = np.linspace(15, w - 15, ray_count, dtype=np.int32)
+        # Lấy mẫu ngang 60 góc quét phân bố đều trên FOV của camera
+        u_cols = np.linspace(15, w - 15, 60, dtype=np.int32)
         cos_y = math.cos(yaw)
         sin_y = math.sin(yaw)
-        cam_offset_x = float(getattr(config, 'CAMERA_OFFSET_FORWARD_M', 0.09))
-        cam_offset_y = float(getattr(config, 'CAMERA_OFFSET_LATERAL_M', -0.015))
-        cam_height_z = float(getattr(config, 'CAMERA_HEIGHT_M', 0.12))
-        cam_pitch_deg = float(getattr(config, 'CAMERA_PITCH_DEG', 0.0))
-        pitch_rad = math.radians(cam_pitch_deg)
-        cos_p = math.cos(pitch_rad)
-        sin_p = math.sin(pitch_rad)
-        max_depth_m = float(getattr(config, 'CAMERA_MAX_MAP_DIST_M', 2.80))
 
-        # ─── TỐI ƯU HÓA VECTOR HÓA NUMPY (NHANH GẤP 14X LẦN VÒNG LẶP PYTHON) ───
-        num_rows = v_end - v_start
-        v_indices = (np.arange(num_rows, dtype=np.float32) + v_start)[:, None]  # Shape (num_rows, 1)
-        t_cols = v_slice[:, u_cols].astype(np.float32) / 1000.0                # Shape (num_rows, 60)
+        scan_pts = []
+        robot_pts = []
+        ray_distances = []
+        ray_types = []
+        total_rays = len(u_cols)
+        obs_count = 0
+        valid_count = 0
 
-        y_cam_all = (v_indices - self.cy) * t_cols / self.fy                   # Shape (num_rows, 60)
+        for u in u_cols:
+            col_z = v_slice[:, u].astype(np.float32) / 1000.0
+            valid_mask = (col_z > 0.15) & (col_z < 3.5)
+            if not np.any(valid_mask):
+                ray_distances.append(0.0)
+                ray_types.append(-1)
+                continue
 
-        # Tính độ cao z_rob_all so với mặt sàn chuẩn xác (bù góc pitch nếu camera hơi cúp/ngửa)
-        if abs(pitch_rad) > 1e-4:
-            y_leveled = t_cols * sin_p + y_cam_all * cos_p
-            z_rob_all = -y_leveled + cam_height_z
-        else:
-            z_rob_all = -y_cam_all + cam_height_z
+            valid_count += 1
+            valid_z = col_z[valid_mask]
+            valid_v = np.where(valid_mask)[0] + v_start
 
-        valid_all = (t_cols > 0.15) & (t_cols <= max_depth_m)                 # Shape (num_rows, 60)
-        # Vật cản thực tế: cao hơn mặt sàn >= 0.04m (4cm) để loại bỏ sàn nhà, và <= 0.85m
-        obs_mask_all = valid_all & (z_rob_all >= 0.04) & (z_rob_all <= 0.85)  # Shape (num_rows, 60)
+            # Tính độ cao z_rob trong tọa độ xe cho các điểm hợp lệ
+            y_cam = (valid_v - self.cy) * valid_z / self.fy
+            z_rob = -y_cam + 0.12
 
-        has_obs = np.any(obs_mask_all, axis=0)                                 # Shape (60,)
-        has_valid = np.any(valid_all, axis=0)                                  # Shape (60,)
+            # Lọc chỉ lấy các điểm thực sự là vật cản (cao hơn sàn 5cm và dưới trần 85cm)
+            obs_mask = (z_rob >= 0.05) & (z_rob <= 0.85)
+            if not np.any(obs_mask):
+                ray_distances.append(round(float(np.min(valid_z)), 2))
+                ray_types.append(0)
+                continue
 
-        col_indices = np.arange(len(u_cols))
+            obs_count += 1
+            obs_z = valid_z[obs_mask]
+            obs_v = valid_v[obs_mask]
+            min_idx = np.argmin(obs_z)
+            closest_z = float(obs_z[min_idx])
+            closest_v = float(obs_v[min_idx])
 
-        # 1. Tìm vật cản gần nhất (min z) cho các cột có vật cản:
-        z_for_obs = np.where(obs_mask_all, t_cols, 1e9)
-        min_row_obs = np.argmin(z_for_obs, axis=0)
-        min_z_obs = t_cols[min_row_obs, col_indices]
-        min_v_obs = v_indices[min_row_obs, 0]
+            ray_distances.append(round(closest_z, 2))
+            ray_types.append(1)
 
-        # 2. Tìm khoảng thoáng xa nhất của mặt sàn cho các cột không có cản:
-        z_for_floor = np.where(valid_all, t_cols, -1e9)
-        max_z_floor = np.clip(np.max(z_for_floor, axis=0), 0.15, max_depth_m)
+            # Chiếu sang tọa độ Robot:
+            x_cam = (u - self.cx) * closest_z / self.fx
+            y_cam = (closest_v - self.cy) * closest_z / self.fy
 
-        # 3. Tính toán không gian đồng loạt cho cả 60 cột:
-        cz = np.where(has_obs, min_z_obs, max_z_floor)
-        xc = (u_cols - self.cx) * cz / self.fx
-        yc = np.where(has_obs, (min_v_obs - self.cy) * cz / self.fy, 0.0)
+            x_rob = closest_z
+            y_rob = -x_cam
+            z_rob_pt = -y_cam + 0.12
 
-        if abs(pitch_rad) > 1e-4:
-            zc_leveled = cz * cos_p - yc * sin_p
-            yc_leveled = cz * sin_p + yc * cos_p
-        else:
-            zc_leveled = cz
-            yc_leveled = yc
+            # Chiếu sang tọa độ Bản đồ toàn cục (World Frame):
+            wx = rx + (x_rob * cos_y - y_rob * sin_y)
+            wy = ry + (x_rob * sin_y + y_rob * cos_y)
+            wz = z_rob_pt
 
-        zr = np.where(has_obs, -yc_leveled + cam_height_z, 0.02)
+            scan_pts.append([round(wx, 3), round(wy, 3), round(wz, 3)])
+            robot_pts.append([round(x_rob, 3), round(y_rob, 3), round(z_rob_pt, 3)])
 
-        # Vị trí vật cản trong hệ tọa độ robot (gốc tại tâm trục bánh xe, mặt sàn):
-        x_rob = zc_leveled + cam_offset_x
-        y_rob = -xc + cam_offset_y
+        self.last_total_rays = total_rays
+        self.last_obs_rays = obs_count
+        self.last_valid_rays = valid_count
+        self.last_floor_rays = max(0, valid_count - obs_count)
+        self.last_blind_rays = max(0, total_rays - valid_count)
+        self.last_ray_distances = ray_distances
+        self.last_ray_types = ray_types
 
-        wx = rx + (x_rob * cos_y - y_rob * sin_y)
-        wy = ry + (x_rob * sin_y + y_rob * cos_y)
-        wz = zr
-
-        valid_idx = np.where(has_valid)[0]
-        obs_idx = np.where(has_valid & has_obs)[0]
-
-        self.last_total_rays = int(len(u_cols))
-        self.last_valid_rays = int(len(valid_idx))
-        self.last_obs_rays = int(len(obs_idx))
-        self.last_floor_rays = int(len(valid_idx) - len(obs_idx))
-        self.last_blind_rays = int(len(u_cols) - len(valid_idx))
-        # 60 khoảng cách quét ngang trải đều FOV phục vụ hiển thị phổ quang học
-        step_sub = max(1, len(u_cols) // 60)
-        self.last_ray_distances = [round(float(cz[j]), 2) for j in range(0, len(u_cols), step_sub)]
-        self.last_ray_types = [int(1 if has_obs[j] else (0 if has_valid[j] else -1)) for j in range(0, len(u_cols), step_sub)]
-
-        self.points_3d = [[round(float(wx[j]), 3), round(float(wy[j]), 3), round(float(wz[j]), 3)] for j in valid_idx]
-        self.points_robot = [[round(float(x_rob[j]), 3), round(float(y_rob[j]), 3), round(float(wz[j]), 3)] for j in obs_idx]
+        self.points_3d = scan_pts
+        self.points_robot = robot_pts
         return self.points_3d
 
 
