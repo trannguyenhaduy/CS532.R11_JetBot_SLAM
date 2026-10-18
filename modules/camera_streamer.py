@@ -248,14 +248,28 @@ class CameraStreamer:
             else:
                 # ─── DEPTHAI V2 API (Jetson Nano / Ubuntu ROS) ───
                 cam_rgb = pipeline.create(dai.node.ColorCamera)
-                cam_rgb.setPreviewSize(640, 480)
+                try:
+                    cam_rgb.setResolution(dai.ColorCameraProperties.SensorResolution.THE_1080_P)
+                except Exception:
+                    pass
                 cam_rgb.setInterleaved(False)
                 cam_rgb.setColorOrder(dai.ColorCameraProperties.ColorOrder.BGR)
                 cam_rgb.setFps(30)
+                # Tắt center-crop để bảo toàn 100% góc rộng thấu kính OAK-D S2
+                try:
+                    cam_rgb.setPreviewKeepAspectRatio(False)
+                except Exception:
+                    pass
 
                 xout_rgb = pipeline.create(dai.node.XLinkOut)
                 xout_rgb.setStreamName("rgb")
-                cam_rgb.preview.link(xout_rgb.input)
+                # Ưu tiên luồng Video Full FOV không bị crop tâm (không bị phóng to)
+                try:
+                    cam_rgb.setVideoSize(640, 480)
+                    cam_rgb.video.link(xout_rgb.input)
+                except Exception:
+                    cam_rgb.setPreviewSize(640, 480)
+                    cam_rgb.preview.link(xout_rgb.input)
 
                 try:
                     mono_l = pipeline.create(dai.node.MonoCamera)
@@ -435,13 +449,25 @@ class CameraStreamer:
                         print(f"⚠️ [OAK-D VPU/IMU] Thử lại pipeline cơ bản không VPU/IMU ({ex_dev})...")
                         pipeline = dai.Pipeline()
                         cam_rgb = pipeline.create(dai.node.ColorCamera)
-                        cam_rgb.setPreviewSize(640, 480)
+                        try:
+                            cam_rgb.setResolution(dai.ColorCameraProperties.SensorResolution.THE_1080_P)
+                        except Exception:
+                            pass
                         cam_rgb.setInterleaved(False)
                         cam_rgb.setColorOrder(dai.ColorCameraProperties.ColorOrder.BGR)
                         cam_rgb.setFps(30)
+                        try:
+                            cam_rgb.setPreviewKeepAspectRatio(False)
+                        except Exception:
+                            pass
                         xout_rgb = pipeline.create(dai.node.XLinkOut)
                         xout_rgb.setStreamName("rgb")
-                        cam_rgb.preview.link(xout_rgb.input)
+                        try:
+                            cam_rgb.setVideoSize(640, 480)
+                            cam_rgb.video.link(xout_rgb.input)
+                        except Exception:
+                            cam_rgb.setPreviewSize(640, 480)
+                            cam_rgb.preview.link(xout_rgb.input)
                         if has_stereo:
                             mono_l = pipeline.create(dai.node.MonoCamera)
                             mono_l.setResolution(dai.MonoCameraProperties.SensorResolution.THE_400_P)

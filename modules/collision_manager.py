@@ -121,8 +121,13 @@ class CollisionManager:
         target_dir = self.blocked_dir if label == 'blocked' else self.free_dir
 
         try:
+            # Chỉ lấy 75% chiều cao phía dưới của ảnh (cắt bỏ 25% phía trên - trần nhà/chân trời)
+            h, w = frame_bgr.shape[:2]
+            crop_y = int(round(h * 0.25))
+            roi = frame_bgr[crop_y:, :]
+
             # Resize về 224x224 chuẩn đầu vào nơ-ron
-            img_resized = cv2.resize(frame_bgr, (224, 224), interpolation=cv2.INTER_AREA)
+            img_resized = cv2.resize(roi, (224, 224), interpolation=cv2.INTER_AREA)
 
             timestamp = time.strftime("%Y%m%d_%H%M%S")
             unique_id = uuid.uuid4().hex[:6]
@@ -556,8 +561,13 @@ class CollisionManager:
             return 1.0, 0.0
 
         try:
+            # Cắt bỏ 25% phía trên (chỉ lấy 75% chiều cao phía dưới) đồng bộ 100% với dữ liệu train
+            h, w = frame_bgr.shape[:2]
+            crop_y = int(round(h * 0.25))
+            roi = frame_bgr[crop_y:, :]
+
             # Tiền xử lý nhanh bằng OpenCV + NumPy:
-            rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+            rgb = cv2.cvtColor(roi, cv2.COLOR_BGR2RGB)
             resized = cv2.resize(rgb, (224, 224), interpolation=cv2.INTER_LINEAR)
             img_norm = (resized.astype(np.float32) / 255.0 - np.array([0.485, 0.456, 0.406])) / np.array([0.229, 0.224, 0.225])
             tensor = torch.from_numpy(img_norm.transpose(2, 0, 1)).unsqueeze(0).float().to(self.device)
