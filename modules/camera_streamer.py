@@ -17,6 +17,15 @@ if hasattr(sys.stdout, 'reconfigure'):
     try: sys.stdout.reconfigure(encoding='utf-8')
     except Exception: pass
 
+try:
+    import config
+except ImportError:
+    try:
+        sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+        import config
+    except Exception:
+        config = None
+
 # 20 nhãn lớp chuẩn của mô hình MobileNet-SSD trên VPU Myriad X
 MOBILENET_LABELS = [
     "background", "aeroplane", "bicycle", "bird", "boat", "bottle", "bus",
@@ -670,7 +679,8 @@ class CameraStreamer:
             forward_clearance_mm = 9999.0  # Đường thoáng (> 4.0m)
 
         c_cm = forward_clearance_mm / 10.0
-        brake_dist_cm = float(getattr(config, 'SAFETY_BRAKE_DIST_M', 0.20)) * 100.0
+        brake_dist_m = getattr(config, 'SAFETY_BRAKE_DIST_M', 0.20) if config else 0.20
+        brake_dist_cm = float(brake_dist_m) * 100.0
         self.is_emergency_braked = bool(self.obstacle_distance is not None and c_cm <= (brake_dist_cm + 0.5))
 
         # ─── 1. CHẾ ĐỘ CAMERA NHIỆT (THERMAL HEATMAP) ───
