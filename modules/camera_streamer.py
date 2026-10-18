@@ -620,18 +620,42 @@ class CameraStreamer:
                     if math.isnan(z_raw) or math.isinf(z_raw) or z_raw < 80.0 or z_raw > 4500.0:
                         continue
 
-                    x_m = round(x_raw / 1000.0, 2)
-                    y_m = round(y_raw / 1000.0, 2)
-                    z_m = round(z_raw / 1000.0, 2)
-
-                    bx1 = max(0, min(fw - 2, int(d.xmin * fw)))
-                    by1 = max(0, min(fh - 2, int(d.ymin * fh)))
-                    bx2 = max(bx1 + 10, min(fw - 1, int(d.xmax * fw)))
-                    by2 = max(by1 + 10, min(fh - 1, int(d.ymax * fh)))
+                    bx1 = max(0, min(fw - 2, int(round(d.xmin * fw))))
+                    by1 = max(0, min(fh - 2, int(round(d.ymin * fh))))
+                    bx2 = max(bx1 + 10, min(fw - 1, int(round(d.xmax * fw))))
+                    by2 = max(by1 + 10, min(fh - 1, int(round(d.ymax * fh))))
 
                     # Lọc bỏ nhiễu pixel quá nhỏ
                     if (bx2 - bx1) < 18 or (by2 - by1) < 18:
                         continue
+
+                    # Đo khoảng cách thực tế chính xác bằng ma trận Depth bên trong bounding box
+                    z_m = round(z_raw / 1000.0, 2)
+                    if depth is not None and isinstance(depth, np.ndarray):
+                        dh, dw = depth.shape[:2]
+                        du1 = max(0, min(dw - 1, int(round(bx1 * dw / fw))))
+                        du2 = max(du1 + 4, min(dw, int(round(bx2 * dw / fw))))
+                        dv1 = max(0, min(dh - 1, int(round(by1 * dh / fh))))
+                        dv2 = max(dv1 + 4, min(dh, int(round(by2 * dh / fh))))
+                        # Lấy vùng tâm 60% của hộp để đo chính xác bề mặt vật thể thật
+                        box_w = du2 - du1
+                        box_h = dv2 - dv1
+                        c_u1 = du1 + int(box_w * 0.20)
+                        c_u2 = du2 - int(box_w * 0.20)
+                        c_v1 = dv1 + int(box_h * 0.20)
+                        c_v2 = dv2 - int(box_h * 0.20)
+                        roi_d = depth[c_v1:c_v2, c_u1:c_u2]
+                        # Lọc các điểm đo hợp lệ từ 100mm (10cm) đến 4500mm (4.5m)
+                        valid_pts = roi_d[(roi_d >= 100) & (roi_d <= 4500)]
+                        if len(valid_pts) >= 10:
+                            # Phân vị 20%: Lấy mép trước gần nhất của vật thể
+                            z_m = round(float(np.percentile(valid_pts, 20)) / 1000.0, 2)
+
+                    # Tọa độ không gian (x, y) chuẩn xác theo hình học quang học camera
+                    u_center = (bx1 + bx2) / 2.0
+                    v_center = (by1 + by2) / 2.0
+                    x_m = round(float((u_center - (fw / 2.0)) * z_m / 450.0), 2)
+                    y_m = round(float((v_center - (fh / 2.0)) * z_m / 450.0), 2)
 
                     vpu_dets.append({
                         "id": 0,

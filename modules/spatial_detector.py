@@ -572,42 +572,49 @@ class SpatialPerceptionEngine:
     def calculate_obstacle_distance(cls, depth_frame, fallback_detections=None):
         """
         Tính cự ly vật cản trung tâm chuẩn xác theo thuật toán test_emergency_brake.py:
-        - Hành lang trung tâm: w từ 25% đến 75%, h từ 18% đến 60%
-        - Lọc các điểm đo vật lý hợp lệ từ 50mm đến 3500mm
-        - Lấy phân vị 5% (5th Percentile) để bắt mép cản gần nhất
-        - Chống điểm mù stereo: Khi cản áp sát < 18cm, giữ cự ly phanh khẩn cấp 0.20m thay vì trả về None
-        - Fallback: Trích xuất cự ly Z nhỏ nhất từ các đối tượng 3D trước mặt
+        - Hành lang trung tâm: w từ 25% đến 75%, h từ 15% đến 65%
+        - Lọc cao độ hình học so với sàn nhà (z_height >= 4cm và <= 85cm)
+        - Lấy phân vị 15% (15th Percentile) để bắt mép cản gần nhất
+        - Chống điểm mù stereo: Khi cản áp sát < 15cm, giữ cự ly phanh khẩn cấp 0.18m
+        - Fallback: Trích xuất cự ly Z nhỏ nhất từ các đối tượng 3D trước mặt trong hành lang xe chạy (|x| <= 0.28m)
         """
         if depth_frame is not None and isinstance(depth_frame, np.ndarray):
             dh, dw = depth_frame.shape[:2]
             if dh >= 10 and dw >= 10:
-                # Giới hạn 10% đến 40% chiều cao để không chạm sàn nhà (JetBot camera thấp 12cm)
-                h_start, h_end = int(dh * 0.10), int(dh * 0.40)
+                h_start, h_end = int(dh * 0.15), int(dh * 0.65)
                 w_start, w_end = int(dw * 0.25), int(dw * 0.75)
                 roi = depth_frame[h_start:h_end, w_start:w_end]
 
                 if np.issubdtype(roi.dtype, np.floating):
                     roi = np.nan_to_num(roi, nan=0.0, posinf=0.0, neginf=0.0)
 
-                if roi.dtype == np.uint16 or (roi.size > 0 and roi.max() > 50.0):
-                    roi_mm = roi.astype(np.float32)
+                if roi.dtype == np.uint16 or (roi.size > 0 and np.max(roi) > 50.0):
+                    roi_m = roi.astype(np.float32) / 1000.0
                 else:
-                    roi_mm = roi.astype(np.float32) * 1000.0
+                    roi_m = roi.astype(np.float32)
 
-                valid = roi_mm[(roi_mm >= 150.0) & (roi_mm <= 3500.0)]
+                valid_mask = (roi_m >= 0.10) & (roi_m <= 3.5)
+                num_rows = h_end - h_start
+                cy = dh / 2.0
+                fy = dh * 0.9375
+                v_idx = (np.arange(num_rows, dtype=np.float32) + h_start)[:, None]
+                y_cam = (v_idx - cy) * roi_m / fy
+                z_height_above_floor = -y_cam + 0.12
+
+                obs_mask = valid_mask & (z_height_above_floor >= 0.04) & (z_height_above_floor <= 0.85)
+                valid = roi_m[obs_mask]
                 if len(valid) >= 20:
-                    dist_mm = float(np.percentile(valid, 15))
-                    dist_m = round(max(0.18, dist_mm / 1000.0), 2)
+                    dist_m = round(float(np.percentile(valid, 15)), 2)
                     cls._last_obstacle_dist = dist_m
                     return dist_m
-                elif roi_mm.size > 0 and (np.count_nonzero(roi_mm < 100.0) / float(roi_mm.size)) > 0.45 and (cls._last_obstacle_dist is not None and cls._last_obstacle_dist <= 0.45):
+                elif roi_m.size > 0 and (np.count_nonzero(roi_m < 0.10) / float(roi_m.size)) > 0.45 and (cls._last_obstacle_dist is not None and cls._last_obstacle_dist <= 0.45):
                     # Điểm mù stereo: vật cản che kín phía trước ở cự ly áp sát
-                    cls._last_obstacle_dist = 0.20
-                    return 0.20
+                    cls._last_obstacle_dist = 0.18
+                    return 0.18
 
         # Fallback khi dùng Webcam Laptop hoặc khi ảnh depth chưa kịp hội tụ
         if fallback_detections:
-            front_objs = [d for d in fallback_detections if abs(d.get('x', 0.0)) <= 0.65 and d.get('z', 99) > 0.08]
+            front_objs = [d for d in fallback_detections if abs(d.get('x', 0.0)) <= 0.28 and d.get('z', 99) > 0.08]
             if front_objs:
                 min_z = min(d['z'] for d in front_objs)
                 dist_m = round(max(0.18, min_z), 2)

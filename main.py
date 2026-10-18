@@ -1324,8 +1324,20 @@ class JetBotMasterSystem:
                 if getattr(self, 'collision_mgr', None) and self.collision_mgr.is_avoiding:
                     frame = self.latest_raw_bgr if self.latest_raw_bgr is not None else (getattr(self.camera, 'latest_bgr', None) if self.camera else None)
                     if frame is not None:
-                        p_free, p_blocked = self.collision_mgr.predict(frame)
-                        v, w, desc = self.collision_mgr.compute_avoidance_cmd(p_blocked, base_speed=0.05, turn_speed=0.40)
+                        # Throttle suy luận AI ở nhịp 7-8Hz (~130ms) để không nghẽn luồng điều khiển và triệt tiêu độ trễ
+                        last_pred_t = getattr(self, '_last_ai_pred_time', 0.0)
+                        if (now - last_pred_t) >= 0.13:
+                            p_free, p_blocked = self.collision_mgr.predict(frame)
+                            self._cached_ai_pred = (p_free, p_blocked)
+                            self._last_ai_pred_time = now
+                        else:
+                            p_free, p_blocked = getattr(self, '_cached_ai_pred', (1.0, 0.0))
+
+                        v, w, desc = self.collision_mgr.compute_avoidance_cmd(
+                            p_blocked,
+                            base_speed=float(getattr(config, 'NAV_LINEAR_SPEED', 0.15)),
+                            turn_speed=float(getattr(config, 'NAV_TURN_SPEED', 1.10))
+                        )
                         if v is not None and w is not None:
                             # Khóa an toàn Virtual Bumper phanh cứng nếu có
                             if self.safety_brake and self.safety_brake.is_enabled and v > 0.01:
@@ -1381,9 +1393,9 @@ class JetBotMasterSystem:
             if self.flags.yolo and self.yolo and (self.latest_raw_bgr is not None):
                 try:
                     now = time.time()
-                    # Nếu đang có luồng nhận diện từ VPU của OAK-D (qua ROS trong 1.8s gần nhất),
-                    # KHÔNG chạy fallback CPU để tránh ghi đè làm mất các vật thể từ OAK-D
-                    vpu_active = (now - getattr(self, 'last_vpu_det_time', 0.0) < 1.8)
+                    # Nếu đang có luồng nhận diện từ VPU của OAK-D (qua ROS trong 1.8s gần nhất hoặc OAK-D trực tiếp),
+                    # KHÔNG chạy fallback CPU để tránh làm nghẽn CPU 100% trên Jetson Nano
+                    vpu_active = (now - getattr(self, 'last_vpu_det_time', 0.0) < 1.8) or getattr(self.camera, 'is_oak_connected', False)
 
                     if not vpu_active:
                         frame = self.latest_raw_bgr
@@ -1450,7 +1462,8 @@ class JetBotMasterSystem:
                     with self.lock:
                         self.detections = tracked
                         self.last_vpu_det_time = now
-                        vpu_dists = [d['z'] for d in tracked if 'z' in d and 0.06 <= d['z'] <= 2.0]
+                        # Chỉ xét các vật thể trong hành lang di chuyển phía trước mũi xe (|x| <= 0.28m)
+                        vpu_dists = [d['z'] for d in tracked if 'z' in d and 0.06 <= d['z'] <= 2.0 and abs(d.get('x', 0.0)) <= 0.28]
                         self.last_yolo_clearance = min(vpu_dists) if vpu_dists else 99.0
                     self._update_fused_obstacle_clearance()
                 elif (now - getattr(self, 'last_vpu_det_time', 0.0)) > 0.55:
@@ -2514,7 +2527,7 @@ class JetBotMasterSystem:
         """
         steps = 12
         step_deg = 30.0
-        total_time_est = steps * (1.1 + 0.55)
+        total_time_est = steps * (0.65 + 0.35)
         self.auto_scan_duration = total_time_est
         self.auto_scan_remaining = total_time_est
         t_start_total = time.time()
@@ -2528,7 +2541,7 @@ class JetBotMasterSystem:
                 anchor_yaw = self.robot_yaw
 
             # Nấc 0 (Tại góc xuất phát 0°): Dừng tĩnh để chụp bức tường mốc ban đầu từ tâm neo
-            time.sleep(0.40)
+            time.sleep(0.30)
             self._capture_static_scan_keyframe(anchor_x, anchor_y, anchor_yaw)
             print("📸 [NẤC 1/12] Đã ghi nhận khung hình mốc ban đầu tại 0°.")
 
@@ -2541,13 +2554,13 @@ class JetBotMasterSystem:
                 pct_done = int((i - 1) / steps * 100)
                 print(f" ▶️ [NẤC {i}/{steps}] Đang quay 30° CCW hướng tới mốc {target_heading_deg:.0f}°... ({pct_done}%)")
 
-                # 1. Quay 30 độ CCW bằng _step_worker (đồng bộ chuẩn xác theo STEP_TURN_MIN_PWM)
+                # 1. Quay 30 độ CCW bằng _step_worker (tốc độ cao dứt khoát 16% PWM)
                 with self.lock:
                     self.is_step_running = True
                     self.step_move_type = 'turn'
                     self.step_cancel_requested = False
 
-                turn_pwm_val = scan_pwm if scan_pwm else float(getattr(config, 'STEP_TURN_MIN_PWM', getattr(config, 'AUTO_SCAN_SPEED_PWM', 0.11)))
+                turn_pwm_val = scan_pwm if scan_pwm else float(getattr(config, 'AUTO_SCAN_SPEED_PWM', getattr(config, 'STEP_TURN_MIN_PWM', 0.16)))
                 scan_spd_pct = round(turn_pwm_val * 100.0, 1)
                 self._step_worker('turn', step_deg, 'left', speed_pct=scan_spd_pct)
 
@@ -2564,7 +2577,7 @@ class JetBotMasterSystem:
                     self.robot_yaw = step_target_yaw
                     self.current_v = 0.0
                     self.current_w = 0.0
-                time.sleep(0.55)
+                time.sleep(0.35)
 
                 # 3. Chụp và cập nhật Keyframe tĩnh vào bản đồ Occupancy Grid từ tâm neo chuẩn xác
                 self._capture_static_scan_keyframe(anchor_x, anchor_y, step_target_yaw)

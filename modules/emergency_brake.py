@@ -56,9 +56,8 @@ class EmergencyBrake:
             self.last_clearance_m = 99.0
             return 99.0
 
-        # Vùng kiểm soát hành lang cản: 10% đến 40% chiều cao (trên mặt sàn)
-        # JetBot camera đặt thấp (12cm), giới hạn h <= 0.40h để tránh tuyệt đối quét trúng sàn nhà phẳng
-        h_start, h_end = int(h * 0.10), int(h * 0.40)
+        # Vùng kiểm soát hành lang cản trước mũi xe: w từ 25% đến 75%, h từ 15% đến 65%
+        h_start, h_end = int(h * 0.15), int(h * 0.65)
         w_start, w_end = int(w * 0.25), int(w * 0.75)
         roi = depth_frame[h_start:h_end, w_start:w_end]
 
@@ -72,12 +71,22 @@ class EmergencyBrake:
         else:
             roi_m = roi.astype(np.float32)
 
-        # Lọc các điểm đo vật lý hợp lệ trong cự ly từ 10cm đến 3.5m (bao quát vùng an toàn 22cm)
-        valid = roi_m[(roi_m >= 0.10) & (roi_m <= 3.5)]
+        valid_mask = (roi_m >= 0.10) & (roi_m <= 3.5)
+
+        # Lọc cao độ hình học so với mặt sàn: Chỉ lấy điểm cao hơn sàn >= 4cm (0.04m) và <= 85cm (0.85m)
+        num_rows = h_end - h_start
+        cy = h / 2.0
+        fy = h * 0.9375  # FOV chuẩn OAK-D S2 (~55-60°)
+        v_idx = (np.arange(num_rows, dtype=np.float32) + h_start)[:, None]
+        y_cam = (v_idx - cy) * roi_m / fy
+        z_height_above_floor = -y_cam + 0.12  # Chiều cao tâm thấu kính 12cm
+
+        obs_mask = valid_mask & (z_height_above_floor >= 0.04) & (z_height_above_floor <= 0.85)
+        valid = roi_m[obs_mask]
 
         # Phải có đủ số lượng điểm tối thiểu để tránh nhiễu do điểm ảnh chết hoặc sàn trơn
         if len(valid) >= self.min_pts_threshold:
-            # Lấy phân vị 15% để tránh vài hạt nhiễu sàn nhà kích hoạt phanh oan
+            # Lấy phân vị 15%: Bắt chính xác mép cản gần nhất trước mặt
             clearance = float(np.percentile(valid, 15))
             self.last_clearance_m = round(clearance, 2)
         elif roi_m.size > 0 and (np.count_nonzero(roi_m < 0.10) / float(roi_m.size)) > 0.45 and self.last_clearance_m <= 0.45:
