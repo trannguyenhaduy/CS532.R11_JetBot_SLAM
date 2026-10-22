@@ -1608,6 +1608,9 @@
           <a href="/api/session/export" download class="tab-btn" style="padding:6px 14px; font-weight:700; color:var(--emerald); border-color:var(--emerald); background:rgba(0,255,163,0.15); cursor:pointer; text-decoration:none; display:inline-flex; align-items:center; gap:6px;">
             📥 TẢI DỮ LIỆU FRAME (ZIP)
           </a>
+          <button onclick="resetRecordingSession()" class="tab-btn" style="padding:6px 12px; font-size:0.72rem; font-weight:700; color:var(--purple); border-color:var(--purple); background:rgba(180,100,255,0.12); cursor:pointer;" title="Bắt đầu phiên ghi nhận hộp đen hoàn toàn mới">
+            ✨ LÀM MỚI PHIÊN (NEW SESSION)
+          </button>
           <div id="insp-record-badge" class="batt-badge" style="padding:5px 12px; font-size:0.72rem; font-family:'Orbitron',monospace; font-weight:700; color:var(--dim); border-color:var(--dim);">
             📹 GHI: CHỜ LỆNH
           </div>
@@ -2175,6 +2178,32 @@
             <div class="cfg-param-controls">
               <input type="range" class="cfg-slider" id="sld-motor_trim_right" min="0.700" max="1.300" step="0.005" oninput="syncConfigInput('motor_trim_right', this.value)">
               <input type="number" class="cfg-num-input" id="num-motor_trim_right" step="0.005" onchange="syncConfigInput('motor_trim_right', this.value)">
+            </div>
+          </div>
+
+          <!-- motor_trim_backward_left -->
+          <div class="cfg-param-row">
+            <div class="cfg-param-top">
+              <span class="cfg-param-label">Bù Ga LÙI Bánh Trái (Trim Backward Left)</span>
+              <span class="cfg-param-code">motor_trim_backward_left</span>
+            </div>
+            <div class="cfg-param-desc">Hệ số nhân ga bánh trái khi LÙI (1.000 = 100%, tăng nếu xe lùi bị quẹo trái).</div>
+            <div class="cfg-param-controls">
+              <input type="range" class="cfg-slider" id="sld-motor_trim_backward_left" min="0.700" max="1.300" step="0.005" oninput="syncConfigInput('motor_trim_backward_left', this.value)">
+              <input type="number" class="cfg-num-input" id="num-motor_trim_backward_left" step="0.005" onchange="syncConfigInput('motor_trim_backward_left', this.value)">
+            </div>
+          </div>
+
+          <!-- motor_trim_backward_right -->
+          <div class="cfg-param-row">
+            <div class="cfg-param-top">
+              <span class="cfg-param-label">Bù Ga LÙI Bánh Phải (Trim Backward Right)</span>
+              <span class="cfg-param-code">motor_trim_backward_right</span>
+            </div>
+            <div class="cfg-param-desc">Hệ số nhân ga bánh phải khi LÙI (1.000 = 100%, tăng nếu xe lùi bị quẹo phải).</div>
+            <div class="cfg-param-controls">
+              <input type="range" class="cfg-slider" id="sld-motor_trim_backward_right" min="0.700" max="1.300" step="0.005" oninput="syncConfigInput('motor_trim_backward_right', this.value)">
+              <input type="number" class="cfg-num-input" id="num-motor_trim_backward_right" step="0.005" onchange="syncConfigInput('motor_trim_backward_right', this.value)">
             </div>
           </div>
 
@@ -4829,6 +4858,17 @@
         .catch(err => console.warn('Lỗi resume debug:', err));
     }
 
+    async function resetRecordingSession() {
+      if (!confirm("Bắt đầu phiên ghi nhận hộp đen hoàn toàn mới?\n(Các frame sắp tới sẽ được lưu vào session mới, không ảnh hưởng file ZIP đã tải)")) return;
+      try {
+        const res = await fetch('/api/session/reset');
+        const data = await res.json();
+        alert(`✅ Đã khởi tạo phiên ghi mới: ${data.session_id}`);
+      } catch (e) {
+        alert("Lỗi kết nối tới máy chủ JetBot");
+      }
+    }
+
     function updateInspectorControlsUI() {
       const badge = document.getElementById('insp-stream-badge');
       const btn = document.getElementById('btn-insp-pause');
@@ -5671,7 +5711,7 @@
     // ══════════════════════════════════════════════════════════════════════
     let fullConfigData = null;
     const CONFIG_PARAMS_LIST = [
-      'motor_trim_left', 'motor_trim_right', 'heading_lock_kp',
+      'motor_trim_left', 'motor_trim_right', 'motor_trim_backward_left', 'motor_trim_backward_right', 'heading_lock_kp',
       'step_forward_scale', 'step_backward_scale', 'default_speed_pwm',
       'step_turn_left_scale', 'step_turn_right_scale', 'step_turn_min_pwm', 'step_turn_start_latency_s',
       'manual_decel_time_ms', 'safety_brake_dist_m', 'safety_warn_dist_m',

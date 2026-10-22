@@ -16,7 +16,7 @@ ENABLE_MOTORS       = True   # Bật/Tắt module động cơ (PCA9685 I2C 0x60)
 ENABLE_BATTERY      = True   # Bật/Tắt module đọc pin INA219 (I2C 0x41)
 ENABLE_CAMERA       = True   # Bật/Tắt module Camera OAK-D S2
 ENABLE_IMU          = True   # Bật/Tắt cảm biến quán tính IMU phần cứng trên OAK-D S2
-ENABLE_CLOSED_LOOP_IMU = True # Bật vòng điều khiển quay kín theo góc IMU thời gian thực (chuẩn xác ±1°)
+ENABLE_CLOSED_LOOP_IMU = False # False: Quay cơ học mở theo thời gian xấp xỉ, IMU đo góc thực tế ngoài đời để nạp bản đồ 2D
 ENABLE_YOLO         = False  # Tạm TẮT (sẵn sàng nạp YOLO VPU khi bật True)
 ENABLE_FOLLOWER     = False  # Bật/Tắt module tự hành bám người (MẶC ĐỊNH TẮT ĐỂ ƯU TIÊN LÁI TAY)
 ENABLE_MAPPER             = True   # Bật/Tắt module bản đồ 2D Occupancy Grid SLAM
@@ -31,10 +31,12 @@ ENABLE_SAFETY_BRAKE       = True   # Bật tính năng phanh khẩn cấp Virtua
 ENABLE_PATH_PLANNER       = True   # Bật module tìm đường tối ưu A* (Global Path Planner)
 ROBOT_RADIUS_M            = 0.12   # Bán kính thân xe JetBot (12cm)
 COSTMAP_INFLATION_RADIUS_M = 0.20  # Bán kính vùng đệm an toàn chống cạ tường (20cm)
-ENABLE_HEADING_LOCK       = True   # Bật/Tắt khóa hướng đi thẳng chủ động bằng IMU (Active Heading Lock)
-HEADING_LOCK_KP           = 0.50   # Hệ số P khóa hướng mượt mà (0.45 - 0.55), không gây rung lắc giật cục
-MOTOR_TRIM_LEFT           = 1.000  # Cân bằng tĩnh bánh trái (Hardware Wheel Trim)
-MOTOR_TRIM_RIGHT          = 1.020  # Cân bằng tĩnh bánh phải (+2% bù ma sát hộp số)
+ENABLE_HEADING_LOCK       = False  # Mặc định TẮT theo yêu cầu để đi thẳng và lùi thuần cơ khí 100%
+HEADING_LOCK_KP           = 0.50   # Hệ số P khóa hướng mượt mà
+MOTOR_TRIM_LEFT           = 0.995  # Cân bằng bánh trái khi TIẾN (Forward Wheel Trim)
+MOTOR_TRIM_RIGHT          = 1.015  # Cân bằng bánh phải khi TIẾN (Forward Wheel Trim: +1.5% bù ma sát hộp số)
+MOTOR_TRIM_BACKWARD_LEFT  = 1.01  # Cân bằng bánh trái khi LÙI (Backward Wheel Trim)
+MOTOR_TRIM_BACKWARD_RIGHT = 0.99  # Cân bằng bánh phải khi LÙI (Backward Wheel Trim: tinh chỉnh độc lập khi lùi)
 
 # ─── THÔNG SỐ TRẠM ĐIỀU KHIỂN WEB ─────────────────────────────────────────────
 WEB_PORT = 8080
@@ -93,11 +95,11 @@ AUTO_SCAN_DURATION_S  = 4.8             # Thời gian dự phòng khi pin 11.1V 
 #   - Ở chế độ Bước: Thời gian chạy tự động nhân với SCALE để dừng đúng cự ly mong muốn.
 #   - Ở chế độ Thủ công (WASD): Bộ đo hành trình & Bản đồ SLAM tự động quy đổi vận tốc thực (v / SCALE)
 #     để đo đúng 100% khoảng cách xe đã di chuyển trên sàn thực tế!
-STEP_FORWARD_SCALE       = 0.42  # Hệ số hiệu chuẩn TIẾN (dùng chung cho cả Bước cm và Lái tay WASD)
-STEP_BACKWARD_SCALE      = 0.48  # Hệ số hiệu chuẩn LÙI (bù lực cản bánh mắt trâu khi bị kéo ngược)
-STEP_TURN_LEFT_SCALE     = 0.60  # Hệ số hiệu chuẩn QUAY TRÁI (CCW - dự phòng vòng hở khi không có IMU)
-STEP_TURN_RIGHT_SCALE    = 0.60  # Hệ số hiệu chuẩn QUAY PHẢI (CW - dự phòng vòng hở khi không có IMU)
-DEFAULT_SPEED_PWM        = 0.08  # Mức ga cơ bản chạy thẳng (8% PWM - chạy êm, đầm, không trượt bánh)
+STEP_FORWARD_SCALE       = 0.43  # Hệ số hiệu chuẩn TIẾN (dùng chung cho cả Bước cm và Lái tay WASD)
+STEP_BACKWARD_SCALE      = 0.48  # Hệ số hiệu chuẩn LÙI (0.48 theo cấu hình thực tế của bạn)
+STEP_TURN_LEFT_SCALE     = 0.70  # Hệ số hiệu chuẩn QUAY TRÁI (0.70 theo cấu hình thực tế)
+STEP_TURN_RIGHT_SCALE    = 0.70  # Hệ số hiệu chuẩn QUAY PHẢI (0.70 theo cấu hình thực tế)
+DEFAULT_SPEED_PWM        = 0.15  # Mức ga cơ bản chạy thẳng (15% PWM)
 
 # ─── BÙ MÔ-MEN XOAY TẠI CHỖ (IN-PLACE TURN TORQUE COMPENSATION) ────────────────
 STEP_TURN_MIN_PWM        = 0.11  # Mức xung PWM tối thiểu khi quay tại chỗ (11% đủ thắng ma sát trượt ngang)
@@ -116,7 +118,7 @@ NAV_GOAL_TOLERANCE_M        = 0.06  # Bán kính chạm đích dừng xe (6cm)
 NAV_WAYPOINT_TOLERANCE_M    = 0.10  # Bán kính chuyển waypoint tiếp theo (10cm)
 NAV_HEADING_TOLERANCE_RAD   = 0.35  # Dung sai góc lệch (~20 độ) trước khi chuyển từ quay sang tiến
 NAV_KP_ANGULAR              = 1.6   # Hệ số P chỉnh lái bám đường
-ENABLE_FRAME_RECORDER       = False # True: Ghi frame chẩn đoán xuống thư mục logs khi di chuyển
+ENABLE_FRAME_RECORDER       = True  # True: Ghi frame chẩn đoán xuống thư mục logs khi di chuyển
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 🗂️ HỆ THỐNG PROFILES CẤU HÌNH ĐỘNG HỌC & ĐỊA HÌNH (RUNTIME PROFILE MANAGEMENT)
@@ -126,109 +128,45 @@ PROFILES = {}
 
 def load_profiles_from_disk():
     global ACTIVE_CONFIG_PROFILE, PROFILES
-    import json, os
-    cur_dir = os.path.dirname(os.path.abspath(__file__))
-    prof_file = os.path.join(cur_dir, "config_profiles.json")
-    if os.path.exists(prof_file):
-        try:
-            with open(prof_file, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            ACTIVE_CONFIG_PROFILE = int(data.get("active_profile", 1))
-            PROFILES = {int(k): v for k, v in data.get("profiles", {}).items()}
-        except Exception:
-            pass
-
-    if not PROFILES:
-        PROFILES = {}
-
-    # Profile 1 luôn là Chuẩn Mặc Định kế thừa 100% từ các giá trị khai báo trực tiếp trong config.py:
-    # (Đảm bảo người dùng sửa trực tiếp trong config.py là hệ thống nhận ngay lập tức, không bao giờ bị ghi đè)
-    PROFILES[1] = {
-        "id": 1,
-        "name": "Config 1: Chuẩn Mặc Định (Giáp Master)",
-        "description": "Hiệu chuẩn chuẩn xác: Bù ga L:1.000 R:1.020, Bước Tiến 0.42 / Lùi 0.48, Khóa hướng Kp=0.50, Ga 8%",
-        "motor_trim_left": MOTOR_TRIM_LEFT,
-        "motor_trim_right": MOTOR_TRIM_RIGHT,
-        "step_forward_scale": STEP_FORWARD_SCALE,
-        "step_backward_scale": STEP_BACKWARD_SCALE,
-        "step_turn_left_scale": STEP_TURN_LEFT_SCALE,
-        "step_turn_right_scale": STEP_TURN_RIGHT_SCALE,
-        "default_speed_pwm": DEFAULT_SPEED_PWM,
-        "step_turn_min_pwm": STEP_TURN_MIN_PWM,
-        "manual_decel_time_ms": MANUAL_DECEL_TIME_MS,
-        "step_turn_start_latency_s": 0.08,
-        "heading_lock_kp": HEADING_LOCK_KP,
-        "safety_brake_dist_m": SAFETY_BRAKE_DIST_M,
-        "safety_warn_dist_m": SAFETY_WARNING_DIST_M,
-        "camera_offset_forward_m": CAMERA_OFFSET_FORWARD_M,
-        "camera_offset_lateral_m": CAMERA_OFFSET_LATERAL_M,
-        "camera_height_m": CAMERA_HEIGHT_M,
-        "camera_pitch_deg": CAMERA_PITCH_DEG,
-        "wheel_separation_m": WHEEL_SEPARATION_M,
-        "created_at": "config.py (Gốc chuẩn)"
+    ACTIVE_CONFIG_PROFILE = 1
+    # Profile 1 kế thừa 100% từ các giá trị khai báo trực tiếp trong config.py (Nguồn chuẩn duy nhất)
+    PROFILES = {
+        1: {
+            "id": 1,
+            "name": "Config 1: Chuẩn Mặc Định (config.py)",
+            "description": "Hiệu chuẩn chuẩn xác: Bù ga Tiến L:1.000 R:1.015, Lùi L:1.000 R:1.000, Bước Tiến 0.42 / Lùi 0.48, Ga 15%",
+            "motor_trim_left": MOTOR_TRIM_LEFT,
+            "motor_trim_right": MOTOR_TRIM_RIGHT,
+            "motor_trim_backward_left": MOTOR_TRIM_BACKWARD_LEFT,
+            "motor_trim_backward_right": MOTOR_TRIM_BACKWARD_RIGHT,
+            "step_forward_scale": STEP_FORWARD_SCALE,
+            "step_backward_scale": STEP_BACKWARD_SCALE,
+            "step_turn_left_scale": STEP_TURN_LEFT_SCALE,
+            "step_turn_right_scale": STEP_TURN_RIGHT_SCALE,
+            "default_speed_pwm": DEFAULT_SPEED_PWM,
+            "step_turn_min_pwm": STEP_TURN_MIN_PWM,
+            "manual_decel_time_ms": MANUAL_DECEL_TIME_MS,
+            "step_turn_start_latency_s": 0.08,
+            "heading_lock_kp": HEADING_LOCK_KP,
+            "safety_brake_dist_m": SAFETY_BRAKE_DIST_M,
+            "safety_warn_dist_m": SAFETY_WARNING_DIST_M,
+            "camera_offset_forward_m": CAMERA_OFFSET_FORWARD_M,
+            "camera_offset_lateral_m": CAMERA_OFFSET_LATERAL_M,
+            "camera_height_m": CAMERA_HEIGHT_M,
+            "camera_pitch_deg": CAMERA_PITCH_DEG,
+            "wheel_separation_m": WHEEL_SEPARATION_M,
+            "created_at": "config.py (Gốc chuẩn duy nhất)"
+        }
     }
 
-    # Nạp trim động cơ từ robot_dynamics.json nếu có (chỉ kế thừa trim cân bằng 2 bánh, không đè lên tham số config.py)
-    dyn_file = os.path.join(cur_dir, "robot_dynamics.json")
-    if os.path.exists(dyn_file):
-        try:
-            with open(dyn_file, "r", encoding="utf-8") as f:
-                dyn = json.load(f)
-            if 1 in PROFILES:
-                if "motor_trim_left" in dyn: PROFILES[1]["motor_trim_left"] = float(dyn["motor_trim_left"])
-                if "motor_trim_right" in dyn: PROFILES[1]["motor_trim_right"] = float(dyn["motor_trim_right"])
-        except Exception:
-            pass
-
 def apply_profile(profile_id: int):
-    global ACTIVE_CONFIG_PROFILE
-    global MOTOR_TRIM_LEFT, MOTOR_TRIM_RIGHT
-    global STEP_FORWARD_SCALE, STEP_BACKWARD_SCALE
-    global STEP_TURN_LEFT_SCALE, STEP_TURN_RIGHT_SCALE
-    global DEFAULT_SPEED_PWM, STEP_TURN_MIN_PWM
-    global MANUAL_DECEL_TIME_MS, STEP_TURN_START_LATENCY_S
-    global HEADING_LOCK_KP, SAFETY_BRAKE_DIST_M, SAFETY_WARN_DIST_M
-    global CAMERA_OFFSET_FORWARD_M, CAMERA_OFFSET_LATERAL_M, CAMERA_HEIGHT_M, CAMERA_PITCH_DEG, WHEEL_SEPARATION_M
-
-    pid = int(profile_id)
-    if pid not in PROFILES:
-        return False
-    ACTIVE_CONFIG_PROFILE = pid
-    cur = PROFILES[pid]
-    MOTOR_TRIM_LEFT           = cur.get("motor_trim_left", 1.000)
-    MOTOR_TRIM_RIGHT          = cur.get("motor_trim_right", 1.020)
-    STEP_FORWARD_SCALE        = cur.get("step_forward_scale", 0.42)
-    STEP_BACKWARD_SCALE       = cur.get("step_backward_scale", 0.48)
-    STEP_TURN_LEFT_SCALE      = cur.get("step_turn_left_scale", 0.60)
-    STEP_TURN_RIGHT_SCALE     = cur.get("step_turn_right_scale", 0.60)
-    DEFAULT_SPEED_PWM         = cur.get("default_speed_pwm", 0.08)
-    STEP_TURN_MIN_PWM         = cur.get("step_turn_min_pwm", 0.11)
-    MANUAL_DECEL_TIME_MS      = cur.get("manual_decel_time_ms", 180)
-    STEP_TURN_START_LATENCY_S = cur.get("step_turn_start_latency_s", 0.08)
-    HEADING_LOCK_KP           = cur.get("heading_lock_kp", 0.50)
-    SAFETY_BRAKE_DIST_M       = cur.get("safety_brake_dist_m", 0.20)
-    SAFETY_WARN_DIST_M        = cur.get("safety_warn_dist_m", 0.45)
-    CAMERA_OFFSET_FORWARD_M   = cur.get("camera_offset_forward_m", 0.090)
-    CAMERA_OFFSET_LATERAL_M   = cur.get("camera_offset_lateral_m", -0.015)
-    CAMERA_HEIGHT_M           = cur.get("camera_height_m", 0.120)
-    CAMERA_PITCH_DEG          = cur.get("camera_pitch_deg", 0.0)
-    WHEEL_SEPARATION_M        = cur.get("wheel_separation_m", 0.120)
+    # Đồng bộ Profile 1 từ các biến config.py
+    load_profiles_from_disk()
     return True
 
 def save_profiles_to_disk():
-    import json, os
-    cur_dir = os.path.dirname(os.path.abspath(__file__))
-    prof_file = os.path.join(cur_dir, "config_profiles.json")
-    try:
-        data = {
-            "active_profile": ACTIVE_CONFIG_PROFILE,
-            "profiles": {str(k): v for k, v in PROFILES.items()}
-        }
-        with open(prof_file, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
-        return True
-    except Exception:
-        return False
+    # config.py là nguồn chuẩn duy nhất, không ghi file JSON độc lập
+    return True
 
 # Nạp profiles và áp dụng ngay khi khởi tạo
 load_profiles_from_disk()
