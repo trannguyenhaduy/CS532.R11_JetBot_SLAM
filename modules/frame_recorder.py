@@ -214,7 +214,8 @@ class FrameRecorder:
         # 3. Tạo và lưu Lát cắt Bản đồ 2D Occupancy Grid (JPEG chất lượng 85, nhanh gấp 10 lần PNG)
         map_filename = f"map_{idx:04d}_id{frame_id}.jpg"
         map_path = os.path.join(s_dir, "map2d", map_filename)
-        map_rendered = self._render_2d_map_snapshot(task["map_grid"], task["robot_pose"], task["points_3d"])
+        nav_a_star = task["telemetry"].get("nav_a_star") if task.get("telemetry") else None
+        map_rendered = self._render_2d_map_snapshot(task["map_grid"], task["robot_pose"], task["points_3d"], nav_a_star=nav_a_star)
         if map_rendered is not None:
             try:
                 cv2.imwrite(map_path, map_rendered, [cv2.IMWRITE_JPEG_QUALITY, 85])
@@ -243,8 +244,8 @@ class FrameRecorder:
         except Exception:
             pass
 
-    def _render_2d_map_snapshot(self, grid, pose, points_3d):
-        """Vẽ trực quan bản đồ 2D Occupancy Grid kèm vị trí robot và các tia quét LaserScan"""
+    def _render_2d_map_snapshot(self, grid, pose, points_3d, nav_a_star=None):
+        """Vẽ trực quan bản đồ 2D Occupancy Grid kèm vị trí robot, các tia quét LaserScan và lộ trình A*"""
         if grid is None:
             return None
         try:
@@ -260,19 +261,55 @@ class FrameRecorder:
             canvas = cv2.resize(canvas, (320, 320), interpolation=cv2.INTER_NEAREST)
             scale = 320.0 / float(w)
 
+            def to_map_px(wx, wy):
+                px = int(round(160 + (wx / 0.05) * scale))
+                py = int(round(160 - (wy / 0.05) * scale))
+                return max(0, min(319, px)), max(0, min(319, py))
+
+            # ── VẼ LỘ TRÌNH VÀ QUYẾT ĐỊNH A* TRÊN ẢNH BẢN ĐỒ LƯU TRỮ ──
+            if nav_a_star:
+                # 1. Lộ trình ban đầu (Tím nhạt nét mỏng)
+                init_p = nav_a_star.get("initial_path", [])
+                if init_p and len(init_p) >= 2:
+                    for k in range(len(init_p) - 1):
+                        p0 = to_map_px(init_p[k][0], init_p[k][1])
+                        p1 = to_map_px(init_p[k + 1][0], init_p[k + 1][1])
+                        cv2.line(canvas, p0, p1, (160, 110, 200), 1, cv2.LINE_AA)
+
+                # 2. Lộ trình hiện tại (Neon Cyan nét đậm kèm waypoints)
+                cur_p = nav_a_star.get("current_path", [])
+                if cur_p and len(cur_p) >= 2:
+                    for k in range(len(cur_p) - 1):
+                        p0 = to_map_px(cur_p[k][0], cur_p[k][1])
+                        p1 = to_map_px(cur_p[k + 1][0], cur_p[k + 1][1])
+                        cv2.line(canvas, p0, p1, (0, 240, 255), 2, cv2.LINE_AA)
+                    for pt in cur_p[1:-1]:
+                        wp = to_map_px(pt[0], pt[1])
+                        cv2.circle(canvas, wp, 2, (0, 255, 180), -1)
+
+                # 3. Điểm cản khiến đổi hướng (Dấu X đỏ cảnh báo)
+                blocked = nav_a_star.get("decision", {}).get("blocked_coords")
+                if blocked:
+                    bx, by = to_map_px(blocked[0], blocked[1])
+                    cv2.circle(canvas, (bx, by), 4, (0, 0, 255), 1)
+                    cv2.drawMarker(canvas, (bx, by), (0, 0, 255), cv2.MARKER_TILTED_CROSS, 6, 2)
+
+                # 4. Điểm đích (Hồng tâm vàng)
+                goal = nav_a_star.get("goal")
+                if goal:
+                    gx, gy = to_map_px(goal[0], goal[1])
+                    cv2.circle(canvas, (gx, gy), 3, (0, 200, 255), -1)
+
             # Vẽ tia quét 3D (LaserScan) phóng ra từ xe nếu có
             if pose is not None and points_3d:
                 rx, ry, ryaw = pose
-                # Tọa độ xe trên canvas (resolution 0.05m và offset tâm xe 160px)
-                cx = int(round(160 + (rx / 0.05) * scale))
-                cy = int(round(160 - (ry / 0.05) * scale))
+                cx, cy = to_map_px(rx, ry)
                 cx = max(5, min(315, cx))
                 cy = max(5, min(315, cy))
 
                 for pt in points_3d[::3]:  # Lấy mẫu 1/3 số tia cho mượt mà
                     wx, wy = float(pt[0]), float(pt[1])
-                    px = int(round(160 + (wx / 0.05) * scale))
-                    py = int(round(160 - (wy / 0.05) * scale))
+                    px, py = to_map_px(wx, wy)
                     if 0 <= px < 320 and 0 <= py < 320:
                         cv2.line(canvas, (cx, cy), (px, py), (180, 255, 100), 1) # Tia xanh nhạt
                         cv2.circle(canvas, (px, py), 1, (0, 255, 200), -1)       # Điểm cản cyan

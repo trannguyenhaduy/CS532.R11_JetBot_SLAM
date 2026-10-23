@@ -258,7 +258,14 @@ class JetBotMasterSystem:
                 goal_tolerance_m=getattr(config, 'NAV_GOAL_TOLERANCE_M', 0.06),
                 waypoint_tolerance_m=getattr(config, 'NAV_WAYPOINT_TOLERANCE_M', 0.10),
                 heading_tolerance_rad=getattr(config, 'NAV_HEADING_TOLERANCE_RAD', 0.35),
-                kp_angular=getattr(config, 'NAV_KP_ANGULAR', 1.6)
+                kp_angular=getattr(config, 'NAV_KP_ANGULAR', 1.6),
+                step_move_sync_cb=self._nav_step_move_sync,
+                observe_scan_cb=self._nav_observe_scan_sync,
+                replan_cb=self._nav_replan_sync,
+                cancel_step_cb=self.cancel_step_move,
+                mode=getattr(config, 'NAV_MODE', 'stepped'),
+                step_dist_cm=float(getattr(config, 'NAV_STEP_DIST_CM', 30.0)),
+                init_scan_rounds=int(getattr(config, 'NAV_INIT_SCAN_ROUNDS', 2))
             )
 
         # 7.4. Observability & Debug Inspector (Quan sát & soi thuật toán từng frame)
@@ -862,10 +869,28 @@ class JetBotMasterSystem:
             "decision": decision
         }
 
+        # 4.1. Thêm siêu dữ liệu Lộ trình & Quyết định A* vào Telemetry để Replay Viewer mổ xẻ
+        a_star_diag = {}
+        if getattr(self, 'planner', None):
+            a_star_diag = {
+                "has_path": bool(self.planner.current_path),
+                "current_path": [list(p) for p in self.planner.current_path] if self.planner.current_path else [],
+                "initial_path": [list(p) for p in getattr(self.planner, 'initial_path', [])] if getattr(self.planner, 'initial_path', None) else [],
+                "goal": list(self.planner.current_goal) if self.planner.current_goal else None,
+                "replan_count": getattr(self.planner, 'replan_count', 0),
+                "decision": dict(getattr(self.planner, 'latest_decision', {}))
+            }
+        nav_status = self.navigator.get_status() if getattr(self, 'navigator', None) else {}
+
+        diag["nav_a_star"] = a_star_diag
+        diag["nav_state"] = nav_status
         self.latest_frame_diag = diag
 
-        # 5. Ghi nhận Frame & Telemetry phân tích KHI VÀ CHỈ KHI CÓ LỆNH DI CHUYỂN
-        if hasattr(self, 'recorder') and self.recorder and getattr(self, 'is_motion_active', False):
+        # 5. Ghi nhận Frame & Telemetry phân tích KHI CÓ CHUYỂN ĐỘNG HOẶC TỰ HÀNH NAVIGATOR ĐANG CHẠY
+        is_rec_needed = getattr(self, 'is_motion_active', False) or \
+                        (getattr(self, 'navigator', None) and getattr(self.navigator, 'is_running', False)) or \
+                        getattr(self, 'is_auto_scanning', False)
+        if hasattr(self, 'recorder') and self.recorder and is_rec_needed:
             clean_telemetry = {k: v for k, v in diag.items() if k not in ('rgb_thumb', 'depth_thumb')}
             cur_grid = getattr(self.mapper, 'grid', None)
             cur_pose = (getattr(self, 'robot_x', 0.0), getattr(self, 'robot_y', 0.0), getattr(self, 'robot_yaw', 0.0))
@@ -2823,11 +2848,12 @@ class JetBotMasterSystem:
             rx, ry = self.robot_x, self.robot_y
             grid = self.mapper.grid if self.mapper else None
             landmarks = self.mapper.landmarks if self.mapper else []
+            hit_counts = getattr(self.mapper, 'hit_counts', None) if self.mapper else None
 
         if not getattr(self, 'planner', None):
             return {"success": False, "message": "Module PathPlanner chưa được khởi tạo"}
 
-        res = self.planner.plan_path((rx, ry), (gx, gy), grid=grid, landmarks=landmarks)
+        res = self.planner.plan_path((rx, ry), (gx, gy), grid=grid, landmarks=landmarks, hit_counts=hit_counts)
         if res.get('success'):
             print(f"🎯 [A* PATH PLANNER] Đã tìm lộ trình tới ({gx:.2f}, {gy:.2f}): {res['length_m']}m ({res['waypoints_count']} waypoints) trong {res['plan_time_ms']}ms")
         else:
@@ -2869,6 +2895,85 @@ class JetBotMasterSystem:
             t = Twist()
             self.ros_cmd_pub.publish(t)
 
+    def _nav_step_move_sync(self, move_type, value, direction='forward', speed_pct=None):
+        """Thực thi bước di chuyển định lượng đồng bộ cho AutonomousNavigator trong worker thread"""
+        if getattr(self, 'navigator', None) and getattr(self.navigator, '_cancel_requested', False):
+            return False
+        with self.lock:
+            self.is_step_running = True
+            self.step_move_type = str(move_type).lower()
+            self.step_cancel_requested = False
+            self.last_manual_drive_time = time.time()
+
+        parsed_speed = float(speed_pct) if speed_pct is not None else None
+        self._step_worker(move_type, float(value), direction, parsed_speed)
+        return True
+
+    def _nav_observe_scan_sync(self, rounds=1, is_initial=False):
+        """
+        Thực hiện quan sát xung quanh 360° đồng bộ cho AutonomousNavigator:
+        - Quay 45° CCW đúng 8 lần (1 vòng 360°) với tốc độ chuẩn.
+        - Dừng tĩnh tại mỗi nấc để chụp frame chiều sâu và cập nhật Occupancy Grid.
+        - Nếu is_initial=True (sau 2 vòng quét khởi tạo): khóa cứng bờ tường mốc (Anchor Wall Freezing).
+        """
+        rounds_count = max(1, int(rounds))
+        steps = int(getattr(config, 'NAV_OBSERVE_STEPS', 8))
+        step_deg = float(getattr(config, 'NAV_OBSERVE_SECTOR_DEG', 45.0))
+        turn_pwm_val = float(getattr(config, 'STEP_TURN_MIN_PWM', getattr(config, 'AUTO_SCAN_SPEED_PWM', 0.11)))
+        scan_spd_pct = round(turn_pwm_val * 100.0, 1)
+
+        try:
+            with self.lock:
+                self.is_auto_scanning = True
+
+            for r in range(1, rounds_count + 1):
+                if getattr(self, 'navigator', None) and getattr(self.navigator, '_cancel_requested', False):
+                    break
+
+                # Chụp khung hình mốc tĩnh tại góc hiện tại
+                time.sleep(0.20)
+                self._capture_static_scan_keyframe()
+
+                for i in range(1, steps + 1):
+                    if getattr(self, 'navigator', None) and getattr(self.navigator, '_cancel_requested', False):
+                        break
+                    if getattr(self, 'step_cancel_requested', False):
+                        break
+
+                    # Quay CCW 45°
+                    self._nav_step_move_sync('turn', step_deg, 'left', speed_pct=scan_spd_pct)
+
+                    if getattr(self, 'navigator', None) and getattr(self.navigator, '_cancel_requested', False):
+                        break
+
+                    # Dừng tĩnh để triệt tiêu dao động cơ học và chụp keyframe
+                    time.sleep(0.25)
+                    self._capture_static_scan_keyframe()
+
+            # Nếu là quét khởi tạo (is_initial=True), khóa cứng các bờ tường mốc không bị xóa
+            if is_initial and self.mapper and not (getattr(self, 'navigator', None) and getattr(self.navigator, '_cancel_requested', False)):
+                num_frozen = self.mapper.freeze_anchor_walls()
+                print(f"🔒 [NAV SCAN 360°] Đã khóa vĩnh viễn {num_frozen} ô bờ tường mốc 360° khởi tạo.")
+
+        except Exception as e:
+            print(f"⚠️ [NAV SCAN 360°] Lỗi trong chu trình quét quan sát: {e}")
+        finally:
+            with self.lock:
+                self.is_auto_scanning = False
+                self.is_step_running = False
+                self.step_move_type = ''
+                self.current_v = 0.0
+                self.current_w = 0.0
+            if self.motors:
+                self.motors.stop()
+
+    def _nav_replan_sync(self, gx, gy):
+        """Tái lập kế hoạch A* đồng bộ từ vị trí robot hiện tại tới điểm đích (gx, gy)"""
+        res = self.plan_to_goal(gx, gy)
+        if res.get('success'):
+            return res.get('path', [])
+        return []
+
     def start_navigation(self):
         """Kích hoạt AutonomousNavigator tự động lăn bánh bám lộ trình A*"""
         if not getattr(self, 'navigator', None):
@@ -2880,10 +2985,16 @@ class JetBotMasterSystem:
         if getattr(self, 'is_step_running', False):
             self.cancel_step_move()
 
-        return self.navigator.start_navigation(self.planner.current_path)
+        if hasattr(self, 'recorder') and self.recorder:
+            self.recorder.start_command("AUTO_NAV_A_STAR")
+
+        goal = getattr(self.planner, 'current_goal', None)
+        return self.navigator.start_navigation(self.planner.current_path, goal=goal)
 
     def stop_navigation(self):
         """Dừng khẩn cấp tiến trình tự hành bám đường"""
+        if hasattr(self, 'recorder') and self.recorder:
+            self.recorder.stop_command()
         if getattr(self, 'navigator', None):
             self.navigator.cancel_navigation("Dừng bởi người dùng qua Web")
             return {"success": True, "message": "Đã dừng tự hành"}

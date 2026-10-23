@@ -334,9 +334,9 @@ class ReplayViewer:
         box2_y, box2_h = 267, 242
         self._render_csm_deep_panel(canvas, right_x, box2_y, right_w, box2_h, telemetry, pose, img_map2d, csm_res)
 
-        # KHỐI 3: QUYẾT ĐỊNH SLAM 7 TẦNG, ĐỘNG LỰC HỌC & PHẦN CỨNG
+        # KHỐI 3: MỔ XẺ QUYẾT ĐỊNH A* & LÝ DO ĐỔI ĐƯỜNG ĐI (A* DECISION INSPECTOR)
         box3_y, box3_h = 517, 252
-        self._render_slam_decision_panel(canvas, right_x, box3_y, right_w, box3_h, frame_data, pose, telemetry)
+        self._render_a_star_decision_panel(canvas, right_x, box3_y, right_w, box3_h, frame_data, pose, telemetry)
 
         # ── THANH HƯỚNG DẪN FOOTER DƯỚI CÙNG (Chiều cao 30px) ──
         cv2.rectangle(canvas, (0, 778), (1420, 810), (20, 25, 34), -1)
@@ -493,18 +493,76 @@ class ReplayViewer:
                 cv2.polylines(map_view, [pts_c], True, (0, 255, 163), 2, cv2.LINE_AA)
                 cv2.putText(map_view, clean_txt("CSM ALIGN"), (c_cx + 8, c_cy + 8), cv2.FONT_HERSHEY_SIMPLEX, 0.32, (0, 255, 163), 1)
 
+        # 7.2. VẼ LỘ TRÌNH A* BAN ĐẦU, LỘ TRÌNH HIỆN TẠI VÀ ĐIỂM CẢN (A* PATHS & DECISIONS)
+        nav_a_star = telemetry.get("nav_a_star", {})
+        init_p = nav_a_star.get("initial_path", [])
+        cur_p = nav_a_star.get("current_path", [])
+        decision_info = nav_a_star.get("decision", {})
+        blocked_pt = decision_info.get("blocked_coords")
+        goal_pt = nav_a_star.get("goal")
+
+        # a. Lộ trình ban đầu (Tím nhạt nét mỏng, vệt mốc tham chiếu ban đầu)
+        if init_p and len(init_p) >= 2:
+            for k in range(len(init_p) - 1):
+                p0_x, p0_y = to_canvas(init_p[k][0], init_p[k][1])
+                p1_x, p1_y = to_canvas(init_p[k + 1][0], init_p[k + 1][1])
+                if -200 <= p0_x < map_area_w + 200 and -200 <= p1_x < map_area_w + 200:
+                    cv2.line(map_view, (p0_x, p0_y), (p1_x, p1_y), (180, 130, 220), 1, cv2.LINE_AA)
+            for pt in init_p:
+                ip_x, ip_y = to_canvas(pt[0], pt[1])
+                if 0 <= ip_x < map_area_w and 0 <= ip_y < map_area_h:
+                    cv2.circle(map_view, (ip_x, ip_y), 2, (180, 130, 220), -1)
+
+        # b. Lộ trình hiện tại (Neon Cyan nét đậm kèm Waypoints xanh ngọc)
+        if cur_p and len(cur_p) >= 2:
+            for k in range(len(cur_p) - 1):
+                p0_x, p0_y = to_canvas(cur_p[k][0], cur_p[k][1])
+                p1_x, p1_y = to_canvas(cur_p[k + 1][0], cur_p[k + 1][1])
+                if -200 <= p0_x < map_area_w + 200 and -200 <= p1_x < map_area_w + 200:
+                    cv2.line(map_view, (p0_x, p0_y), (p1_x, p1_y), (0, 240, 255), 2, cv2.LINE_AA)
+            for wp in cur_p[1:-1]:
+                w_x, w_y = to_canvas(wp[0], wp[1])
+                if 0 <= w_x < map_area_w and 0 <= w_y < map_area_h:
+                    cv2.circle(map_view, (w_x, w_y), 4, (0, 255, 180), -1)
+                    cv2.circle(map_view, (w_x, w_y), 2, (16, 20, 26), -1)
+
+        # c. Điểm cản khiến đổi hướng (Dấu X đỏ cảnh báo có hào quang)
+        if blocked_pt:
+            bx, by = to_canvas(blocked_pt[0], blocked_pt[1])
+            if 0 <= bx < map_area_w and 0 <= by < map_area_h:
+                cv2.circle(map_view, (bx, by), 12, (0, 0, 255), 1, cv2.LINE_AA)
+                cv2.circle(map_view, (bx, by), 5, (0, 0, 255), -1)
+                cv2.drawMarker(map_view, (bx, by), (0, 0, 255), cv2.MARKER_TILTED_CROSS, 14, 2)
+                txt_bx = max(10, min(map_area_w - 125, bx - 40))
+                txt_by = by - 14 if by > 40 else by + 22
+                cv2.rectangle(map_view, (txt_bx - 2, txt_by - 11), (txt_bx + 118, txt_by + 3), (16, 20, 26), -1)
+                cv2.rectangle(map_view, (txt_bx - 2, txt_by - 11), (txt_bx + 118, txt_by + 3), (0, 0, 200), 1)
+                cv2.putText(map_view, clean_txt("DIEM CAN DOI DUONG"), (txt_bx + 2, txt_by - 1), cv2.FONT_HERSHEY_SIMPLEX, 0.32, (0, 100, 255), 1, cv2.LINE_AA)
+
+        # d. Điểm đích đến Goal (Hồng tâm vàng hổ phách)
+        if goal_pt:
+            gx, gy = to_canvas(goal_pt[0], goal_pt[1])
+            if 0 <= gx < map_area_w and 0 <= gy < map_area_h:
+                cv2.circle(map_view, (gx, gy), 12, (0, 180, 255), 1, cv2.LINE_AA)
+                cv2.circle(map_view, (gx, gy), 5, (0, 230, 255), -1)
+                cv2.drawMarker(map_view, (gx, gy), (0, 255, 255), cv2.MARKER_CROSS, 16, 2)
+                d_str = clean_txt(f"DICH ({goal_pt[0]:.2f}, {goal_pt[1]:.2f})")
+                cv2.rectangle(map_view, (gx + 6, gy + 3), (gx + 105, gy + 17), (16, 20, 26), -1)
+                cv2.rectangle(map_view, (gx + 6, gy + 3), (gx + 105, gy + 17), (0, 180, 255), 1)
+                cv2.putText(map_view, d_str, (gx + 8, gy + 14), cv2.FONT_HERSHEY_SIMPLEX, 0.33, (0, 230, 255), 1, cv2.LINE_AA)
+
         # 8. Bảng Chú thích HUD Map phía dưới góc trái
-        hud_box_w, hud_box_h = 440, 50
+        hud_box_w, hud_box_h = 580, 52
         hud_x = 10
         hud_y = map_area_h - hud_box_h - 10
         cv2.rectangle(map_view, (hud_x, hud_y), (hud_x + hud_box_w, hud_y + hud_box_h), (20, 26, 36), -1)
         cv2.rectangle(map_view, (hud_x, hud_y), (hud_x + hud_box_w, hud_y + hud_box_h), (50, 65, 85), 1)
 
         pos_str = clean_txt(f"ROBOT: X={rx:+.3f}m | Y={ry:+.3f}m | YAW={math.degrees(ryaw):+.1f}°")
-        cv2.putText(map_view, pos_str, (hud_x + 8, hud_y + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 240, 255), 1)
+        cv2.putText(map_view, pos_str, (hud_x + 8, hud_y + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 240, 255), 1)
 
-        leg_str = clean_txt("[+] Bat dau  |  [---] Quy dao  |  [Vang] Dead-Reckon  |  [Xanh] CSM Nan")
-        cv2.putText(map_view, leg_str, (hud_x + 8, hud_y + 38), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (160, 180, 200), 1)
+        leg_str = clean_txt("[Cyan] A* moi  |  [Tim] A* ban dau  |  [X Do] Vat can chan  |  [*] Dich  |  [+] Moc 0,0")
+        cv2.putText(map_view, leg_str, (hud_x + 8, hud_y + 38), cv2.FONT_HERSHEY_SIMPLEX, 0.34, (160, 180, 200), 1)
 
         # Chép map_view vào canvas chính
         canvas[map_area_y : map_area_y + map_area_h, map_area_x : map_area_x + map_area_w] = map_view
@@ -809,62 +867,102 @@ class ReplayViewer:
         except Exception:
             return None
 
-    def _render_slam_decision_panel(self, canvas, x, y, w, h, frame_data, pose, telem):
-        """Khối 3: Quyết Định SLAM 7 Tầng, Động Lực Học & Phần Cứng"""
+    def _render_a_star_decision_panel(self, canvas, x, y, w, h, frame_data, pose, telem):
+        """Khối 3: Mổ Xẻ Quyết Định A* & Lý Do Đổi Đường Đi (A* Path Planner & Decision Inspector)"""
         cv2.rectangle(canvas, (x, y), (x + w, y + h), (40, 52, 68), 1)
         cv2.rectangle(canvas, (x, y), (x + w, y + 25), (28, 36, 48), -1)
-        cv2.putText(canvas, clean_txt("3. QUYẾT ĐỊNH SLAM 7 TẦNG, HỆ QUY CHIẾU & ĐỘNG HỌC XE"), (x + 10, y + 17), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 100, 200), 1, cv2.LINE_AA)
+        cv2.putText(canvas, clean_txt("3. MO XE QUYET DINH A* & LY DO DOI DUONG DI (A* DECISION INSPECTOR)"), (x + 10, y + 17), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (255, 120, 220), 1, cv2.LINE_AA)
 
-        rx, ry, ryaw = pose if len(pose) == 3 else (0.0, 0.0, 0.0)
-        yaw_deg = math.degrees(ryaw)
+        nav_a_star = telem.get("nav_a_star", {})
+        decision = nav_a_star.get("decision", {})
+        nav_state = telem.get("nav_state", {})
+        init_p = nav_a_star.get("initial_path", [])
+        cur_p = nav_a_star.get("current_path", [])
+        goal = nav_a_star.get("goal")
+        replan_cnt = nav_a_star.get("replan_count", decision.get("replan_count", 0))
+        has_diverged = decision.get("has_diverged", False)
+        blocked_coords = decision.get("blocked_coords")
+        dist_to_block = decision.get("dist_to_block_m")
+        reason_sum = decision.get("reason_summary", "CHUA CO DU LIEU A*")
+        reason_det = decision.get("reason_detail", "Chua kich hoat hoac dang cho lenh tu hanh.")
+        l0 = decision.get("initial_length_m", 0.0)
+        l1 = decision.get("current_length_m", 0.0)
+        n0 = decision.get("initial_waypoints", len(init_p))
+        n1 = decision.get("current_waypoints", len(cur_p))
+
+        state_str = nav_state.get("state", frame_data.get("command", "IDLE"))
+        status_text = nav_state.get("status_text", "")
+        dist_goal = nav_state.get("dist_to_goal", 0.0)
 
         cur_y = y + 36
 
-        # ── 1. TỌA ĐỘ VÀ GÓC HƯỚNG ROBOT ──
-        cv2.putText(canvas, clean_txt("TOA DO ROBOT:"), (x + 14, cur_y), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (140, 160, 180), 1)
-        pose_str = clean_txt(f"X = {rx:+.3f}m   |   Y = {ry:+.3f}m   |   YAW = {yaw_deg:+.1f}°")
-        cv2.putText(canvas, pose_str, (x + 150, cur_y), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (0, 240, 255), 1)
+        # ── 1. TRẠNG THÁI NAVIGATOR & ĐÍCH ĐẾN ──
+        cv2.putText(canvas, clean_txt("TRANG THAI:"), (x + 14, cur_y), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (140, 160, 180), 1)
 
-        # ── 2. PHÁN QUYẾT CẬP NHẬT BẢN ĐỒ OCCUPANCY GRID ──
+        if state_str in ["DRIVING", "TURNING"]:
+            st_col = (0, 240, 255)
+        elif "SCAN" in state_str or "OBSERV" in state_str:
+            st_col = (0, 180, 255)
+        elif state_str == "GOAL_REACHED":
+            st_col = (0, 255, 163)
+        elif state_str == "OBSTACLE_BLOCKED":
+            st_col = (80, 80, 255)
+        else:
+            st_col = (180, 190, 200)
+
+        disp_status = f"[{state_str}] {status_text[:28]}" if status_text else f"[{state_str}]"
+        cv2.putText(canvas, clean_txt(disp_status), (x + 115, cur_y), cv2.FONT_HERSHEY_SIMPLEX, 0.36, st_col, 2)
+
+        if goal:
+            goal_str = clean_txt(f"DICH: ({goal[0]:.2f}, {goal[1]:.2f}) | CON: {dist_goal:.2f}m")
+        else:
+            goal_str = clean_txt("DICH: CHUA DAT")
+        cv2.putText(canvas, goal_str, (x + 395, cur_y), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 215, 255), 1)
+
+        # ── 2. SO SÁNH 2 ĐƯỜNG ĐI: BAN ĐẦU (INITIAL) VS HIỆN TẠI (CURRENT) ──
         cur_y += 20
-        decision = telem.get("decision", {})
-        map_updated = decision.get("map_updated", telem.get("map_updated", False))
-        map_status_str = "CAP NHAT THANH CONG" if map_updated else "DUNG CAP NHAT (KHOA KHI QUAY)"
-        map_status_col = (0, 255, 163) if map_updated else (0, 180, 255)
+        cv2.putText(canvas, clean_txt("SO SANH LO TRINH:"), (x + 14, cur_y), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (140, 160, 180), 1)
+        delta_str = f"LECH: {l1 - l0:+.2f}m" if has_diverged else "TRUNG KHOP"
+        comp_str = clean_txt(f"Ban dau: L0={l0:.2f}m ({n0}wp)  ->  Hien tai: L1={l1:.2f}m ({n1}wp)  |  {delta_str}  |  Replan #{replan_cnt}")
+        comp_col = (0, 240, 255) if has_diverged else (0, 255, 163)
+        cv2.putText(canvas, comp_str, (x + 145, cur_y), cv2.FONT_HERSHEY_SIMPLEX, 0.35, comp_col, 1)
 
-        cv2.putText(canvas, clean_txt("BAN DO 2D SLAM:"), (x + 14, cur_y), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (140, 160, 180), 1)
-        cv2.putText(canvas, clean_txt(f"{map_status_str}"), (x + 150, cur_y), cv2.FONT_HERSHEY_SIMPLEX, 0.38, map_status_col, 1)
+        # ── 3. HỘP MỔ XẺ LÝ DO ĐỔI ĐƯỜNG ĐI (DECISION EXPLANATION BOX) ──
+        cur_y += 18
+        box_border_col = (0, 140, 255) if blocked_coords else ((0, 255, 163) if cur_p else (60, 75, 95))
+        cv2.rectangle(canvas, (x + 12, cur_y - 6), (x + w - 12, cur_y + 58), (20, 26, 36), -1)
+        cv2.rectangle(canvas, (x + 12, cur_y - 6), (x + w - 12, cur_y + 58), box_border_col, 1)
 
-        # ── 3. HỘP GIẢI MÃ LÝ DO QUYẾT ĐỊNH TIẾNG VIỆT SẠCH SẼ ──
-        cur_y += 22
-        cv2.rectangle(canvas, (x + 12, cur_y - 10), (x + w - 12, cur_y + 36), (22, 28, 38), -1)
-        cv2.rectangle(canvas, (x + 12, cur_y - 10), (x + w - 12, cur_y + 36), (45, 55, 72), 1)
+        cv2.putText(canvas, clean_txt(f"LY DO DOI HUONG: [{reason_sum}]"), (x + 18, cur_y + 10), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 240, 255), 2)
 
-        reason_str = decision.get("reason", decision.get("human_reason", "Xe xu ly cap nhat ban do an toan."))
-        clean_r = clean_txt(reason_str)
-        l1, l2 = clean_r[:72], clean_r[72:144]
-        cv2.putText(canvas, clean_txt(f"LY DO: {l1}"), (x + 18, cur_y + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.34, (220, 230, 240), 1)
-        if l2:
-            cv2.putText(canvas, clean_txt(f"       {l2}"), (x + 18, cur_y + 21), cv2.FONT_HERSHEY_SIMPLEX, 0.34, (160, 180, 200), 1)
+        # Tự động cắt dòng chữ giải thích chi tiết thành 2 dòng vừa vặn
+        clean_d = clean_txt(reason_det)
+        l1_txt = clean_d[:86]
+        l2_txt = clean_d[86:172] if len(clean_d) > 86 else ""
+        cv2.putText(canvas, l1_txt, (x + 18, cur_y + 28), cv2.FONT_HERSHEY_SIMPLEX, 0.32, (220, 230, 240), 1)
+        if l2_txt:
+            cv2.putText(canvas, l2_txt, (x + 18, cur_y + 44), cv2.FONT_HERSHEY_SIMPLEX, 0.32, (170, 190, 210), 1)
 
-        # ── 4. PHẦN CỨNG, NGUỒN PIN & AN TOÀN ──
-        cur_y += 56
+        # ── 4. THÔNG TIN VẬT CẢN VA CHẠM / HÀNH LANG AN TOÀN ──
+        cur_y += 72
+        if blocked_coords:
+            d_str = f"{dist_to_block:.2f}m" if dist_to_block is not None else "--"
+            blk_str = clean_txt(f"VAT CAN VA CHAM: X={blocked_coords[0]:+.2f}m, Y={blocked_coords[1]:+.2f}m | Cach xe: {d_str} | Vung dem an toan: 20cm")
+            blk_col = (0, 80, 255)
+        else:
+            blk_str = clean_txt("KHONG CO VAT CAN CHAN: Duong di luon lach qua vung thoang > 20cm an toan tuyet doi.")
+            blk_col = (0, 255, 163)
+        cv2.putText(canvas, blk_str, (x + 14, cur_y), cv2.FONT_HERSHEY_SIMPLEX, 0.35, blk_col, 1)
+
+        # ── 5. THÔNG SỐ ĐỘNG LỰC HỌC, IMU & NGUỒN PIN (CỠ CHỮ GỌN TIẾT KIỆM KHÔNG GIAN) ──
+        cur_y += 20
+        rx, ry, ryaw = pose if len(pose) == 3 else (0.0, 0.0, 0.0)
         bat_v = telem.get("bat_v", 11.10)
-        cv2.putText(canvas, clean_txt("NGUON DIEN INA219:"), (x + 14, cur_y), cv2.FONT_HERSHEY_SIMPLEX, 0.37, (140, 160, 180), 1)
         bat_pct = int(min(100, max(0, (bat_v - 9.6) / (12.6 - 9.6) * 100)))
-        cv2.putText(canvas, clean_txt(f"{bat_v:.2f}V ({bat_pct}%)  |  Bu sut ap: x1.00  |  PWM ga: 11%"), (x + 150, cur_y), cv2.FONT_HERSHEY_SIMPLEX, 0.37, (0, 255, 163), 1)
-
-        cur_y += 20
-        cv2.putText(canvas, clean_txt("KHOA HUONG & ODOM:"), (x + 14, cur_y), cv2.FONT_HERSHEY_SIMPLEX, 0.37, (140, 160, 180), 1)
-        cv2.putText(canvas, clean_txt("Heading Lock Kp=0.50 | Odom: IMU OAK-D S2"), (x + 170, cur_y), cv2.FONT_HERSHEY_SIMPLEX, 0.37, (220, 230, 240), 1)
-
-        cur_y += 20
         lat = telem.get("latencies", {})
-        tot_ms = lat.get("total_ms", 7.45)
-        csm_ms = lat.get("csm_ms", 0.0)
-        depth_ms = lat.get("depth_ms", 7.41)
-        cv2.putText(canvas, clean_txt("DO TRE PIPELINE:"), (x + 14, cur_y), cv2.FONT_HERSHEY_SIMPLEX, 0.37, (140, 160, 180), 1)
-        cv2.putText(canvas, clean_txt(f"Depth: {depth_ms:.1f}ms  |  CSM: {csm_ms:.1f}ms  |  Tong: {tot_ms:.1f}ms (~{1000/max(1, tot_ms):.0f} FPS)"), (x + 150, cur_y), cv2.FONT_HERSHEY_SIMPLEX, 0.37, (140, 160, 180), 1)
+        depth_ms = lat.get("depth_ms", 7.2)
+        hw_str = clean_txt(f"Robot: ({rx:+.2f}, {ry:+.2f}, {math.degrees(ryaw):+.1f} deg) | Pin: {bat_v:.2f}V ({bat_pct}%) | IMU Yaw Lock | Tre: {depth_ms:.1f}ms")
+        cv2.putText(canvas, hw_str, (x + 14, cur_y), cv2.FONT_HERSHEY_SIMPLEX, 0.32, (120, 140, 160), 1)
 
 
 if __name__ == "__main__":

@@ -256,7 +256,7 @@ class OccupancySLAM:
                 # Vật cản thực sự (wz >= 0.06m: chân ghế, mặt ghế, tường...):
                 cur_hits = int(self.hit_counts[o_row, o_col])
                 if cur_hits < 30:
-                    self.hit_counts[o_row, o_col] = cur_hits + 2
+                    self.hit_counts[o_row, o_col] = cur_hits + 1
 
                 # Khi quét trúng >= 2 lần -> Ghim chặt thành tường/vật cản kiên cố (255)
                 if self.hit_counts[o_row, o_col] >= 2:

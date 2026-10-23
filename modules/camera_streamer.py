@@ -424,10 +424,10 @@ class CameraStreamer:
                                         enabled_sensors.append(s_name)
                                     except Exception:
                                         try:
-                                             imu_node.enableIMUSensor(s_enum, 100)
-                                             enabled_sensors.append(s_name)
+                                            imu_node.enableIMUSensor(s_enum, 100)
+                                            enabled_sensors.append(s_name)
                                         except Exception:
-                                             pass
+                                            pass
 
                         if enabled_sensors:
                             imu_node.setBatchReportThreshold(1)

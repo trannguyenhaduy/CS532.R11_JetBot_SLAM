@@ -32,6 +32,7 @@ ENABLE_SAFETY_BRAKE       = True   # Bật tính năng phanh khẩn cấp Virtua
 ENABLE_PATH_PLANNER       = True   # Bật module tìm đường tối ưu A* (Global Path Planner)
 ROBOT_RADIUS_M            = 0.12   # Bán kính thân xe JetBot (12cm)
 COSTMAP_INFLATION_RADIUS_M = 0.20  # Bán kính vùng đệm an toàn chống cạ tường (20cm)
+PATH_PLAN_MIN_CONFIDENCE_HITS = 3  # Ngưỡng số lần quét xác nhận tối thiểu để A* coi là vật cản LETHAL (loại bỏ nhiễu đỏ)
 ENABLE_HEADING_LOCK       = False  # Mặc định TẮT theo yêu cầu để đi thẳng và lùi thuần cơ khí 100%
 HEADING_LOCK_KP           = 0.50   # Hệ số P khóa hướng mượt mà
 MOTOR_TRIM_LEFT           = 0.995  # Cân bằng bánh trái khi TIẾN (Forward Wheel Trim)
@@ -63,8 +64,8 @@ CAMERA_HEIGHT_M          = 0.120  # [Trục Z] Chiều cao từ mặt sàn lên 
 CAMERA_PITCH_DEG         = 0.0    # [Góc Pitch] Độ nghiêng thấu kính camera (độ, Dương: cúp xuống sàn, Âm: ngửa lên trời, 0.0: song song sàn)
 CAMERA_MAX_MAP_DIST_M    = 2.80   # Cự ly tin cậy tối đa cho Stereo Depth 2D (tránh nhiễu tán xạ > 2.8m)
 RAY_SAMPLE_COUNT         = 120    # Số tia quét phân bố đều trên FOV ngang của OAK-D
-MAPPING_DEFAULT_SPEED_V  = 0.16   # Tốc độ tiến chuẩn khi lập bản đồ (16% PWM) - Nhanh, đầm xe
-MAPPING_DEFAULT_SPEED_W  = 1.20   # Tốc độ quay chuẩn khi lập bản đồ (~68 deg/s) - Quay dứt khoát, không trượt bánh
+MAPPING_DEFAULT_SPEED_V  = 0.15   # Tốc độ tiến chuẩn khi lập bản đồ (15% PWM) - Triệt tiêu nhòe camera
+MAPPING_DEFAULT_SPEED_W  = 0.85   # Tốc độ quay chuẩn khi lập bản đồ (~48 deg/s) - Cho điểm quét sắc nét
 
 # ─── CẤU HÌNH ĐẢO KÊNH ĐỘNG CƠ (MOTOR ORIENTATION) ────────────────────────────
 SWAP_MOTORS        = False  # False: Khắc phục lỗi xoay trái/phải bị ngược (chuẩn theo lệnh phím A/D)
@@ -84,11 +85,10 @@ IMAGE_SKIP_FRAMES = 1       # Phát stream liên tục mượt mà 20-30 FPS (kh
 
 # ─── THÔNG SỐ TỰ QUÉT 360 ĐỘ & ĐỊNH HƯỚNG THỊ GIÁC CAMERA (VISUAL ANCHOR 360° SCAN) ───
 AUTO_SCAN_MODE        = "visual_anchor" # Tự động đánh dấu khung hình mốc & quay chậm đều khép vòng lặp Camera
-AUTO_SCAN_STEPS       = 24              # Số nấc quay quét toàn cảnh 360° (24 nấc x 15° = 360° siêu mịn, quét kỹ mọi góc chết)
-AUTO_SCAN_SPEED_PWM   = 0.11            # Mức xung PWM quay quét từ tốn, triệt tiêu mờ camera (11% PWM)
-AUTO_SCAN_CREEP_PWM   = 0.07            # Mức xung PWM bò chậm khi đến gần 360° để hãm đà quán tính
+AUTO_SCAN_SPEED_PWM   = 0.12            # Mức xung PWM quay đều êm dịu (12% PWM) chống nhòe camera
+AUTO_SCAN_CREEP_PWM   = 0.09            # Mức xung PWM bò chậm khi đến gần 360° (score >= 0.50) để hãm đà quán tính
 AUTO_SCAN_TARGET_DEG  = 360.0           # Góc mục tiêu chuẩn 1 vòng tròn 360 độ (2*pi rad)
-AUTO_SCAN_DURATION_S  = 13.5            # Thời gian quét toàn cảnh ước tính (24 nấc)
+AUTO_SCAN_DURATION_S  = 4.8             # Thời gian dự phòng khi pin 11.1V (tự bù áp theo INA219)
 
 # ─── THÔNG SỐ HIỆU CHUẨN ĐỒNG NHẤT HỆ THỐNG (UNIFIED MOTION CALIBRATION) ────────────
 # [DÙNG CHUNG DUY NHẤT 1 BỘ THAM SỐ CHO CẢ 2 CHẾ ĐỘ: BƯỚC ĐỊNH LƯỢNG & LÁI THỦ CÔNG / ODOMETRY]
@@ -98,13 +98,13 @@ AUTO_SCAN_DURATION_S  = 13.5            # Thời gian quét toàn cảnh ước 
 #   - Ở chế độ Thủ công (WASD): Bộ đo hành trình & Bản đồ SLAM tự động quy đổi vận tốc thực (v / SCALE)
 #     để đo đúng 100% khoảng cách xe đã di chuyển trên sàn thực tế!
 STEP_FORWARD_SCALE       = 0.43  # Hệ số hiệu chuẩn TIẾN (dùng chung cho cả Bước cm và Lái tay WASD)
-STEP_BACKWARD_SCALE      = 0.48  # Hệ số hiệu chuẩn LÙI (bù lực cản bánh mắt trâu khi bị kéo ngược)
-STEP_TURN_LEFT_SCALE     = 0.70  # Hệ số hiệu chuẩn QUAY TRÁI (CCW)
-STEP_TURN_RIGHT_SCALE    = 0.70  # Hệ số hiệu chuẩn QUAY PHẢI (CW)
-DEFAULT_SPEED_PWM        = 0.12  # Mức ga cơ bản chạy thẳng (12% PWM)
+STEP_BACKWARD_SCALE      = 0.48  # Hệ số hiệu chuẩn LÙI (0.48 theo cấu hình thực tế của bạn)
+STEP_TURN_LEFT_SCALE     = 0.70  # Hệ số hiệu chuẩn QUAY TRÁI (0.70 theo cấu hình thực tế)
+STEP_TURN_RIGHT_SCALE    = 0.70  # Hệ số hiệu chuẩn QUAY PHẢI (0.70 theo cấu hình thực tế)
+DEFAULT_SPEED_PWM        = 0.15  # Mức ga cơ bản chạy thẳng (15% PWM)
 
 # ─── BÙ MÔ-MEN XOAY TẠI CHỖ (IN-PLACE TURN TORQUE COMPENSATION) ────────────────
-STEP_TURN_MIN_PWM        = 0.11  # Mức xung PWM tối thiểu khi quay tại chỗ (11% quay êm, triệt tiêu mờ camera)
+STEP_TURN_MIN_PWM        = 0.11  # Mức xung PWM tối thiểu khi quay tại chỗ (11% đủ thắng ma sát trượt ngang)
 STEP_TURN_SPEED_RATIO    = 1.0   # Tỉ lệ điều chỉnh tốc độ quay so với tốc độ tiến
 
 # ─── GIẢM TỐC TỪ TỪ ĐỒNG NHẤT 100% (UNIFIED SMOOTH DECELERATION & SOFT STOP) ───
@@ -114,13 +114,18 @@ MANUAL_DECEL_TIME_MS     = 180   # Thời gian hạ dốc mượt mà (180ms) d�
 STEP_USE_ACTIVE_BRAKE    = False # False: Ngắt êm tự nhiên (không giật ngược). True: Dùng xung phanh ngược cứng
 # ─── THÔNG SỐ TỰ HÀNH BÁM ĐƯỜNG (AUTONOMOUS NAVIGATOR & PATH FOLLOWER) ───────────
 ENABLE_AUTONOMOUS_NAVIGATOR = True  # Bật bộ điều khiển bám đường tự hành A*
-NAV_LINEAR_SPEED            = 0.11  # Vận tốc tiến tự hành (m/s) đầm chắc, an toàn
-NAV_TURN_SPEED              = 0.50  # Vận tốc quay tại chỗ (rad/s ~ 28 deg/s) quay êm triệt tiêu mờ camera
+NAV_MODE                    = "stepped" # "stepped" (Sense-Plan-Act 30cm) hoặc "continuous" (Pure Pursuit)
+NAV_STEP_DIST_CM            = 30.0  # Cự ly mỗi bước tiến/lùi (30cm)
+NAV_INIT_SCAN_ROUNDS        = 2     # Số vòng quét 360° khởi tạo ban đầu (2 vòng x 8 nấc 45° = 16 nấc)
+NAV_OBSERVE_SECTOR_DEG      = 45.0  # Góc quay mỗi nấc quan sát (45 độ)
+NAV_OBSERVE_STEPS           = 8     # Số nấc quay quan sát mỗi khi dừng (8 nấc x 45° = 360°)
+NAV_LINEAR_SPEED            = 0.12  # Vận tốc tiến tự hành (m/s) ~15-20% PWM đầm xe
+NAV_TURN_SPEED              = 1.20  # Vận tốc quay tại chỗ (rad/s) ~11-13% PWM êm ái
 NAV_GOAL_TOLERANCE_M        = 0.06  # Bán kính chạm đích dừng xe (6cm)
 NAV_WAYPOINT_TOLERANCE_M    = 0.10  # Bán kính chuyển waypoint tiếp theo (10cm)
 NAV_HEADING_TOLERANCE_RAD   = 0.35  # Dung sai góc lệch (~20 độ) trước khi chuyển từ quay sang tiến
-NAV_KP_ANGULAR              = 1.4   # Hệ số P chỉnh lái bám đường mượt mà
-ENABLE_FRAME_RECORDER       = True  # True: Ghi frame chẩn đoán xuống thư mục logs khi di chuyển (cho Replay Studio)
+NAV_KP_ANGULAR              = 1.6   # Hệ số P chỉnh lái bám đường
+ENABLE_FRAME_RECORDER       = True  # True: Ghi frame chẩn đoán xuống thư mục logs khi di chuyển
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 🗂️ HỆ THỐNG PROFILES CẤU HÌNH ĐỘNG HỌC & ĐỊA HÌNH (RUNTIME PROFILE MANAGEMENT)
