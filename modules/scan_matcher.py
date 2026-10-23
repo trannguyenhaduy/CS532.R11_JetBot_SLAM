@@ -28,21 +28,23 @@ class CorrelativeScanMatcher2D:
     trường hội tụ xác suất Likelihood Field (Distance Transform).
     """
 
-    def __init__(self, search_dist_m=0.10, search_yaw_deg=8.0,
-                 xy_step_m=0.02, yaw_step_deg=2.0, min_score=0.30):
+    def __init__(self, search_dist_m=0.12, search_yaw_deg=8.0,
+                 xy_step_m=0.02, yaw_step_deg=2.0, min_score=0.28, max_jump_cm=12.0):
         """
         Khởi tạo tham số cửa sổ tìm kiếm hội tụ (Basin of Attraction):
-          - search_dist_m: Bán kính tìm kiếm tọa độ (mở rộng ±10cm).
+          - search_dist_m: Bán kính tìm kiếm tọa độ (mở rộng ±12cm).
           - search_yaw_deg: Góc tìm kiếm hướng quay (mở rộng ±8.0 độ).
           - xy_step_m: Bước nhảy tìm kiếm không gian (2cm).
           - yaw_step_deg: Bước nhảy tìm kiếm góc (2.0 độ).
-          - min_score: Ngưỡng tỉ lệ khớp tối thiểu trên trường Likelihood (30%).
+          - min_score: Ngưỡng tỉ lệ khớp tối thiểu trên trường Likelihood (28%).
+          - max_jump_cm: Giới hạn bước nhảy tối đa cho phép trong 1 lần nắn (12cm).
         """
         self.search_dist_m = float(search_dist_m)
         self.search_yaw_rad = math.radians(float(search_yaw_deg))
         self.xy_step_m = float(xy_step_m)
         self.yaw_step_rad = math.radians(float(yaw_step_deg))
         self.min_score = float(min_score)
+        self.max_jump_cm = float(max_jump_cm)
 
         # Lưới giá trị dịch chuyển mẫu Coarse-to-Fine (Tăng tốc 8.5X trên Jetson Nano)
         # Pha 1: Bước thô (Coarse) - Quét nhanh toàn cảnh cửa sổ hội tụ (±10cm)
@@ -169,6 +171,7 @@ class CorrelativeScanMatcher2D:
         v0 = (cols0 >= 0) & (cols0 < grid_w) & (rows0 >= 0) & (rows0 < grid_h)
         init_hits = int(np.sum(lut[rows0[v0], cols0[v0]])) if np.any(v0) else -1
         best_score = init_hits
+        best_raw_hits = init_hits
 
         # ── PHA 1: TÌM KIẾM THÔ TOÀN CẢNH (COARSE PASS - 125 ỨNG VIÊN) ──
         for dyaw in self.coarse_dyaw:
@@ -197,9 +200,14 @@ class CorrelativeScanMatcher2D:
                     if not np.any(valid):
                         continue
 
-                    score = int(np.sum(lut[cand_rows[valid], cand_cols[valid]]))
+                    raw_score = int(np.sum(lut[cand_rows[valid], cand_cols[valid]]))
+                    # Phạt khoảng cách dịch chuyển xa khỏi mốc Dead-Reckoning (Bayesian Motion Model Prior):
+                    # Giúp triệt tiêu hoàn toàn lực hút ảo kéo giật lùi xe về phía vật cản cũ ở sau lưng!
+                    dist_pen = int(math.hypot(dx, dy) * 600.0)
+                    score = raw_score - dist_pen
                     if score > best_score:
                         best_score = score
+                        best_raw_hits = raw_score
                         best_x = pred_x + dx
                         best_y = pred_y + dy
                         best_yaw = cand_yaw
@@ -230,9 +238,14 @@ class CorrelativeScanMatcher2D:
                     if not np.any(valid):
                         continue
 
-                    score = int(np.sum(lut[cand_rows[valid], cand_cols[valid]]))
+                    total_dx = (c_peak_x + dx) - pred_x
+                    total_dy = (c_peak_y + dy) - pred_y
+                    raw_score = int(np.sum(lut[cand_rows[valid], cand_cols[valid]]))
+                    dist_pen = int(math.hypot(total_dx, total_dy) * 600.0)
+                    score = raw_score - dist_pen
                     if score > best_score:
                         best_score = score
+                        best_raw_hits = raw_score
                         best_x = c_peak_x + dx
                         best_y = c_peak_y + dy
                         best_yaw = cand_yaw
@@ -240,29 +253,35 @@ class CorrelativeScanMatcher2D:
         self.last_exec_time_ms = round((time.time() - t_start) * 1000.0, 2)
         # Chuẩn hóa điểm khớp theo điểm lý thuyết cực đại (mỗi tia trúng tâm tường = 100 điểm)
         max_possible_score = float(n_pts * 100.0)
-        match_ratio = max(0.0, float(best_score) / max_possible_score)
+        match_ratio = max(0.0, float(best_raw_hits) / max_possible_score)
         init_ratio = max(0.0, float(init_hits) / max_possible_score)
+        score_gain = match_ratio - init_ratio
         self.last_match_score = round(match_ratio, 3)
         self.last_init_score = round(init_ratio, 3)
         self.last_dx_cm = round((best_x - pred_x) * 100.0, 2)
         self.last_dy_cm = round((best_y - pred_y) * 100.0, 2)
         self.last_dyaw_deg = round(math.degrees(best_yaw - pred_yaw), 2)
-        self.last_raw_score = int(best_score)
+        self.last_raw_score = int(best_raw_hits)
         self.last_pts_count = int(n_pts)
 
-        # Ngưỡng chấp nhận: Tỉ lệ khớp trường Likelihood đạt chuẩn và tốt hơn vị trí ban đầu
-        if match_ratio >= self.min_score and best_score > init_hits:
+        # Ngưỡng chấp nhận khoa học:
+        # 1. Tỉ lệ khớp trường Likelihood đạt chuẩn (>= min_score)
+        # 2. Mức độ cải thiện phải vượt trội thực chất (score_gain >= 2.5%), triệt tiêu nhiễu hạt bụi làm trôi dạt xe
+        # 3. Bước nhảy không được vượt quá giới hạn tối đa max_jump_cm
+        jump_dist_cm = math.hypot(self.last_dx_cm, self.last_dy_cm)
+        max_jump = getattr(self, 'max_jump_cm', 12.0)
+        if match_ratio >= self.min_score and score_gain >= 0.025 and jump_dist_cm <= max_jump:
             self.successful_alignments += 1
             self.last_matched = True
             # Làm mượt chuyển tiếp vị trí bằng bộ lọc bổ chính (Smoothing nhẹ nhàng, bảo toàn Odometry)
-            alpha_pos = 0.35 # Điều chỉnh tọa độ nhẹ nhàng (35%)
-            alpha_yaw = 0.18 # Bổ chính góc quay nhẹ nhàng (18%), triệt tiêu sai số góc
+            alpha_pos = 0.35 # Điều chỉnh tọa độ êm dịu (35%), triệt tiêu sai số trôi dạt
+            alpha_yaw = 0.20 # Bổ chính góc quay nhẹ nhàng (20%)
             smooth_x = (1.0 - alpha_pos) * pred_x + alpha_pos * best_x
             smooth_y = (1.0 - alpha_pos) * pred_y + alpha_pos * best_y
             smooth_yaw = (1.0 - alpha_yaw) * pred_yaw + alpha_yaw * best_yaw
             smooth_yaw = math.atan2(math.sin(smooth_yaw), math.cos(smooth_yaw))
             return smooth_x, smooth_y, smooth_yaw, True, match_ratio
 
-        # Không tìm thấy điểm khớp tin cậy -> Giữ nguyên Dead-Reckoning
+        # Không tìm thấy điểm khớp tin cậy hoặc cải thiện không đáng kể -> Giữ nguyên Dead-Reckoning
         self.last_matched = False
         return pred_x, pred_y, pred_yaw, False, match_ratio

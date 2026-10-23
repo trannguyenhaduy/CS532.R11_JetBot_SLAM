@@ -23,3 +23,5 @@ desktop.ini
 .vscode/
 .idea/
 backup_checkpoint_*/
+
+logs/

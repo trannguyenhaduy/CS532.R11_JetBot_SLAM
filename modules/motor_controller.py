@@ -120,46 +120,46 @@ class DirectPCA9685Driver:
         pwm_r = int(abs(right) * 4095)
 
         # ── KÊNH TRÁI (LEFT MOTOR) ──
-        # Kích cả Channel 8 (PWMA), Channel 1 (INA), Channel 0 (INB) lẫn Channel 9, 10
+        # Chuẩn Waveshare: Ch0=PWMA, Ch1=AIN1, Ch2=AIN2 | Chuẩn Adafruit: Ch8=PWMA, Ch10=IN1, Ch9=IN2
         if abs(left) < 0.05:
-            for ch in [0, 1, 8, 9, 10]: self.set_pwm(ch, 0, 0)
+            for ch in [0, 1, 2, 8, 9, 10]: self.set_pwm(ch, 0, 0)
         elif left > 0:
-            self.set_pwm(8, 0, pwm_l)      # PWMA (Speed)
-            self.set_pwm(1, 0, pwm_l)      # INA
-            self.set_pwm(0, 0, 0)          # INB
-            self.set_pwm(10, 0, 4095)      # IN1
-            self.set_pwm(9, 0, 0)          # IN2
-            self.set_pwm(0, 0, pwm_l)      # Dự phòng revision 2 (Ch0=PWMA)
-            self.set_pwm(2, 0, 0)
+            # TIẾN: Bánh trái quay tiến (CW)
+            self.set_pwm(8, 0, pwm_l)      # PWMA Adafruit (Speed)
+            self.set_pwm(10, 0, 4095)      # IN1 Adafruit (H)
+            self.set_pwm(9, 0, 0)          # IN2 Adafruit (L)
+            self.set_pwm(0, 0, pwm_l)      # PWMA Waveshare (Speed)
+            self.set_pwm(1, 0, 4095)      # AIN1 Waveshare (H)
+            self.set_pwm(2, 0, 0)          # AIN2 Waveshare (L)
         else:
-            self.set_pwm(8, 0, pwm_l)      # PWMA (Speed)
-            self.set_pwm(1, 0, 0)          # INA
-            self.set_pwm(0, 0, pwm_l)      # INB
-            self.set_pwm(10, 0, 0)         # IN1
-            self.set_pwm(9, 0, 4095)       # IN2
-            self.set_pwm(0, 0, pwm_l)      # Dự phòng revision 2
-            self.set_pwm(2, 0, 4095)
+            # LÙI: Bánh trái quay lùi (CCW)
+            self.set_pwm(8, 0, pwm_l)      # PWMA Adafruit (Speed)
+            self.set_pwm(10, 0, 0)         # IN1 Adafruit (L)
+            self.set_pwm(9, 0, 4095)       # IN2 Adafruit (H)
+            self.set_pwm(0, 0, pwm_l)      # PWMA Waveshare (Speed)
+            self.set_pwm(1, 0, 0)          # AIN1 Waveshare (L)
+            self.set_pwm(2, 0, 4095)       # AIN2 Waveshare (H)
 
         # ── KÊNH PHẢI (RIGHT MOTOR) ──
-        # Kích cả Channel 13 (PWMB), Channel 2 (INA), Channel 3 (INB) lẫn Channel 11, 12
+        # Chuẩn Waveshare: Ch5=PWMB, Ch3=BIN1, Ch4=BIN2 | Chuẩn Adafruit: Ch13=PWMB, Ch11=IN1, Ch12=IN2
         if abs(right) < 0.05:
-            for ch in [2, 3, 5, 11, 12, 13]: self.set_pwm(ch, 0, 0)
+            for ch in [3, 4, 5, 11, 12, 13]: self.set_pwm(ch, 0, 0)
         elif right > 0:
-            self.set_pwm(13, 0, pwm_r)     # PWMB (Speed)
-            self.set_pwm(2, 0, pwm_r)      # INA
-            self.set_pwm(3, 0, 0)          # INB
-            self.set_pwm(11, 0, 4095)      # IN1
-            self.set_pwm(12, 0, 0)         # IN2
-            self.set_pwm(5, 0, pwm_r)      # Dự phòng revision 2 (Ch5=PWMB)
-            self.set_pwm(4, 0, 0)
+            # TIẾN: Bánh phải quay tiến (CW)
+            self.set_pwm(13, 0, pwm_r)     # PWMB Adafruit (Speed)
+            self.set_pwm(11, 0, 4095)      # IN1 Adafruit (H)
+            self.set_pwm(12, 0, 0)         # IN2 Adafruit (L)
+            self.set_pwm(5, 0, pwm_r)      # PWMB Waveshare (Speed)
+            self.set_pwm(3, 0, 4095)      # BIN1 Waveshare (H)
+            self.set_pwm(4, 0, 0)          # BIN2 Waveshare (L)
         else:
-            self.set_pwm(13, 0, pwm_r)     # PWMB (Speed)
-            self.set_pwm(2, 0, 0)          # INA
-            self.set_pwm(3, 0, pwm_r)      # INB
-            self.set_pwm(11, 0, 0)         # IN1
-            self.set_pwm(12, 0, 4095)      # IN2
-            self.set_pwm(5, 0, pwm_r)      # Dự phòng revision 2
-            self.set_pwm(4, 0, 4095)
+            # LÙI: Bánh phải quay lùi (CCW)
+            self.set_pwm(13, 0, pwm_r)     # PWMB Adafruit (Speed)
+            self.set_pwm(11, 0, 0)         # IN1 Adafruit (L)
+            self.set_pwm(12, 0, 4095)      # IN2 Adafruit (H)
+            self.set_pwm(5, 0, pwm_r)      # PWMB Waveshare (Speed)
+            self.set_pwm(3, 0, 0)          # BIN1 Waveshare (L)
+            self.set_pwm(4, 0, 4095)       # BIN2 Waveshare (H)
 
     def stop(self):
         for ch in [0, 1, 2, 3, 4, 5, 8, 9, 10, 11, 12, 13]:
@@ -204,24 +204,15 @@ class MotorController:
             import config
             self.trim_left = float(getattr(config, 'MOTOR_TRIM_LEFT', 1.0))
             self.trim_right = float(getattr(config, 'MOTOR_TRIM_RIGHT', 1.0))
+            self.trim_bwd_left = float(getattr(config, 'MOTOR_TRIM_BACKWARD_LEFT', 1.0))
+            self.trim_bwd_right = float(getattr(config, 'MOTOR_TRIM_BACKWARD_RIGHT', 1.0))
         except Exception:
             self.trim_left = 1.0
             self.trim_right = 1.0
+            self.trim_bwd_left = 1.0
+            self.trim_bwd_right = 1.0
 
-        # Tự động nạp thông số hiệu chuẩn từ robot_dynamics.json (nếu có, tương thích calibrate_motors.py)
-        try:
-            import os, json
-            dyn_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "robot_dynamics.json")
-            if os.path.exists(dyn_path):
-                with open(dyn_path, "r", encoding="utf-8") as f:
-                    dyn_data = json.load(f)
-                    tf = float(dyn_data.get("trim_factor", 1.0))
-                    # Nếu trim_factor != 1.0 và config đang để mặc định 1.0
-                    if abs(tf - 1.0) > 0.001 and self.trim_left == 1.0 and self.trim_right == 1.0:
-                        self.trim_right = tf
-                        print(f"📥 [MOTOR] Đã tự động kế thừa Trim Factor={tf:.3f} từ 'robot_dynamics.json'!")
-        except Exception:
-            pass
+
 
         self.is_connected = False
         self.driver_name = "SIMULATOR"
@@ -360,10 +351,16 @@ class MotorController:
                     p_r = MIN_DRIVE_PWM if p_r > 0 else -MIN_DRIVE_PWM
 
 
-                # ── BÙ LỆCH PHẦN CỨNG 2 BÁNH KHI CHẠY THẲNG/LƯỢN (HARDWARE WHEEL TRIM) ──
-                # Cân bằng điện áp xung PWM giữa motor Trái & Phải triệt tiêu lệch cơ khí:
-                p_l = p_l * self.trim_left
-                p_r = p_r * self.trim_right
+                # ── BÙ LỆCH PHẦN CỨNG 2 BÁNH THEO CHIỀU TIẾN/LÙI (HARDWARE WHEEL TRIM) ──
+                # Cân bằng điện áp xung PWM giữa motor Trái & Phải theo chiều di chuyển:
+                # Khi tiến (actual_v >= 0) và lùi (actual_v < 0), lực cản hộp số & bánh mắt trâu ngược chiều nhau.
+                if actual_v >= 0:
+                    t_l, t_r = self.trim_left, self.trim_right
+                else:
+                    t_l, t_r = self.trim_bwd_left, self.trim_bwd_right
+
+                p_l = p_l * t_l
+                p_r = p_r * t_r
 
             # Đảo cực tính động cơ nếu cần
             if self.invert_left: p_l = -p_l
@@ -376,49 +373,50 @@ class MotorController:
             now = time.time()
             if (abs(v) > 0.01 or abs(w) > 0.01) and (now - self.last_log_time > 0.3):
                 self.last_log_time = now
-                print(f"🕹️ [MOTOR] Lệnh: v={v:.2f}, w={w:.2f} -> L={p_l:.2f}, R={p_r:.2f} (Trim L={self.trim_left:.2f}, R={self.trim_right:.2f}) [{self.driver_name}]")
+                trim_desc = f"Trim TIẾN L={t_l:.2f}, R={t_r:.2f}" if actual_v >= 0 else f"Trim LÙI L={t_l:.2f}, R={t_r:.2f}"
+                print(f"🕹️ [MOTOR] Lệnh: v={v:.2f}, w={w:.2f} -> L={p_l:.2f}, R={p_r:.2f} ({trim_desc}) [{self.driver_name}]")
 
             if self.is_connected and self.driver:
                 self.driver.set_motors(p_l, p_r)
 
-    def set_trim(self, left: float, right: float):
-        """Cập nhật hệ số cân bằng tỉ lệ 2 bánh xe (Hardware Wheel Trim)"""
+    def set_trim(self, left: float, right: float, is_backward: bool = False):
+        """Cập nhật hệ số cân bằng tỉ lệ 2 bánh xe (Hardware Wheel Trim) cho chiều tiến hoặc lùi"""
         with self.lock:
-            self.trim_left = max(0.50, min(1.50, float(left)))
-            self.trim_right = max(0.50, min(1.50, float(right)))
-            print(f"⚖️ [MOTOR TRIM] Đã cập nhật tỉ lệ cân bằng 2 bánh: Trái={self.trim_left:.3f}, Phải={self.trim_right:.3f}")
+            if is_backward:
+                self.trim_bwd_left = max(0.50, min(1.50, float(left)))
+                self.trim_bwd_right = max(0.50, min(1.50, float(right)))
+                print(f"⚖️ [MOTOR TRIM LÙI] Đã cập nhật tỉ lệ cân bằng 2 bánh LÙI: Trái={self.trim_bwd_left:.3f}, Phải={self.trim_bwd_right:.3f}")
+            else:
+                self.trim_left = max(0.50, min(1.50, float(left)))
+                self.trim_right = max(0.50, min(1.50, float(right)))
+                print(f"⚖️ [MOTOR TRIM TIẾN] Đã cập nhật tỉ lệ cân bằng 2 bánh TIẾN: Trái={self.trim_left:.3f}, Phải={self.trim_right:.3f}")
 
-    def get_trim(self):
+    def get_trim(self, is_backward: bool = False):
         """Lấy hệ số cân bằng tỉ lệ 2 bánh hiện tại"""
         with self.lock:
+            if is_backward:
+                return self.trim_bwd_left, self.trim_bwd_right
             return self.trim_left, self.trim_right
 
     def save_trim_to_disk(self):
-        """Lưu hệ số cân bằng 2 bánh vào robot_dynamics.json để bảo lưu vĩnh viễn"""
+        """Lưu hệ số cân bằng 2 bánh (tiến và lùi) trực tiếp vào config.py duy nhất"""
         with self.lock:
             try:
-                import os, json
-                dyn_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "robot_dynamics.json")
-                data = {}
-                if os.path.exists(dyn_path):
-                    try:
-                        with open(dyn_path, "r", encoding="utf-8") as f:
-                            data = json.load(f)
-                    except Exception: pass
-                
-                # Tính trim_factor theo chuẩn của calibrate_motors.py (r_spd = l_spd * trim_factor)
-                ratio = round(self.trim_right / max(0.01, self.trim_left), 3)
-                data["trim_factor"] = ratio
-                data["motor_trim_left"] = round(self.trim_left, 3)
-                data["motor_trim_right"] = round(self.trim_right, 3)
-                data["last_calibrated"] = time.strftime("%Y-%m-%d %H:%M:%S")
-
-                with open(dyn_path, "w", encoding="utf-8") as f:
-                    json.dump(data, f, indent=4, ensure_ascii=False)
-                print(f"💾 [MOTOR TRIM] Đã lưu thông số cân bằng 2 bánh (Trim Factor={ratio}) vào: {dyn_path}")
+                import os, re
+                cfg_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.py")
+                if os.path.exists(cfg_path):
+                    with open(cfg_path, "r", encoding="utf-8") as f:
+                        content = f.read()
+                    content = re.sub(r'^(MOTOR_TRIM_LEFT\s*=\s*)[0-9\.]+', rf'\g<1>{self.trim_left:.3f}', content, flags=re.MULTILINE)
+                    content = re.sub(r'^(MOTOR_TRIM_RIGHT\s*=\s*)[0-9\.]+', rf'\g<1>{self.trim_right:.3f}', content, flags=re.MULTILINE)
+                    content = re.sub(r'^(MOTOR_TRIM_BACKWARD_LEFT\s*=\s*)[0-9\.]+', rf'\g<1>{self.trim_bwd_left:.3f}', content, flags=re.MULTILINE)
+                    content = re.sub(r'^(MOTOR_TRIM_BACKWARD_RIGHT\s*=\s*)[0-9\.]+', rf'\g<1>{self.trim_bwd_right:.3f}', content, flags=re.MULTILINE)
+                    with open(cfg_path, "w", encoding="utf-8") as f:
+                        f.write(content)
+                print("💾 [MOTOR TRIM] Đã lưu thông số cân bằng 2 bánh vào config.py!")
                 return True
             except Exception as e:
-                print(f"⚠️ [MOTOR TRIM] Lỗi khi lưu robot_dynamics.json: {e}")
+                print(f"⚠️ [MOTOR TRIM] Lỗi khi lưu config.py: {e}")
                 return False
 
     def set_direct_motors(self, left: float, right: float):

@@ -249,7 +249,14 @@ class JetBotMasterSystem:
                 goal_tolerance_m=getattr(config, 'NAV_GOAL_TOLERANCE_M', 0.06),
                 waypoint_tolerance_m=getattr(config, 'NAV_WAYPOINT_TOLERANCE_M', 0.10),
                 heading_tolerance_rad=getattr(config, 'NAV_HEADING_TOLERANCE_RAD', 0.35),
-                kp_angular=getattr(config, 'NAV_KP_ANGULAR', 1.6)
+                kp_angular=getattr(config, 'NAV_KP_ANGULAR', 1.6),
+                step_move_sync_cb=self._nav_step_move_sync,
+                observe_scan_cb=self._nav_observe_scan_sync,
+                replan_cb=self._nav_replan_sync,
+                cancel_step_cb=self.cancel_step_move,
+                mode=getattr(config, 'NAV_MODE', 'stepped'),
+                step_dist_cm=float(getattr(config, 'NAV_STEP_DIST_CM', 30.0)),
+                init_scan_rounds=int(getattr(config, 'NAV_INIT_SCAN_ROUNDS', 2))
             )
 
         # 7.4. Observability & Debug Inspector (Quan sát & soi thuật toán từng frame)
@@ -613,19 +620,41 @@ class JetBotMasterSystem:
         csm_dy_cm = 0.0
         csm_dyaw_deg = 0.0
 
+        is_step_active = getattr(self, 'is_step_running', False)
         need_csm = False
-        if not is_turning and not getattr(self, '_just_finished_turn', False) and self.scan_matcher and getattr(config, 'ENABLE_SCAN_MATCHING', True) and self.mapper:
-            if is_moving:
+        need_map_update = False
+        is_anchor = (self._slam_frame_id <= 2) and (math.hypot(rx, ry) < 0.02)
+
+        # ── KIẾN TRÚC SLAM CÔNG NGHIỆP: "STOP-AND-SCAN" (KEYFRAME SETTLE & SCAN-MATCHING) ──
+        # 1. TRONG LÚC ĐANG LĂN BÁNH / DI CHUYỂN / QUAY (is_moving HOẶC is_step_active HOẶC is_turning):
+        #    - KHÓA CSM: Tuyệt đối KHÔNG chạy CSM ghi đè tọa độ khi bánh xe đang lăn.
+        #      Dead-Reckoning (50Hz) + IMU Closed-Loop chịu trách nhiệm dẫn đường mượt mà.
+        #    - KHÓA MAP: Tuyệt đối KHÔNG bắn tia vào lưới bản đồ Occupancy Grid khi xe đang di chuyển.
+        #      Tránh triệt để hiện tượng vệt bết nhòe kéo dài (smear artifact) và vòng lặp lỗi phản hồi dương!
+        # 2. KHI VỪA DỪNG LÁI TAY (WASD TELEOP STOP):
+        #    - Kích hoạt đúng 1 frame Keyframe tĩnh để CSM so khớp và bắn tia cập nhật bản đồ.
+        # 3. KHI XE ĐỨNG YÊN TĨNH (STATIONARY / IDLE):
+        #    - Khóa cố định tọa độ và bản đồ, triệt tiêu 100% trôi dạt tích lũy.
+
+        if not is_anchor and self.scan_matcher and getattr(config, 'ENABLE_SCAN_MATCHING', True) and self.mapper:
+            if is_step_active or is_moving or is_turning:
+                if not is_step_active:
+                    self._was_manual_moving = True
+                need_csm = False
+                need_map_update = False
+            elif getattr(self, '_was_manual_moving', False):
+                # Vừa dừng sau khi lái tay: kích hoạt đúng 1 frame tĩnh
                 need_csm = True
-                self._was_moving = True
-                self._settle_frames_remaining = int(getattr(config, 'SETTLING_FRAMES_COUNT', 3))
-            elif getattr(self, '_was_moving', False) or getattr(self, '_settle_frames_remaining', 0) > 0:
-                cur_rem = getattr(self, '_settle_frames_remaining', 0)
-                if cur_rem > 0:
-                    need_csm = True
-                    self._settle_frames_remaining = cur_rem - 1
-                else:
-                    self._was_moving = False
+                need_map_update = True
+                self._was_manual_moving = False
+            else:
+                need_csm = False
+                need_map_update = False
+
+        # Khởi tạo bản đồ lần đầu tiên khi xe đứng yên ở gốc xuất phát
+        if not getattr(self, '_initial_map_updated', False) and not is_moving and not is_step_active and not is_turning:
+            need_map_update = True
+            self._initial_map_updated = True
 
         if need_csm and scan_robot:
             csm_executed = True
@@ -641,13 +670,11 @@ class JetBotMasterSystem:
             csm_init_score = getattr(self.scan_matcher, 'last_init_score', 0.0)
             csm_dx_cm = getattr(self.scan_matcher, 'last_dx_cm', 0.0)
             csm_dy_cm = getattr(self.scan_matcher, 'last_dy_cm', 0.0)
-            csm_dyaw_deg = 0.0
+            csm_dyaw_deg = getattr(self.scan_matcher, 'last_dyaw_deg', 0.0)
             if matched:
                 with self.lock:
                     self.robot_x = corr_x
                     self.robot_y = corr_y
-                    # KHÓA CHẶT YAW: CSM chỉ khử trôi tịnh tiến (X, Y) đối chiếu tường, TUYỆT ĐỐI không xoay yaw xe!
-                    # Góc yaw xe chỉ tuân theo lệnh quay thực tế / Odometry / IMU!
                     rx, ry = corr_x, corr_y
         t_csm_ms = (time.perf_counter() - t_csm_start) * 1000.0
 
@@ -655,16 +682,11 @@ class JetBotMasterSystem:
             self._just_finished_turn = False
 
         # 3. Cập nhật bản đồ 2D Occupancy Grid (Keyframe Raycasting)
-        # Chỉ cập nhật bản đồ khi:
-        # 1. Xe đang di chuyển (is_moving = True)
-        # 2. Hoặc đúng 1 lần sau khi chốt hạ vị trí dừng (need_csm = True)
-        # 3. Hoặc xe mới khởi động / quét 360 độ
-        # Khi xe đứng yên tĩnh bình thường: không bắn tia liên tục để bảo vệ độ nét bờ tường
+        # Chỉ cập nhật bản đồ khi đứng yên tĩnh (Keyframe tĩnh) hoặc quét 360 độ rời rạc
         t_map_start = time.perf_counter()
         map_updated = False
-        if self.mapper and self.flags.mapper and not is_turning:
-            need_map_update = is_moving or need_csm or (not getattr(self, '_initial_map_updated', False)) or getattr(self, 'is_auto_scanning', False)
-            if need_map_update and self.camera.points_3d:
+        if self.mapper and self.flags.mapper and not is_turning and not is_moving and not is_step_active:
+            if (need_map_update or getattr(self, 'is_auto_scanning', False)) and self.camera.points_3d:
                 self.mapper.update_scan(rx, ry, self.camera.points_3d, yaw=yaw)
                 map_updated = True
                 self._initial_map_updated = True
@@ -688,25 +710,23 @@ class JetBotMasterSystem:
 
         # Phân tích cờ cảnh báo bất thường (Anomaly & Watchdog Flags)
         flags = []
-        settle_rem = getattr(self, '_settle_frames_remaining', 0)
-        if is_turning:
+        if is_step_active:
+            flags.append({"level": "info", "tag": "STEP_ACTIVE", "msg": "Đang chạy bước định lượng: Khóa CSM & Map để chống nhòe bản đồ"})
+        elif is_turning:
             flags.append({"level": "info", "tag": "TURN_GATED", "msg": "Khóa cập nhật CSM & Bản đồ khi xe xoay tại chỗ"})
-        elif settle_rem > 0:
-            flags.append({"level": "success", "tag": "SETTLING", "msg": f"Đang hội tụ đa bước chốt hạ vị trí dừng (Còn {settle_rem} frame)"})
-        elif not is_moving:
-            flags.append({"level": "info", "tag": "STATIONARY", "msg": "Xe đứng yên - Khóa cố định tọa độ (Chống trôi dạt do nhiễu)"})
-        else:
-            if csm_executed:
-                if csm_matched:
-                    flags.append({"level": "success", "tag": "CSM_LOCKED", "msg": f"Khớp CSM thành công (Likelihood: {csm_score:.1%})"})
-                else:
-                    flags.append({"level": "warning", "tag": "CSM_REJECTED", "msg": f"Khớp bị từ chối (Score {csm_score:.2f} < ngưỡng {getattr(self.scan_matcher, 'min_score', 0.28):.2f})"})
-                if csm_score < 0.35 and csm_score > 0:
-                    flags.append({"level": "warning", "tag": "LOW_SCORE", "msg": "Điểm khớp thấp - Vùng không gian ít vật cản hoặc bề mặt phẳng"})
-                if abs(csm_dx_cm) > 10.0 or abs(csm_dy_cm) > 10.0 or abs(csm_dyaw_deg) > 8.0:
-                    flags.append({"level": "warning", "tag": "LARGE_JUMP", "msg": f"Bước hiệu chỉnh lớn (Δ={math.hypot(csm_dx_cm, csm_dy_cm):.1f}cm, ΔYaw={csm_dyaw_deg:+.1f}°)"})
+        elif is_moving:
+            flags.append({"level": "info", "tag": "MOTION_ACTIVE", "msg": "Xe đang lăn bánh: Dẫn đường Dead-Reckoning; Khóa CSM & Map chống nhòe"})
+        elif csm_executed:
+            if csm_matched:
+                flags.append({"level": "success", "tag": "CSM_LOCKED", "msg": f"Khớp CSM thành công khi dừng (Score: {csm_score:.1%}, dX={csm_dx_cm:+.1f}cm, dY={csm_dy_cm:+.1f}cm)"})
             else:
-                flags.append({"level": "info", "tag": "CSM_SKIPPED", "msg": "Bỏ qua CSM (Không có điểm cản hoặc tính năng tắt)"})
+                flags.append({"level": "warning", "tag": "CSM_REJECTED", "msg": f"Khớp bị từ chối (Score {csm_score:.2f} < ngưỡng {getattr(self.scan_matcher, 'min_score', 0.28):.2f})"})
+            if csm_score < 0.35 and csm_score > 0:
+                flags.append({"level": "warning", "tag": "LOW_SCORE", "msg": "Điểm khớp thấp - Vùng không gian ít vật cản hoặc bề mặt phẳng"})
+            if abs(csm_dx_cm) > 10.0 or abs(csm_dy_cm) > 10.0 or abs(csm_dyaw_deg) > 8.0:
+                flags.append({"level": "warning", "tag": "LARGE_JUMP", "msg": f"Bước hiệu chỉnh lớn (Δ={math.hypot(csm_dx_cm, csm_dy_cm):.1f}cm, ΔYaw={csm_dyaw_deg:+.1f}°)"})
+        else:
+            flags.append({"level": "info", "tag": "STATIONARY", "msg": "Xe đứng yên - Khóa cố định tọa độ & Bản đồ (Chống trôi dạt do nhiễu)"})
 
         if csm_pts_count < 15 and not is_turning:
             flags.append({"level": "warning", "tag": "LOW_POINTS", "msg": f"Ít tia chạm cản ({csm_pts_count} tia) - Camera hướng vào khoảng trống"})
@@ -750,25 +770,40 @@ class JetBotMasterSystem:
                 pass
 
         # Giải trình chi tiết quyết định của thuật toán
-        decision_status = "LOCKED" if (csm_matched and map_updated) else ("TURN_GATE" if is_turning else ("SETTLING" if settle_rem > 0 else ("STATIONARY" if not is_moving else ("REJECT" if csm_executed else "NO_SCAN"))))
-        decision_title = "CHẤP THUẬN NẮN TỌA ĐỘ & CẬP NHẬT BẢN ĐỒ" if decision_status == "LOCKED" else ("TẠM KHÓA CẬP NHẬT (XE ĐANG QUAY)" if decision_status == "TURN_GATE" else ("ĐANG HỘI TỤ ĐA BƯỚC CHỐT HẠ VỊ TRÍ DỪNG" if decision_status == "SETTLING" else ("KHÓA CỐ ĐỊNH TỌA ĐỘ (XE ĐỨNG YÊN TĨNH)" if decision_status == "STATIONARY" else ("TỪ CHỐI FRAME (CHỐNG LOẠN BẢN ĐỒ)" if decision_status == "REJECT" else "BỎ QUA CSM"))))
-        if decision_status == "LOCKED":
-            decision_reason = f"Độ tương đồng CSM đạt {csm_score:.1%} (≥ ngưỡng {getattr(self.scan_matcher, 'min_score', 0.28):.0%}) và có {csm_pts_count} tia cản. Bản đồ được cập nhật an toàn."
-        elif decision_status == "TURN_GATE":
-            decision_reason = "Xe đang thực hiện quay góc tại chỗ. Tạm khóa cập nhật bản đồ để chống mờ nhòe và trôi mốc tọa độ."
-        elif decision_status == "SETTLING":
-            decision_reason = f"Xe vừa dừng hẳn. Thuật toán đang chạy thêm {settle_rem} frame ổn định để triệt tiêu rung lắc quán tính và hội tụ vị trí dừng chính xác nhất."
-        elif decision_status == "STATIONARY":
-            decision_reason = "Xe đang đứng yên tĩnh trên sàn. Tọa độ xe được khóa cố định tuyệt đối tại vị trí hiện tại để chống trôi dạt do nhiễu cảm biến."
-        elif decision_status == "REJECT":
+        if is_step_active:
+            decision_status = "STEP_ACTIVE"
+            decision_title = f"ĐANG CHẠY BƯỚC ĐỊNH LƯỢNG ({getattr(self, 'current_motion_desc', 'KINEMATICS')})"
+            decision_reason = "Xe đang di chuyển: Khóa CSM & Map để chống nhòe bản đồ. Vị trí do Dead-Reckoning 50Hz + IMU quản lý. Khi dừng hẳn sẽ chốt Keyframe tĩnh và nắn chỉnh tọa độ!"
+        elif is_moving:
+            decision_status = "MOTION_ACTIVE"
+            decision_title = "XE ĐANG DI CHUYỂN (LÁI TAY / QUỸ ĐẠO)"
+            decision_reason = "Đang lăn bánh: Khóa cập nhật bản đồ và CSM để triệt tiêu rung chấn cơ học và chống vệt nhòe tường."
+        elif is_turning:
+            decision_status = "TURN_GATE"
+            decision_title = "XE ĐANG QUAY GÓC (THEO DÕI IMU)"
+            decision_reason = "Xe đang thực hiện quay góc tại chỗ đóng vòng kín theo IMU BMI270. Khóa CSM & Map."
+        elif csm_matched:
+            decision_status = "LOCKED"
+            decision_title = f"CSM NẮN TỌA ĐỘ THÀNH CÔNG (Score: {csm_score:.1%})"
+            decision_reason = f"Độ tương đồng CSM đạt {csm_score:.1%} (≥ ngưỡng {getattr(self.scan_matcher, 'min_score', 0.28):.0%}) với {csm_pts_count} tia cản. Đã bù sai số trôi dạt: dX={csm_dx_cm:+.1f}cm, dY={csm_dy_cm:+.1f}cm."
+        elif not is_moving and not is_step_active:
+            decision_status = "STATIONARY"
+            decision_title = "KHÓA CỐ ĐỊNH TỌA ĐỘ (XE ĐỨNG YÊN TĨNH)"
+            decision_reason = "Xe đang đứng yên tĩnh trên sàn. Tọa độ và bản đồ được bảo toàn tuyệt đối để chống trôi dạt do nhiễu cảm biến."
+        elif csm_executed:
+            decision_status = "REJECT"
+            decision_title = "TỪ CHỐI FRAME (CHỐNG LOẠN BẢN ĐỒ)"
             decision_reason = f"Điểm khớp CSM chỉ đạt {csm_score:.1%} (< ngưỡng tối thiểu) hoặc số tia cản quá ít ({csm_pts_count} tia). Thuật toán từ chối cập nhật để bảo vệ cấu trúc bản đồ không bị biến dạng."
         else:
+            decision_status = "NO_SCAN"
+            decision_title = "BỎ QUA CSM"
             decision_reason = "Không có chướng ngại vật trong tầm nhìn hoặc tính năng Scan-Matching đang tạm tắt."
 
         decision = {
             "status": decision_status,
             "title": decision_title,
             "reason": decision_reason,
+            "human_reason": decision_reason,
             "score_ok": bool(csm_score >= getattr(self.scan_matcher, 'min_score', 0.28)),
             "points_ok": bool(csm_pts_count >= 10),
             "not_turning": bool(not is_turning),
@@ -816,12 +851,36 @@ class JetBotMasterSystem:
             "decision": decision
         }
 
+        # 4.1. Thêm siêu dữ liệu Lộ trình & Quyết định A* vào Telemetry để Replay Viewer mổ xẻ
+        a_star_diag = {}
+        if getattr(self, 'planner', None):
+            a_star_diag = {
+                "has_path": bool(self.planner.current_path),
+                "current_path": [list(p) for p in self.planner.current_path] if self.planner.current_path else [],
+                "initial_path": [list(p) for p in getattr(self.planner, 'initial_path', [])] if getattr(self.planner, 'initial_path', None) else [],
+                "goal": list(self.planner.current_goal) if self.planner.current_goal else None,
+                "replan_count": getattr(self.planner, 'replan_count', 0),
+                "decision": dict(getattr(self.planner, 'latest_decision', {}))
+            }
+        nav_status = self.navigator.get_status() if getattr(self, 'navigator', None) else {}
+
+        diag["nav_a_star"] = a_star_diag
+        diag["nav_state"] = nav_status
         self.latest_frame_diag = diag
 
-        # 5. Ghi nhận Frame & Telemetry phân tích KHI VÀ CHỈ KHI CÓ LỆNH DI CHUYỂN
-        if hasattr(self, 'recorder') and self.recorder and getattr(self, 'is_motion_active', False):
+        # 5. Ghi nhận Frame & Telemetry phân tích KHI CÓ CHUYỂN ĐỘNG HOẶC TỰ HÀNH NAVIGATOR ĐANG CHẠY
+        is_rec_needed = getattr(self, 'is_motion_active', False) or \
+                        (getattr(self, 'navigator', None) and getattr(self.navigator, 'is_running', False)) or \
+                        getattr(self, 'is_auto_scanning', False)
+        if hasattr(self, 'recorder') and self.recorder and is_rec_needed:
             clean_telemetry = {k: v for k, v in diag.items() if k not in ('rgb_thumb', 'depth_thumb')}
-            self.recorder.record_frame(frame_id, cur_rgb, depth_np, clean_telemetry)
+            cur_grid = getattr(self.mapper, 'grid', None)
+            cur_pose = (getattr(self, 'robot_x', 0.0), getattr(self, 'robot_y', 0.0), getattr(self, 'robot_yaw', 0.0))
+            pts_3d = getattr(self.camera, 'points_3d', None) if self.camera else None
+            self.recorder.record_frame(
+                frame_id, cur_rgb, depth_np, clean_telemetry,
+                map_grid=cur_grid, robot_pose=cur_pose, points_3d=pts_3d
+            )
 
         # Ghi nhận vào lịch sử gần nhất (Buffer tối đa 25 frames cho bảng theo dõi)
         if not hasattr(self, 'recent_frame_logs'):
@@ -948,7 +1007,7 @@ class JetBotMasterSystem:
             if getattr(self, 'is_step_running', False):
                 return
 
-            if getattr(config, 'ENABLE_CLOSED_LOOP_IMU', False):
+            if getattr(config, 'ENABLE_IMU', True):
                 with self.lock:
                     self.robot_yaw = calib_yaw
         except Exception:
@@ -1099,7 +1158,7 @@ class JetBotMasterSystem:
             elif abs(v) > 0.01 and abs(w) < 0.01:
                 # ── KHÓA HƯỚNG TỰ ĐỘNG KHI LÁI THẲNG (ACTIVE HEADING LOCK) ──
                 if getattr(config, 'ENABLE_HEADING_LOCK', False):
-                    cur_yaw = getattr(self, 'robot_yaw', 0.0)
+                    cur_yaw = getattr(self, 'latest_imu_yaw_val', getattr(self, 'robot_yaw', 0.0))
                     if not hasattr(self, '_manual_straight_yaw') or self._manual_straight_yaw is None or not was_moving:
                         self._manual_straight_yaw = cur_yaw
                     yaw_err = math.atan2(math.sin(self._manual_straight_yaw - cur_yaw), math.cos(self._manual_straight_yaw - cur_yaw))
@@ -1273,7 +1332,7 @@ class JetBotMasterSystem:
                         if not has_real_imu:
                             self.robot_yaw += w_real * dt
                             self.robot_yaw = math.atan2(math.sin(self.robot_yaw), math.cos(self.robot_yaw))
-                        elif getattr(config, 'ENABLE_CLOSED_LOOP_IMU', False) and not getattr(self, 'is_step_running', False):
+                        elif getattr(config, 'ENABLE_IMU', True) and not getattr(self, 'is_step_running', False):
                             self.robot_yaw = getattr(self, 'latest_imu_yaw_val', self.robot_yaw)
 
                         # Tích phân tọa độ không gian (X, Y) theo vận tốc thực tế
@@ -1409,7 +1468,7 @@ class JetBotMasterSystem:
                                 self.latest_imu_yaw_val = calib_yaw
                                 self.last_imu_time = time.time()
                                 self.has_active_imu = True
-                                if getattr(config, 'ENABLE_CLOSED_LOOP_IMU', False) and not getattr(self, 'is_step_running', False):
+                                if getattr(config, 'ENABLE_IMU', True) and not getattr(self, 'is_step_running', False):
                                     self.robot_yaw = calib_yaw
 
                     if getattr(config, 'ENABLE_VISUAL_GYRO', False) and not c_has_imu and not getattr(self, 'is_step_running', False):
@@ -1819,7 +1878,7 @@ class JetBotMasterSystem:
 
                     # 3. KHÓA HƯỚNG TỰ ĐỘNG (ACTIVE HEADING LOCK KHI ĐI THẲNG)
                     if getattr(config, 'ENABLE_HEADING_LOCK', False):
-                        cur_yaw = getattr(self, 'robot_yaw', 0.0)
+                        cur_yaw = getattr(self, 'latest_imu_yaw_val', getattr(self, 'robot_yaw', 0.0))
                         yaw_err = math.atan2(math.sin(start_yaw - cur_yaw), math.cos(start_yaw - cur_yaw))
                         kp = getattr(config, 'HEADING_LOCK_KP', 0.50)
                         w_assist = max(-0.16, min(0.16, kp * yaw_err))
@@ -1867,6 +1926,39 @@ class JetBotMasterSystem:
                 with self.lock:
                     self.current_v = 0.0
                     self.current_w = 0.0
+                    self._was_moving = False
+                    self._settle_frames_remaining = 0
+
+                # ── THỰC THI STOP-AND-SCAN CSM CHUẨN CÔNG NGHIỆP: NẮN SAI SỐ TRƯỢT KHI XE ĐÃ DỪNG TĨNH ──
+                # Chỉ xử lý CSM và cập nhật bản đồ KHI ROBOT ĐÃ DỪNG HẲN: Triệt tiêu 100% vệt nhòe tường
+                if self.scan_matcher and getattr(config, 'ENABLE_SCAN_MATCHING', True) and self.mapper and self.camera:
+                    time.sleep(0.12) # Chờ 120ms cho khung xe triệt tiêu hoàn toàn rung chấn cơ học
+                    live_depth = getattr(self.camera, 'latest_oak_depth', None)
+                    if live_depth is None and hasattr(self.camera, 'get_latest_frame'):
+                        _, live_depth = self.camera.get_latest_frame()
+                    if live_depth is not None:
+                        with self.lock:
+                            cur_rx, cur_ry, cur_yaw = self.robot_x, self.robot_y, self.robot_yaw
+                        self.camera.process_depth_frame(live_depth, cur_rx, cur_ry, self.robot_z, cur_yaw)
+                        scan_rob = getattr(self.camera, 'points_robot', None)
+                        if scan_rob and len(scan_rob) >= 8:
+                            corr_x, corr_y, corr_yaw, matched, score = self.scan_matcher.align_pose(
+                                cur_rx, cur_ry, cur_yaw, scan_rob,
+                                self.mapper.grid, self.mapper.origin_x, self.mapper.origin_y,
+                                self.mapper.width, self.mapper.height, self.mapper.resolution,
+                                hit_counts=getattr(self.mapper, 'hit_counts', None)
+                            )
+                            if matched:
+                                dx_m = corr_x - cur_rx
+                                dy_m = corr_y - cur_ry
+                                print(f"📏 [CSM POST-LINEAR] Bù trượt bánh khi DỪNG TĨNH: dX={dx_m*100:+.1f}cm, dY={dy_m*100:+.1f}cm (Score: {score*100:.1f}%)")
+                                with self.lock:
+                                    self.robot_x = corr_x
+                                    self.robot_y = corr_y
+                                    self._last_scan_matched = True
+                    if self.camera and getattr(self.camera, 'points_3d', None):
+                        # Cập nhật bản đồ đúng 1 lần duy nhất từ khung hình tĩnh sắc nét đã nắn chuẩn
+                        self.mapper.update_scan(self.robot_x, self.robot_y, self.camera.points_3d, yaw=self.robot_yaw)
 
                 if self.step_cancel_requested:
                     self.step_status_text = "ĐÃ HỦY BƯỚC"
@@ -1883,14 +1975,20 @@ class JetBotMasterSystem:
                 dir_val = 1 if is_left else -1
                 dir_sign = 1.0 if is_left else -1.0
 
-                # ── GHI NHẬN MỐC GÓC BAN ĐẦU & RESET BỘ TÍCH LŨY IMU ──
+                # ── GHI NHẬN MỐC GÓC BAN ĐẦU & KHỞI TẠO MỐC LA BÀN IMU ──
                 if self.camera and hasattr(self.camera, 'reset_imu_heading'):
                     self.camera.reset_imu_heading()
                 time.sleep(0.02) # Cho IMU ổn định mốc 0
 
                 has_imu_ready = False
+                imu_yaw_start = None
                 if self.camera and hasattr(self.camera, 'get_imu_heading'):
-                    has_imu_ready, _, _ = self.camera.get_imu_heading()
+                    has_imu_ready, _, cur_yaw = self.camera.get_imu_heading()
+                    if has_imu_ready:
+                        imu_yaw_start = cur_yaw
+                if not has_imu_ready and (time.time() - getattr(self, 'last_imu_time', 0.0)) < 1.0:
+                    imu_yaw_start = getattr(self, 'latest_imu_yaw_val', None)
+                    has_imu_ready = (imu_yaw_start is not None)
 
                 yaw_start_pose = self.robot_yaw
                 t_turn_start = time.time()
@@ -1927,150 +2025,132 @@ class JetBotMasterSystem:
                     self.recorder.start_command(cmd_name)
 
                 use_closed_loop = getattr(config, 'ENABLE_CLOSED_LOOP_IMU', True) and has_imu_ready
-                if use_closed_loop:
-                    # ══════════════════════════════════════════════════════════════════
-                    # CHẾ ĐỘ 1: VÒNG ĐIỀU KHIỂN KÍN IMU THỜI GIAN THỰC (CLOSED-LOOP IMU TURN)
-                    # ══════════════════════════════════════════════════════════════════
-                    target_deg = deg
-                    decel_zone_deg = min(20.0, target_deg * 0.40)
-                    min_crawl_duty = 0.075
-                    timeout_s = (target_deg / 20.0) + 3.5
-                    t_loop_start = time.time()
-                    last_t_meas = t_loop_start
+                # ══════════════════════════════════════════════════════════════════
+                # ĐIỀU KHIỂN QUAY ĐỊNH LƯỢNG MƯỢT MÀ (PREDICTABLE SMOOTH DECELERATING TURN)
+                # Quay theo thời gian động học danh định có giảm ga cuối, tuyệt đối không bị kẹt lặp vô tận
+                # ══════════════════════════════════════════════════════════════════
+                w_calib = 1.58 * (turn_duty / 0.13)
+                stiction_comp_s = float(getattr(config, 'STEP_TURN_START_LATENCY_S', 0.080))
+                duration_motion = (rad / w_calib) * turn_scale
+                duration = max(0.12, duration_motion + stiction_comp_s)
+                w_target = w_calib if is_left else -w_calib
 
-                    print(f"🔄 [BƯỚC ĐỊNH LƯỢNG - VÒNG KÍN IMU] Bắt đầu QUAY {side_name} {target_deg:.0f}° @ {pct_val:.0f}% tốc độ (Xung={turn_duty*100:.0f}%, Bù pin x{bat_comp:.2f})...")
+                # Gần tới đích thì giảm dần vận tốc (25% thời gian cuối hạ ga dần về turn_min_pwm)
+                decel_ratio = 0.25
+                t_steady = duration * (1.0 - decel_ratio)
+                t_decel = duration * decel_ratio
 
-                    while not self.step_cancel_requested:
-                        now = time.time()
-                        if (now - t_loop_start) > timeout_s:
-                            print(f"⚠️ [VÒNG KÍN IMU] Hết thời gian an toàn ({timeout_s:.1f}s), dừng quay!")
-                            break
+                print(f"🔄 [BƯỚC QUAY ĐỊNH LƯỢNG] Bắt đầu QUAY {side_name} {deg:.0f}° @ {pct_val:.0f}% tốc độ (Vòng kín IMU={'BẬT' if use_closed_loop else 'TẮT'}, t_max={duration*1.8:.2f}s, Bù pin x{bat_comp:.2f})...")
+                start_t = time.time()
+                last_t_meas = start_t
+                max_timeout = max(duration * 2.2 + 0.5, 3.5) if use_closed_loop else duration
 
-                        # Đọc trực tiếp góc đã quay từ IMU accumulator
-                        _, acc_rad, raw_yaw = self.camera.get_imu_heading()
-                        turned_deg = math.degrees(abs(acc_rad))
-                        rem_deg = target_deg - turned_deg
+                while not self.step_cancel_requested:
+                    now = time.time()
+                    elapsed = now - start_t
 
-                        pct = max(0, min(98, int((turned_deg / target_deg) * 100)))
-                        self.step_status_text = f"ĐANG QUAY {side_name} {target_deg:.0f}° ({turned_deg:.1f}°/{target_deg:.0f}°)... ({pct}%)"
+                    # Đọc góc xoay IMU thời gian thực để đóng vòng điều khiển kín (Closed-Loop Feedback)
+                    cur_turned_deg = 0.0
+                    c_act_turn = False
+                    if self.camera and hasattr(self.camera, 'get_imu_heading'):
+                        c_act_turn, imu_acc_rad_rt, cur_yaw_rt = self.camera.get_imu_heading()
+                        if c_act_turn:
+                            if imu_yaw_start is not None:
+                                d_yaw_rt = math.atan2(math.sin(cur_yaw_rt - imu_yaw_start), math.cos(cur_yaw_rt - imu_yaw_start))
+                                cur_turned_deg = math.degrees(abs(d_yaw_rt))
+                            if abs(imu_acc_rad_rt) > 0.001 and cur_turned_deg < 0.5:
+                                cur_turned_deg = math.degrees(abs(imu_acc_rad_rt))
 
-                        if rem_deg <= 1.0:
-                            break
+                    # 1. Điều kiện dừng:
+                    if use_closed_loop and c_act_turn and cur_turned_deg >= deg:
+                        print(f"🎯 [IMU CLOSED-LOOP] Đã đạt góc quay mục tiêu {cur_turned_deg:.1f}° / {deg:.1f}° sau {elapsed:.2f}s!")
+                        break
+                    elif elapsed >= max_timeout:
+                        if use_closed_loop:
+                            print(f"⏱️ [IMU TIMEOUT] Dừng quay an toàn sau {elapsed:.2f}s (Đạt {cur_turned_deg:.1f}° / {deg:.1f}°)")
+                        break
 
-                        if rem_deg > decel_zone_deg:
-                            cur_duty = turn_duty
-                        else:
-                            ramp_ratio = max(0.0, rem_deg / decel_zone_deg)
-                            cur_duty = min_crawl_duty + (turn_duty - min_crawl_duty) * ramp_ratio
-
-                        dt_run = now - last_t_meas
-                        last_t_meas = now
-                        w_cmd = 1.58 * (cur_duty / 0.13) * dir_sign
-
-                        with self.lock:
-                            self.current_v = 0.0
-                            self.current_w = w_cmd
-                            self.last_cmd_vel_time = now
-                            self.trip_active_time_s += dt_run
-
-                        if self.motors:
-                            self.motors.spin_in_place(duty=cur_duty, direction=dir_val)
-
-                        time.sleep(0.010)
-
-                    if self.motors:
-                        if hasattr(self.motors, 'active_brake'):
-                            self.motors.active_brake(reverse_duty=0.10, pulse_ms=25, spin_direction=dir_val)
-                        else:
-                            self.motors.stop()
-
-                else:
-                    # ══════════════════════════════════════════════════════════════════
-                    # CHẾ ĐỘ 2: VÒNG HỞ THEO THỜI GIAN (DỰ PHÒNG KHI KHÔNG CÓ IMU)
-                    # ══════════════════════════════════════════════════════════════════
-                    w_calib = 1.58 * (turn_duty / 0.13)
-                    stiction_comp_s = float(getattr(config, 'STEP_TURN_START_LATENCY_S', 0.080))
-                    duration_motion = (rad / w_calib) * turn_scale
-                    duration = max(0.05, duration_motion + stiction_comp_s)
-                    w_target = w_calib if is_left else -w_calib
-
-                    enable_soft_stop = getattr(self, 'soft_stop_enabled', getattr(config, 'ENABLE_SOFT_STOP', True))
-                    max_decel_s = float(getattr(config, 'MANUAL_DECEL_TIME_MS', 180)) / 1000.0
-                    decel_time_s = min(max_decel_s, duration * 0.28) if enable_soft_stop else 0.0
-
-                    if enable_soft_stop and duration > decel_time_s:
-                        t_steady = duration - (decel_time_s / 2.0)
+                    # 2. Cập nhật tiến độ trên Web Cockpit
+                    if use_closed_loop and c_act_turn and deg > 0:
+                        pct = min(98, int((cur_turned_deg / deg) * 100))
+                        self.step_status_text = f"ĐANG QUAY {side_name} {deg:.0f}° [IMU: {cur_turned_deg:.1f}°]... ({pct}%)"
                     else:
-                        t_steady = duration
-                        decel_time_s = 0.0
-
-                    total_t = t_steady + decel_time_s
-                    last_progress = 0.0
-                    last_t_meas = time.time()
-
-                    print(f"🔄 [BƯỚC ĐỊNH LƯỢNG - VÒNG HỞ DỰ PHÒNG] Bắt đầu QUAY {side_name} {deg:.0f}° @ {pct_val:.0f}% tốc độ (t={t_steady:.2f}s, t_ham={decel_time_s:.2f}s)...")
-                    start_t = time.time()
-
-                    while not self.step_cancel_requested and (time.time() - start_t < t_steady):
-                        now = time.time()
-                        elapsed = now - start_t
-                        pct = min(90, int((elapsed / total_t) * 100))
+                        pct = min(95, int((elapsed / duration) * 100))
                         self.step_status_text = f"ĐANG QUAY {side_name} {deg:.0f}° @ {pct_val:.0f}%... ({pct}%)"
 
-                        progress = min(1.0, elapsed / max(0.001, total_t))
-                        last_progress = progress
-                        dt_run = now - last_t_meas
-                        last_t_meas = now
+                    # 3. Giảm dần vận tốc khi gần tới đích (trong 10° cuối) để triệt tiêu trớn quán tính (Overshoot)
+                    if use_closed_loop and c_act_turn:
+                        deg_remaining = deg - cur_turned_deg
+                        if deg_remaining <= 10.0:
+                            cur_duty = turn_min_pwm
+                        else:
+                            cur_duty = turn_duty
+                    else:
+                        if elapsed < t_steady:
+                            cur_duty = turn_duty
+                        else:
+                            ramp = (duration - elapsed) / max(0.01, t_decel)
+                            cur_duty = turn_min_pwm + (turn_duty - turn_min_pwm) * ramp
 
-                        with self.lock:
-                            self.current_v = 0.0
-                            self.current_w = w_target
-                            self.last_cmd_vel_time = now
-                            self.trip_active_time_s += dt_run
+                    dt_run = now - last_t_meas
+                    last_t_meas = now
+                    w_cur = w_target * (cur_duty / turn_duty)
 
-                        if self.motors:
-                            self.motors.spin_in_place(duty=turn_duty, direction=dir_val)
-
-                        time.sleep(0.02)
-
-                    if not self.step_cancel_requested and decel_time_s > 0.02:
-                        steps = 4
-                        dt_step = decel_time_s / steps
-                        for i in range(1, steps + 1):
-                            if self.step_cancel_requested:
-                                break
-                            ratio = 1.0 - (i / steps)
-                            cur_duty = max(0.075, turn_duty * ratio) if ratio > 0.1 else 0.0
-                            cur_w = w_target * ratio
-                            with self.lock:
-                                self.current_v = 0.0
-                                self.current_w = cur_w
-                                self.last_cmd_vel_time = time.time()
-                                self.trip_active_time_s += dt_step
-                            if self.motors:
-                                if cur_duty >= 0.07:
-                                    self.motors.spin_in_place(duty=cur_duty, direction=dir_val)
-                                else:
-                                    self.motors.stop()
-                            time.sleep(dt_step)
+                    with self.lock:
+                        self.current_v = 0.0
+                        self.current_w = w_cur
+                        self.last_cmd_vel_time = now
+                        self.trip_active_time_s += dt_run
 
                     if self.motors:
+                        self.motors.spin_in_place(duty=cur_duty, direction=dir_val)
+
+                    time.sleep(0.015)
+
+                if self.motors:
+                    if hasattr(self.motors, 'active_brake'):
+                        self.motors.active_brake(reverse_duty=0.10, pulse_ms=25, spin_direction=dir_val)
+                    else:
                         self.motors.stop()
 
-                # Đợi 100ms để triệt tiêu hoàn toàn rung lắc quán tính
-                time.sleep(0.10)
+                # Đợi 120ms để triệt tiêu hoàn toàn rung lắc quán tính và IMU ổn định mốc đo
+                time.sleep(0.12)
 
-                # ── ĐO ĐẠC GÓC QUAY THỰC TẾ TỪ CẢM BIẾN IMU ──
+                # ── TÁCH BIỆT: ĐO ĐẠC GÓC QUAY THỰC TẾ NGOÀI ĐỜI TỪ LA BÀN IMU ──
                 has_valid_imu_eval = False
                 imu_meas_deg = None
                 imu_diff_deg = None
 
+                c_act = False
+                imu_acc_rad = 0.0
+                imu_yaw_end = None
                 if self.camera and hasattr(self.camera, 'get_imu_heading'):
-                    c_act, imu_acc_rad, imu_raw = self.camera.get_imu_heading()
-                    if c_act and abs(imu_acc_rad) > 0.01:
+                    c_act, imu_acc_rad, imu_yaw_end = self.camera.get_imu_heading()
+
+                # Fallback sang mốc IMU tập trung nếu nhận qua ROS topic
+                if not c_act and (time.time() - getattr(self, 'last_imu_time', 0.0)) < 1.0:
+                    c_act = True
+                    imu_yaw_end = getattr(self, 'latest_imu_yaw_val', None)
+
+                if c_act and imu_yaw_end is not None and imu_yaw_start is not None:
+                    # Tính góc quay thực tế từ hiệu 2 mốc góc la bàn tuyệt đối:
+                    diff_rad = math.atan2(math.sin(imu_yaw_end - imu_yaw_start), math.cos(imu_yaw_end - imu_yaw_start))
+                    measured_rad = abs(diff_rad)
+
+                    # Tương quan chéo với góc tích phân gyro tích lũy liên tục (phòng trường hợp cuốn vòng > 170° hoặc lệch mốc)
+                    if deg > 170.0 and abs(imu_acc_rad) > math.radians(170.0):
+                        measured_rad = abs(imu_acc_rad)
+                    elif measured_rad < math.radians(0.5) and abs(imu_acc_rad) > math.radians(0.5):
+                        measured_rad = abs(imu_acc_rad)
+                    elif abs(imu_acc_rad) > math.radians(0.5) and abs(abs(imu_acc_rad) - measured_rad) < math.radians(15.0):
+                        measured_rad = abs(imu_acc_rad)
+
+                    measured_deg = math.degrees(measured_rad)
+
+                    if measured_deg > 0.5:  # Có chuyển động quay thực tế từ cảm biến vật lý
                         has_valid_imu_eval = True
-                        actual_rad = abs(imu_acc_rad)
-                        imu_meas_deg = math.degrees(actual_rad)
+                        actual_rad = measured_rad
+                        imu_meas_deg = measured_deg
                         imu_diff_deg = imu_meas_deg - deg
 
                 if not has_valid_imu_eval:
@@ -2090,10 +2170,18 @@ class JetBotMasterSystem:
                         eval_status = f"DƯ GÓC ({imu_diff_deg:+.1f}°)"
                     slam_calibrated = True
 
-                # Cập nhật góc robot_yaw theo góc quay thực tế
+                # Hướng xoay thực tế: ưu tiên lấy dấu từ cảm biến IMU nếu đo rõ ràng
+                if has_valid_imu_eval and abs(imu_acc_rad) > math.radians(1.0):
+                    actual_dir_sign = 1.0 if imu_acc_rad > 0 else -1.0
+                elif has_valid_imu_eval and abs(diff_rad) > math.radians(1.0):
+                    actual_dir_sign = 1.0 if diff_rad > 0 else -1.0
+                else:
+                    actual_dir_sign = dir_sign
+
+                # Cập nhật góc robot_yaw theo góc quay và hướng thực tế
                 final_robot_yaw = math.atan2(
-                    math.sin(yaw_start_pose + dir_sign * actual_rad),
-                    math.cos(yaw_start_pose + dir_sign * actual_rad)
+                    math.sin(yaw_start_pose + actual_dir_sign * actual_rad),
+                    math.cos(yaw_start_pose + actual_dir_sign * actual_rad)
                 )
 
                 # CẬP NHẬT POSE VÀ TRIP ODOMETER
@@ -2105,13 +2193,43 @@ class JetBotMasterSystem:
                     self._settle_frames_remaining = 0
                     self._was_moving = False
                     self.is_step_turning = False
-                    self._just_finished_turn = True
+                    self._just_finished_turn = False
                     # Đồng bộ neo IMU để camera loop không gây gián đoạn hay kéo lệch góc
                     if self.camera and hasattr(self.camera, 'get_imu_heading'):
                         _, _, cur_raw = self.camera.get_imu_heading()
                         self._imu_yaw_anchor = cur_raw - final_robot_yaw
+                    self.latest_imu_yaw_val = final_robot_yaw
 
-                # Cập nhật ngay 1 frame vào bản đồ 2D Occupancy Grid tại góc quay chuẩn vừa tới
+                # ── THỰC THI STOP-AND-SCAN CSM CHUẨN CÔNG NGHIỆP: NẮN LỆCH TÂM QUAY KHI XE ĐÃ DỪNG TĨNH ──
+                # Khi bánh xe bị kẹt hoặc trượt ma sát bất đối xứng trong lúc quay, xe bị trôi tịnh tiến (dX, dY).
+                # Khóa hướng theo IMU (final_robot_yaw), dùng CSM để tìm chính xác độ trôi tịnh tiến (dX, dY) trước khi bắn tia cập nhật bản đồ!
+                if self.scan_matcher and getattr(config, 'ENABLE_SCAN_MATCHING', True) and self.mapper and self.camera:
+                    time.sleep(0.12) # Chờ 120ms cho khung xe triệt tiêu hoàn toàn rung chấn cơ học
+                    live_depth = getattr(self.camera, 'latest_oak_depth', None)
+                    if live_depth is None and hasattr(self.camera, 'get_latest_frame'):
+                        _, live_depth = self.camera.get_latest_frame()
+                    if live_depth is not None:
+                        with self.lock:
+                            cur_rx, cur_ry = self.robot_x, self.robot_y
+                        self.camera.process_depth_frame(live_depth, cur_rx, cur_ry, self.robot_z, final_robot_yaw)
+                        scan_rob = getattr(self.camera, 'points_robot', None)
+                        if scan_rob and len(scan_rob) >= 8:
+                            corr_x, corr_y, corr_yaw, matched, score = self.scan_matcher.align_pose(
+                                cur_rx, cur_ry, final_robot_yaw, scan_rob,
+                                self.mapper.grid, self.mapper.origin_x, self.mapper.origin_y,
+                                self.mapper.width, self.mapper.height, self.mapper.resolution,
+                                hit_counts=getattr(self.mapper, 'hit_counts', None)
+                            )
+                            if matched:
+                                dx_m = corr_x - cur_rx
+                                dy_m = corr_y - cur_ry
+                                print(f"📐 [CSM POST-TURN] Bù trôi lệch tâm quay khi DỪNG TĨNH: dX={dx_m*100:+.1f}cm, dY={dy_m*100:+.1f}cm (Score: {score*100:.1f}%)")
+                                with self.lock:
+                                    self.robot_x = corr_x
+                                    self.robot_y = corr_y
+                                    self._last_scan_matched = True
+
+                # Cập nhật ngay 1 frame vào bản đồ 2D Occupancy Grid tại tọa độ đã nắn chuẩn
                 if self.mapper and self.flags.mapper and self.camera and getattr(self.camera, 'points_3d', None):
                     self.mapper.update_scan(self.robot_x, self.robot_y, self.camera.points_3d, yaw=final_robot_yaw)
 
@@ -2528,11 +2646,12 @@ class JetBotMasterSystem:
             rx, ry = self.robot_x, self.robot_y
             grid = self.mapper.grid if self.mapper else None
             landmarks = self.mapper.landmarks if self.mapper else []
+            hit_counts = getattr(self.mapper, 'hit_counts', None) if self.mapper else None
 
         if not getattr(self, 'planner', None):
             return {"success": False, "message": "Module PathPlanner chưa được khởi tạo"}
 
-        res = self.planner.plan_path((rx, ry), (gx, gy), grid=grid, landmarks=landmarks)
+        res = self.planner.plan_path((rx, ry), (gx, gy), grid=grid, landmarks=landmarks, hit_counts=hit_counts)
         if res.get('success'):
             print(f"🎯 [A* PATH PLANNER] Đã tìm lộ trình tới ({gx:.2f}, {gy:.2f}): {res['length_m']}m ({res['waypoints_count']} waypoints) trong {res['plan_time_ms']}ms")
         else:
@@ -2574,6 +2693,85 @@ class JetBotMasterSystem:
             t = Twist()
             self.ros_cmd_pub.publish(t)
 
+    def _nav_step_move_sync(self, move_type, value, direction='forward', speed_pct=None):
+        """Thực thi bước di chuyển định lượng đồng bộ cho AutonomousNavigator trong worker thread"""
+        if getattr(self, 'navigator', None) and getattr(self.navigator, '_cancel_requested', False):
+            return False
+        with self.lock:
+            self.is_step_running = True
+            self.step_move_type = str(move_type).lower()
+            self.step_cancel_requested = False
+            self.last_manual_drive_time = time.time()
+
+        parsed_speed = float(speed_pct) if speed_pct is not None else None
+        self._step_worker(move_type, float(value), direction, parsed_speed)
+        return True
+
+    def _nav_observe_scan_sync(self, rounds=1, is_initial=False):
+        """
+        Thực hiện quan sát xung quanh 360° đồng bộ cho AutonomousNavigator:
+        - Quay 45° CCW đúng 8 lần (1 vòng 360°) với tốc độ chuẩn.
+        - Dừng tĩnh tại mỗi nấc để chụp frame chiều sâu và cập nhật Occupancy Grid.
+        - Nếu is_initial=True (sau 2 vòng quét khởi tạo): khóa cứng bờ tường mốc (Anchor Wall Freezing).
+        """
+        rounds_count = max(1, int(rounds))
+        steps = int(getattr(config, 'NAV_OBSERVE_STEPS', 8))
+        step_deg = float(getattr(config, 'NAV_OBSERVE_SECTOR_DEG', 45.0))
+        turn_pwm_val = float(getattr(config, 'STEP_TURN_MIN_PWM', getattr(config, 'AUTO_SCAN_SPEED_PWM', 0.11)))
+        scan_spd_pct = round(turn_pwm_val * 100.0, 1)
+
+        try:
+            with self.lock:
+                self.is_auto_scanning = True
+
+            for r in range(1, rounds_count + 1):
+                if getattr(self, 'navigator', None) and getattr(self.navigator, '_cancel_requested', False):
+                    break
+
+                # Chụp khung hình mốc tĩnh tại góc hiện tại
+                time.sleep(0.20)
+                self._capture_static_scan_keyframe()
+
+                for i in range(1, steps + 1):
+                    if getattr(self, 'navigator', None) and getattr(self.navigator, '_cancel_requested', False):
+                        break
+                    if getattr(self, 'step_cancel_requested', False):
+                        break
+
+                    # Quay CCW 45°
+                    self._nav_step_move_sync('turn', step_deg, 'left', speed_pct=scan_spd_pct)
+
+                    if getattr(self, 'navigator', None) and getattr(self.navigator, '_cancel_requested', False):
+                        break
+
+                    # Dừng tĩnh để triệt tiêu dao động cơ học và chụp keyframe
+                    time.sleep(0.25)
+                    self._capture_static_scan_keyframe()
+
+            # Nếu là quét khởi tạo (is_initial=True), khóa cứng các bờ tường mốc không bị xóa
+            if is_initial and self.mapper and not (getattr(self, 'navigator', None) and getattr(self.navigator, '_cancel_requested', False)):
+                num_frozen = self.mapper.freeze_anchor_walls()
+                print(f"🔒 [NAV SCAN 360°] Đã khóa vĩnh viễn {num_frozen} ô bờ tường mốc 360° khởi tạo.")
+
+        except Exception as e:
+            print(f"⚠️ [NAV SCAN 360°] Lỗi trong chu trình quét quan sát: {e}")
+        finally:
+            with self.lock:
+                self.is_auto_scanning = False
+                self.is_step_running = False
+                self.step_move_type = ''
+                self.current_v = 0.0
+                self.current_w = 0.0
+            if self.motors:
+                self.motors.stop()
+
+    def _nav_replan_sync(self, gx, gy):
+        """Tái lập kế hoạch A* đồng bộ từ vị trí robot hiện tại tới điểm đích (gx, gy)"""
+        res = self.plan_to_goal(gx, gy)
+        if res.get('success'):
+            return res.get('path', [])
+        return []
+
     def start_navigation(self):
         """Kích hoạt AutonomousNavigator tự động lăn bánh bám lộ trình A*"""
         if not getattr(self, 'navigator', None):
@@ -2585,10 +2783,16 @@ class JetBotMasterSystem:
         if getattr(self, 'is_step_running', False):
             self.cancel_step_move()
 
-        return self.navigator.start_navigation(self.planner.current_path)
+        if hasattr(self, 'recorder') and self.recorder:
+            self.recorder.start_command("AUTO_NAV_A_STAR")
+
+        goal = getattr(self.planner, 'current_goal', None)
+        return self.navigator.start_navigation(self.planner.current_path, goal=goal)
 
     def stop_navigation(self):
         """Dừng khẩn cấp tiến trình tự hành bám đường"""
+        if hasattr(self, 'recorder') and self.recorder:
+            self.recorder.stop_command()
         if getattr(self, 'navigator', None):
             self.navigator.cancel_navigation("Dừng bởi người dùng qua Web")
             return {"success": True, "message": "Đã dừng tự hành"}
@@ -2618,18 +2822,26 @@ class JetBotMasterSystem:
         return False
 
     def get_calibration_params(self):
-        """Lấy toàn bộ thông số hiệu chuẩn động học hiện tại"""
-        tl = round(getattr(self.motors, 'trim_left', 1.0), 3) if self.motors else 1.0
-        tr = round(getattr(self.motors, 'trim_right', 1.0), 3) if self.motors else 1.0
+        """Lấy toàn bộ thông số hiệu chuẩn động học hiện tại từ config.py"""
+        tl = round(getattr(self.motors, 'trim_left', getattr(config, 'MOTOR_TRIM_LEFT', 1.0)), 3) if self.motors else 1.0
+        tr = round(getattr(self.motors, 'trim_right', getattr(config, 'MOTOR_TRIM_RIGHT', 1.0)), 3) if self.motors else 1.0
+        tbl = round(getattr(self.motors, 'trim_bwd_left', getattr(config, 'MOTOR_TRIM_BACKWARD_LEFT', 1.0)), 3) if self.motors else 1.0
+        tbr = round(getattr(self.motors, 'trim_bwd_right', getattr(config, 'MOTOR_TRIM_BACKWARD_RIGHT', 1.0)), 3) if self.motors else 1.0
         return {
             "motor_trim_left": tl,
             "motor_trim_right": tr,
+            "motor_trim_backward_left": tbl,
+            "motor_trim_backward_right": tbr,
             "trim_factor": round(tr / max(0.01, tl), 3),
-            "step_forward_scale": round(getattr(config, 'STEP_FORWARD_SCALE', 0.40), 3),
-            "step_backward_scale": round(getattr(config, 'STEP_BACKWARD_SCALE', 0.40), 3),
-            "step_turn_left_scale": round(getattr(config, 'STEP_TURN_LEFT_SCALE', 0.62), 3),
-            "step_turn_right_scale": round(getattr(config, 'STEP_TURN_RIGHT_SCALE', 0.64), 3),
+            "step_forward_scale": round(getattr(config, 'STEP_FORWARD_SCALE', 0.42), 3),
+            "step_backward_scale": round(getattr(config, 'STEP_BACKWARD_SCALE', 0.48), 3),
+            "step_turn_left_scale": round(getattr(config, 'STEP_TURN_LEFT_SCALE', 0.70), 3),
+            "step_turn_right_scale": round(getattr(config, 'STEP_TURN_RIGHT_SCALE', 0.70), 3),
+            "default_speed_pwm": round(getattr(config, 'DEFAULT_SPEED_PWM', 0.15), 3),
             "step_turn_min_pwm": round(getattr(config, 'STEP_TURN_MIN_PWM', 0.11), 3),
+            "manual_decel_time_ms": int(getattr(config, 'MANUAL_DECEL_TIME_MS', 180)),
+            "safety_brake_dist_m": round(getattr(config, 'SAFETY_BRAKE_DIST_M', 0.20), 2),
+            "safety_warn_dist_m": round(getattr(config, 'SAFETY_WARNING_DIST_M', 0.40), 2),
             "camera_offset_forward_m": round(getattr(config, 'CAMERA_OFFSET_FORWARD_M', 0.09), 3),
             "camera_offset_lateral_m": round(getattr(config, 'CAMERA_OFFSET_LATERAL_M', -0.015), 3),
             "camera_height_m": round(getattr(config, 'CAMERA_HEIGHT_M', 0.12), 3),
@@ -2638,30 +2850,33 @@ class JetBotMasterSystem:
         }
 
     def get_full_config(self):
-        """Lấy toàn bộ cấu hình 4 Profiles và các tham số runtime hiện hành cho Web UI Tab 3"""
+        """Lấy toàn bộ cấu hình chuẩn từ config.py cho Web UI Tab 3"""
         with self.lock:
-            cur_trim_l = round(getattr(self.motors, 'trim_left', 1.0), 3) if self.motors else 1.0
-            cur_trim_r = round(getattr(self.motors, 'trim_right', 1.0), 3) if self.motors else 1.0
+            cur_trim_l = round(getattr(self.motors, 'trim_left', getattr(config, 'MOTOR_TRIM_LEFT', 1.0)), 3) if self.motors else 1.0
+            cur_trim_r = round(getattr(self.motors, 'trim_right', getattr(config, 'MOTOR_TRIM_RIGHT', 1.0)), 3) if self.motors else 1.0
+            cur_bwd_l = round(getattr(self.motors, 'trim_bwd_left', getattr(config, 'MOTOR_TRIM_BACKWARD_LEFT', 1.0)), 3) if self.motors else 1.0
+            cur_bwd_r = round(getattr(self.motors, 'trim_bwd_right', getattr(config, 'MOTOR_TRIM_BACKWARD_RIGHT', 1.0)), 3) if self.motors else 1.0
 
         current_params = {
             "motor_trim_left": cur_trim_l,
             "motor_trim_right": cur_trim_r,
-            "step_forward_scale": round(getattr(config, 'STEP_FORWARD_SCALE', 0.50), 3),
-            "step_backward_scale": round(getattr(config, 'STEP_BACKWARD_SCALE', 0.50), 3),
-            "step_turn_left_scale": round(getattr(config, 'STEP_TURN_LEFT_SCALE', 0.69), 3),
-            "step_turn_right_scale": round(getattr(config, 'STEP_TURN_RIGHT_SCALE', 0.75), 3),
-            "default_speed_pwm": round(getattr(config, 'DEFAULT_SPEED_PWM', 0.06), 3),
+            "motor_trim_backward_left": cur_bwd_l,
+            "motor_trim_backward_right": cur_bwd_r,
+            "step_forward_scale": round(getattr(config, 'STEP_FORWARD_SCALE', 0.42), 3),
+            "step_backward_scale": round(getattr(config, 'STEP_BACKWARD_SCALE', 0.48), 3),
+            "step_turn_left_scale": round(getattr(config, 'STEP_TURN_LEFT_SCALE', 0.70), 3),
+            "step_turn_right_scale": round(getattr(config, 'STEP_TURN_RIGHT_SCALE', 0.70), 3),
+            "default_speed_pwm": round(getattr(config, 'DEFAULT_SPEED_PWM', 0.15), 3),
             "step_turn_min_pwm": round(getattr(config, 'STEP_TURN_MIN_PWM', 0.11), 3),
             "manual_decel_time_ms": int(getattr(config, 'MANUAL_DECEL_TIME_MS', 180)),
             "step_turn_start_latency_s": round(getattr(config, 'STEP_TURN_START_LATENCY_S', 0.08), 3),
             "heading_lock_kp": round(getattr(config, 'HEADING_LOCK_KP', 0.50), 2),
-            "safety_brake_dist_m": round(getattr(config, 'SAFETY_BRAKE_DIST_M', 0.22), 2),
-            "safety_warn_dist_m": round(getattr(config, 'SAFETY_WARN_DIST_M', 0.45), 2),
+            "safety_brake_dist_m": round(getattr(config, 'SAFETY_BRAKE_DIST_M', 0.20), 2),
+            "safety_warn_dist_m": round(getattr(config, 'SAFETY_WARNING_DIST_M', 0.40), 2),
             "camera_offset_forward_m": round(getattr(config, 'CAMERA_OFFSET_FORWARD_M', 0.09), 3),
             "camera_offset_lateral_m": round(getattr(config, 'CAMERA_OFFSET_LATERAL_M', -0.015), 3),
             "camera_height_m": round(getattr(config, 'CAMERA_HEIGHT_M', 0.12), 3),
             "camera_pitch_deg": round(getattr(config, 'CAMERA_PITCH_DEG', 0.0), 1),
-            "wheel_separation_m": round(getattr(config, 'WHEEL_SEPARATION_M', 0.12), 3)
         }
 
         return {
@@ -2715,18 +2930,20 @@ class JetBotMasterSystem:
                 "name": prof_name,
                 "description": prof_desc,
                 "motor_trim_left": round(float(p.get("motor_trim_left", base.get("motor_trim_left", 1.000))), 3),
-                "motor_trim_right": round(float(p.get("motor_trim_right", base.get("motor_trim_right", 1.020))), 3),
-                "step_forward_scale": round(float(p.get("step_forward_scale", base.get("step_forward_scale", 0.500))), 3),
-                "step_backward_scale": round(float(p.get("step_backward_scale", base.get("step_backward_scale", 0.500))), 3),
-                "step_turn_left_scale": round(float(p.get("step_turn_left_scale", base.get("step_turn_left_scale", 0.690))), 3),
-                "step_turn_right_scale": round(float(p.get("step_turn_right_scale", base.get("step_turn_right_scale", 0.750))), 3),
-                "default_speed_pwm": round(float(p.get("default_speed_pwm", base.get("default_speed_pwm", 0.060))), 3),
+                "motor_trim_right": round(float(p.get("motor_trim_right", base.get("motor_trim_right", 1.015))), 3),
+                "motor_trim_backward_left": round(float(p.get("motor_trim_backward_left", base.get("motor_trim_backward_left", 1.000))), 3),
+                "motor_trim_backward_right": round(float(p.get("motor_trim_backward_right", base.get("motor_trim_backward_right", 1.000))), 3),
+                "step_forward_scale": round(float(p.get("step_forward_scale", base.get("step_forward_scale", 0.420))), 3),
+                "step_backward_scale": round(float(p.get("step_backward_scale", base.get("step_backward_scale", 0.480))), 3),
+                "step_turn_left_scale": round(float(p.get("step_turn_left_scale", base.get("step_turn_left_scale", 0.700))), 3),
+                "step_turn_right_scale": round(float(p.get("step_turn_right_scale", base.get("step_turn_right_scale", 0.700))), 3),
+                "default_speed_pwm": round(float(p.get("default_speed_pwm", base.get("default_speed_pwm", 0.150))), 3),
                 "step_turn_min_pwm": round(float(p.get("step_turn_min_pwm", base.get("step_turn_min_pwm", 0.110))), 3),
                 "manual_decel_time_ms": int(p.get("manual_decel_time_ms", base.get("manual_decel_time_ms", 180))),
                 "step_turn_start_latency_s": round(float(p.get("step_turn_start_latency_s", base.get("step_turn_start_latency_s", 0.080))), 3),
                 "heading_lock_kp": round(float(p.get("heading_lock_kp", base.get("heading_lock_kp", 0.50))), 2),
-                "safety_brake_dist_m": round(float(p.get("safety_brake_dist_m", base.get("safety_brake_dist_m", 0.22))), 2),
-                "safety_warn_dist_m": round(float(p.get("safety_warn_dist_m", base.get("safety_warn_dist_m", 0.45))), 2),
+                "safety_brake_dist_m": round(float(p.get("safety_brake_dist_m", base.get("safety_brake_dist_m", 0.20))), 2),
+                "safety_warn_dist_m": round(float(p.get("safety_warn_dist_m", base.get("safety_warn_dist_m", 0.40))), 2),
                 "created_at": now_str
             }
 
@@ -2735,15 +2952,11 @@ class JetBotMasterSystem:
             config.apply_profile(new_pid)
             if self.motors:
                 self.motors.set_trim(new_profile["motor_trim_left"], new_profile["motor_trim_right"])
+                self.motors.set_trim(new_profile["motor_trim_backward_left"], new_profile["motor_trim_backward_right"], is_backward=True)
             config.save_profiles_to_disk()
 
-            # Đồng bộ robot_dynamics.json
-            try:
-                dyn_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "robot_dynamics.json")
-                with open(dyn_path, "w", encoding="utf-8") as f:
-                    json.dump(new_profile, f, indent=4, ensure_ascii=False)
-            except Exception:
-                pass
+            # Đồng bộ trực tiếp vào config.py duy nhất
+            self._persist_calibration_to_config_py(new_profile)
 
             print(f"✨ [CONFIG VERSION] Đã tạo thành công Phiên bản #{new_pid}: {prof_name}")
             return True, f"Đã tạo và kích hoạt thành công {prof_name}!", new_pid
@@ -2863,21 +3076,26 @@ class JetBotMasterSystem:
                 config.WHEEL_SEPARATION_M = val
                 cur_p['wheel_separation_m'] = val
 
+            if 'motor_trim_backward_left' in params:
+                val = max(0.5, min(1.5, float(params['motor_trim_backward_left'])))
+                if self.motors: self.motors.trim_bwd_left = val
+                config.MOTOR_TRIM_BACKWARD_LEFT = val
+                cur_p['motor_trim_backward_left'] = val
+            if 'motor_trim_backward_right' in params:
+                val = max(0.5, min(1.5, float(params['motor_trim_backward_right'])))
+                if self.motors: self.motors.trim_bwd_right = val
+                config.MOTOR_TRIM_BACKWARD_RIGHT = val
+                cur_p['motor_trim_backward_right'] = val
+
             config.ACTIVE_CONFIG_PROFILE = pid
             config.apply_profile(pid)
             config.save_profiles_to_disk()
 
-            # Cập nhật file robot_dynamics.json
-            dyn_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "robot_dynamics.json")
-            try:
-                import json
-                with open(dyn_path, "w", encoding="utf-8") as f:
-                    json.dump(cur_p, f, indent=4, ensure_ascii=False)
-            except Exception:
-                pass
+            # Lưu trực tiếp vào file config.py duy nhất
+            self._persist_calibration_to_config_py(cur_p)
 
-            print(f"💾 [CONFIG] Đã lưu và áp dụng thành công toàn bộ tham số vào Profile #{pid} và file config.py!")
-            return True, f"Đã lưu và áp dụng thành công Profile #{pid}!"
+            print(f"💾 [CONFIG] Đã lưu và áp dụng thành công toàn bộ tham số vào config.py!")
+            return True, f"Đã lưu và áp dụng thành công vào config.py!"
         except Exception as ex:
             print(f"⚠️ [CONFIG] Lỗi khi cập nhật cấu hình: {ex}")
             return False, str(ex)
@@ -2901,38 +3119,34 @@ class JetBotMasterSystem:
                 config.STEP_TURN_MIN_PWM = max(0.05, min(0.30, float(params['step_turn_min_pwm'])))
 
             if save_to_disk:
-                import json
-                dyn_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "robot_dynamics.json")
-                dyn_data = {}
-                if os.path.exists(dyn_path):
-                    try:
-                        with open(dyn_path, "r", encoding="utf-8") as f: dyn_data = json.load(f)
-                    except Exception: pass
-                
                 tl = round(getattr(self.motors, 'trim_left', 1.0), 3) if self.motors else 1.0
                 tr = round(getattr(self.motors, 'trim_right', 1.0), 3) if self.motors else 1.0
-                dyn_data["motor_trim_left"] = tl
-                dyn_data["motor_trim_right"] = tr
-                dyn_data["trim_factor"] = round(tr / max(0.01, tl), 3)
-                dyn_data["step_forward_scale"] = round(getattr(config, 'STEP_FORWARD_SCALE', 0.40), 3)
-                dyn_data["step_backward_scale"] = round(getattr(config, 'STEP_BACKWARD_SCALE', 0.40), 3)
-                dyn_data["step_turn_left_scale"] = round(getattr(config, 'STEP_TURN_LEFT_SCALE', 0.62), 3)
-                dyn_data["step_turn_right_scale"] = round(getattr(config, 'STEP_TURN_RIGHT_SCALE', 0.64), 3)
-                dyn_data["step_turn_min_pwm"] = round(getattr(config, 'STEP_TURN_MIN_PWM', 0.11), 3)
-                dyn_data["last_calibrated"] = time.strftime("%Y-%m-%d %H:%M:%S")
-
-                with open(dyn_path, "w", encoding="utf-8") as f:
-                    json.dump(dyn_data, f, indent=4, ensure_ascii=False)
-
+                tbl = round(getattr(self.motors, 'trim_bwd_left', 1.0), 3) if self.motors else 1.0
+                tbr = round(getattr(self.motors, 'trim_bwd_right', 1.0), 3) if self.motors else 1.0
+                dyn_data = {
+                    "motor_trim_left": tl,
+                    "motor_trim_right": tr,
+                    "motor_trim_backward_left": tbl,
+                    "motor_trim_backward_right": tbr,
+                    "step_forward_scale": round(getattr(config, 'STEP_FORWARD_SCALE', 0.42), 3),
+                    "step_backward_scale": round(getattr(config, 'STEP_BACKWARD_SCALE', 0.48), 3),
+                    "step_turn_left_scale": round(getattr(config, 'STEP_TURN_LEFT_SCALE', 0.70), 3),
+                    "step_turn_right_scale": round(getattr(config, 'STEP_TURN_RIGHT_SCALE', 0.70), 3),
+                    "step_turn_min_pwm": round(getattr(config, 'STEP_TURN_MIN_PWM', 0.11), 3),
+                    "default_speed_pwm": round(getattr(config, 'DEFAULT_SPEED_PWM', 0.15), 3),
+                    "manual_decel_time_ms": int(getattr(config, 'MANUAL_DECEL_TIME_MS', 180)),
+                    "safety_brake_dist_m": round(getattr(config, 'SAFETY_BRAKE_DIST_M', 0.20), 2),
+                    "safety_warn_dist_m": round(getattr(config, 'SAFETY_WARNING_DIST_M', 0.40), 2)
+                }
                 self._persist_calibration_to_config_py(dyn_data)
-                print(f"💾 [CALIBRATION] Đã lưu vĩnh viễn cấu hình động học vào robot_dynamics.json và config.py!")
+                print("💾 [CALIBRATION] Đã lưu trực tiếp cấu hình động học vào file config.py!")
             return True
         except Exception as e:
             print(f"⚠️ [CALIBRATION] Lỗi khi cập nhật cấu hình: {e}")
             return False
 
     def _persist_calibration_to_config_py(self, dyn_data: dict):
-        """Ghi đè trực tiếp các tham số hiệu chuẩn vào config.py"""
+        """Ghi đè trực tiếp các tham số hiệu chuẩn vào file config.py chuẩn duy nhất"""
         try:
             cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.py")
             if not os.path.exists(cfg_path): return
@@ -2942,11 +3156,18 @@ class JetBotMasterSystem:
             mapping = {
                 'MOTOR_TRIM_LEFT': dyn_data.get('motor_trim_left'),
                 'MOTOR_TRIM_RIGHT': dyn_data.get('motor_trim_right'),
+                'MOTOR_TRIM_BACKWARD_LEFT': dyn_data.get('motor_trim_backward_left', dyn_data.get('motor_trim_bwd_left')),
+                'MOTOR_TRIM_BACKWARD_RIGHT': dyn_data.get('motor_trim_backward_right', dyn_data.get('motor_trim_bwd_right')),
                 'STEP_FORWARD_SCALE': dyn_data.get('step_forward_scale'),
                 'STEP_BACKWARD_SCALE': dyn_data.get('step_backward_scale'),
                 'STEP_TURN_LEFT_SCALE': dyn_data.get('step_turn_left_scale'),
                 'STEP_TURN_RIGHT_SCALE': dyn_data.get('step_turn_right_scale'),
                 'STEP_TURN_MIN_PWM': dyn_data.get('step_turn_min_pwm'),
+                'DEFAULT_SPEED_PWM': dyn_data.get('default_speed_pwm'),
+                'MANUAL_DECEL_TIME_MS': dyn_data.get('manual_decel_time_ms'),
+                'HEADING_LOCK_KP': dyn_data.get('heading_lock_kp'),
+                'SAFETY_BRAKE_DIST_M': dyn_data.get('safety_brake_dist_m'),
+                'SAFETY_WARNING_DIST_M': dyn_data.get('safety_warn_dist_m', dyn_data.get('safety_warning_dist_m')),
                 'CAMERA_OFFSET_FORWARD_M': dyn_data.get('camera_offset_forward_m'),
                 'CAMERA_OFFSET_LATERAL_M': dyn_data.get('camera_offset_lateral_m'),
                 'CAMERA_HEIGHT_M': dyn_data.get('camera_height_m'),
