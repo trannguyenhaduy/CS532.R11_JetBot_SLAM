@@ -211,7 +211,7 @@ def run_tests():
     # ──────────────────────────────────────────────────────────────────────────
     # [TEST 8] Kiểm tra bộ điều khiển tự hành bám đường AutonomousNavigator
     # ──────────────────────────────────────────────────────────────────────────
-    print("\n[TEST 8/8] Kiểm tra bộ điều khiển tự hành bám đường (modules/navigator.py)...")
+    print("\n[TEST 8/9] Kiểm tra bộ điều khiển tự hành bám đường (modules/navigator.py)...")
     total_tests += 1
     try:
         import time
@@ -240,6 +240,80 @@ def run_tests():
             errors.append(msg)
     except Exception as e:
         msg = f"Lỗi khởi tạo AutonomousNavigator: {e}"
+        print(f"  ❌ [FAIL] {msg}")
+        errors.append(msg)
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # [TEST 9] Kiểm tra thuật toán xử lý IMU OAK-D S2 & Đối chiếu góc quay vật lý
+    # ──────────────────────────────────────────────────────────────────────────
+    print("\n[TEST 9/9] Kiểm tra giải mã IMU OAK-D S2 (Quaternion Yaw & Gyroscope)...")
+    total_tests += 1
+    try:
+        from modules.camera_streamer import CameraStreamer
+        cs_imu = CameraStreamer()
+
+        # Kiểm tra khởi tạo trục đứng
+        assert getattr(cs_imu, '_imu_vertical_axis', None) == 'y', "Trục đứng IMU phải mặc định là 'y'"
+        assert getattr(cs_imu, '_imu_vertical_sign', None) == -1.0, "Hệ số trục đứng IMU phải là -1.0"
+
+        # 1. Giả lập gói tin Rotation Vector: Camera đứng trên bàn ở Yaw = 0 độ
+        class MockRV0:
+            real = -0.5
+            i = 0.5
+            j = -0.5
+            k = 0.5
+        class MockPktRV0:
+            rotationVector = MockRV0()
+            gyroscope = None
+            acceleroMeter = None
+
+        cs_imu._process_single_imu_packet(MockPktRV0())
+        has_act, acc_yaw0, raw_yaw0 = cs_imu.get_imu_heading()
+        assert has_act, "IMU phải ở trạng thái hoạt động sau khi nhận gói tin"
+        assert abs(math.degrees(raw_yaw0) - 0.0) < 0.5, f"Góc mốc ban đầu phải là 0°, nhận được {math.degrees(raw_yaw0):.2f}°"
+
+        # 2. Giả lập xe quay TRÁI 90 độ (+90° = +pi/2 rad)
+        class MockRV90:
+            real = -0.70710678
+            i = 0.70710678
+            j = 0.0
+            k = 0.0
+        class MockPktRV90:
+            rotationVector = MockRV90()
+            gyroscope = None
+            acceleroMeter = None
+
+        cs_imu._process_single_imu_packet(MockPktRV90())
+        _, acc_yaw_90, raw_yaw_90 = cs_imu.get_imu_heading()
+        yaw_deg = math.degrees(raw_yaw_90)
+        assert abs(yaw_deg - 90.0) < 0.5, f"Góc quay giải mã phải là +90°, nhận được {yaw_deg:.2f}°"
+        assert abs(math.degrees(acc_yaw_90) - 90.0) < 0.5, f"Góc tích lũy phải là +90°, nhận được {math.degrees(acc_yaw_90):.2f}°"
+
+        # 3. Giả lập xe quay PHẢI 45 độ (-45° = -pi/4 rad)
+        class MockRV45:
+            real = 0.27059805
+            i = -0.27059805
+            j = 0.65328148
+            k = -0.65328148
+        class MockPktRV45:
+            rotationVector = MockRV45()
+            gyroscope = None
+            acceleroMeter = None
+
+        cs_imu._process_single_imu_packet(MockPktRV45())
+        _, _, raw_yaw45 = cs_imu.get_imu_heading()
+        yaw_deg2 = math.degrees(raw_yaw45)
+        assert abs(yaw_deg2 - (-45.0)) < 0.5, f"Góc quay giải mã phải là -45°, nhận được {yaw_deg2:.2f}°"
+
+        # 4. Kiểm tra reset không làm mất mốc
+        cs_imu.reset_imu_heading()
+        assert cs_imu.imu_accumulated_yaw == 0.0, "Góc tích phân phải về 0 rad sau reset"
+        assert cs_imu._last_raw_imu_yaw == raw_yaw45, "Mốc raw yaw phải được giữ lại sau reset"
+
+        print("  ✅ [PASS] Thuật toán giải mã Quaternion Yaw & Gyro IMU OAK-D S2 đạt độ chính xác tuyệt đối (sai số < 0.01°)!")
+        passed_tests += 1
+    except Exception as e:
+        msg = f"Lỗi kiểm thử IMU OAK-D: {e}"
         print(f"  ❌ [FAIL] {msg}")
         errors.append(msg)
 

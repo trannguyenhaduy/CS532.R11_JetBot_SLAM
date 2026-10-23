@@ -201,8 +201,10 @@ class OccupancySLAM:
             cam_wy = ry + (cam_off_x * sin_y + cam_off_y * cos_y)
             c_col, c_row = self.world_to_grid(cam_wx, cam_wy)
             ray_orig_col, ray_orig_row = (c_col, c_row) if c_col is not None else (r_col, r_row)
+            cam_orig_x, cam_orig_y = cam_wx, cam_wy
         else:
             ray_orig_col, ray_orig_row = r_col, r_row
+            cam_orig_x, cam_orig_y = rx, ry
 
         self.total_scans_processed += 1
         has_new_obstacle = False
@@ -232,12 +234,13 @@ class OccupancySLAM:
                 if o_col is None:
                     continue
 
-                # Vẽ tia quan sát quang học: Vùng giữa Camera và Điểm đo là KHÔNG GIAN THOÁNG
+                # Vẽ tia quan sát quang học: Vùng giữa mắt thấu kính Camera và Điểm đo là KHÔNG GIAN THOÁNG
                 # Dừng tia trước vật cản 6cm để bảo toàn mép vật cản không bị tia đè lên
-                if dist > 0.08:
-                    ratio = max(0.0, (dist - 0.06) / dist)
-                    fx = rx + (wx - rx) * ratio
-                    fy = ry + (wy - ry) * ratio
+                dist_cam = math.hypot(wx - cam_orig_x, wy - cam_orig_y)
+                if dist_cam > 0.08:
+                    ratio = max(0.0, (dist_cam - 0.06) / dist_cam)
+                    fx = cam_orig_x + (wx - cam_orig_x) * ratio
+                    fy = cam_orig_y + (wy - cam_orig_y) * ratio
                     f_col, f_row = self.world_to_grid(fx, fy)
                     if f_col is not None:
                         cv2.line(ray_mask, (ray_orig_col, ray_orig_row), (f_col, f_row), 1, 1)
@@ -416,11 +419,13 @@ class OccupancySLAM:
         Chiếu điểm từ Camera Frame sang World Frame bằng phép toán vi sai.
         Camera: X phải, Y xuống, Z tới -> Robot: X tới (zc), Y trái (-xc), Z lên (-yc + 0.12)
         """
-        # Bù cánh tay đòn camera OAK-D S2 nhô phía trước trục bánh vi sai 9cm (0.09m)
-        cam_offset_x = 0.09
+        # Bù cánh tay đòn camera OAK-D S2 nhô phía trước trục bánh vi sai 9cm và lệch ngang -1.5cm
+        cam_offset_x = getattr(config, 'CAMERA_OFFSET_FORWARD_M', 0.09) if config else 0.09
+        cam_offset_y = getattr(config, 'CAMERA_OFFSET_LATERAL_M', -0.015) if config else -0.015
+        cam_height_z = getattr(config, 'CAMERA_HEIGHT_M', 0.12) if config else 0.12
         x_rob = zc + cam_offset_x
-        y_rob = -xc
-        z_rob = -yc + 0.12
+        y_rob = -xc + cam_offset_y
+        z_rob = -yc + cam_height_z
 
         cos_y = math.cos(yaw)
         sin_y = math.sin(yaw)

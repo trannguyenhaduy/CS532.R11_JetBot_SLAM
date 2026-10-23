@@ -571,6 +571,15 @@ class WebHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(json.dumps(stats).encode())
             return
+        elif self.path.startswith('/api/session/reset'):
+            recorder = getattr(inst, 'recorder', None)
+            new_id = recorder.reset_session() if (recorder and hasattr(recorder, 'reset_session')) else None
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps({"status": "OK", "session_id": new_id}).encode())
+            return
         elif self.path.startswith('/api/config/full'):
             res = {}
             if inst and hasattr(inst, 'get_full_config'):
