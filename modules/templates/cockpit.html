@@ -236,12 +236,16 @@
       width: 100%;
       height: 100%;
       object-fit: contain;
+      image-rendering: -webkit-optimize-contrast;
+      transform: translateZ(0);
+      will-change: contents;
     }
 
     #three-viewport {
       width: 100%;
       height: 100%;
       cursor: grab;
+      transform: translateZ(0);
     }
 
     #three-viewport:active {
@@ -255,6 +259,8 @@
       cursor: grab;
       display: block;
       touch-action: none;
+      transform: translateZ(0);
+      will-change: transform;
     }
 
     .canvas-map:active {
@@ -289,7 +295,7 @@
 
     .bottom-grid {
       display: grid;
-      grid-template-columns: 1fr 1.05fr 0.95fr;
+      grid-template-columns: 1fr 1fr 1fr;
       gap: 14px;
       padding: 0 16px 16px;
       max-width: 1680px;
@@ -1157,6 +1163,10 @@
         ⚙️ TAB 3: HIỆU CHỈNH CẤU HÌNH & PROFILE
         <span id="tab3-profile-badge" style="font-size:0.62rem; padding:2px 6px; border-radius:4px; background:rgba(0,240,255,0.2); border:1px solid var(--cyan); color:var(--cyan); margin-left:6px; font-weight:700;">PROFILE #1</span>
       </button>
+      <button class="main-tab-nav" id="tab-nav-teleop" onclick="switchMainTab('teleop')">
+        🕹️ TAB 4: ĐIỀU KHIỂN & HIỆU CHUẨN XE
+        <span style="font-size:0.62rem; padding:2px 6px; border-radius:4px; background:rgba(255,184,0,0.2); border:1px solid var(--amber); color:var(--amber); margin-left:6px; font-weight:700;">MANUAL</span>
+      </button>
     </div>
     <div id="inspector-quick-status" style="font-size:0.75rem; color:var(--dim); font-family:'Orbitron',monospace; display:flex; gap:16px; align-items:center;">
       <span>FRAME: <b id="top-frame-id" style="color:var(--cyan);">#--</b></span>
@@ -1195,7 +1205,7 @@
         <canvas id="map-canvas" class="canvas-map" style="display:block;"></canvas>
         <div id="three-viewport" style="display:none;"></div>
         <div class="hud" id="hud-info">2D OCCUPANCY GRID MAP & LASERSCAN</div>
-        <div class="hud-tip" id="hud-tip-text">🎯 Click: Đặt đích A* | 🖱️ Kéo: Di chuyển | 📜 Cuộn: Zoom | 🔴 Mới ➔ 🟢 Kiên cố</div>
+        <div class="hud-tip" id="hud-tip-text">🎯 Click: Đặt đích A* | 🏠 Về (0,0) | 🖱️ Kéo/Cuộn | 🔴 Mới ➔ 🟢 Kiên cố</div>
 
         <!-- Floating banner hiển thị tiến trình tự hành A* -->
         <div id="nav-status-badge"
@@ -1221,6 +1231,9 @@
           <button class="tab-btn" id="btn-auto-nav" onclick="toggleAutoNav()"
             style="padding:5px 9px; font-size:11px; font-weight:700; background:rgba(0,255,163,0.2); color:var(--accent); border-color:var(--accent); display:none; box-shadow:0 0 10px rgba(0,255,163,0.3);"
             title="Kích hoạt tự hành bám đường A* đến đích">🚀 CHẠY TỰ HÀNH</button>
+          <button class="tab-btn" id="btn-return-home" onclick="returnToOrigin()"
+            style="padding:5px 9px; font-size:11px; font-weight:700; background:rgba(0,240,255,0.18); color:var(--cyan); border-color:var(--cyan); box-shadow:0 0 10px rgba(0,240,255,0.25);"
+            title="Lập kế hoạch đường đi A* quay trở về điểm xuất phát (0, 0)">🏠 VỀ ĐIỂM XUẤT PHÁT</button>
           <button class="tab-btn" id="btn-clear-goal" onclick="clearGoal()"
             style="padding:4px 8px; font-size:11px; background:rgba(10,14,23,0.85); color:#ffb800; border-color:#ffb800;"
             title="Xóa điểm đích và đường đi A*">🎯 XÓA ĐÍCH A*</button>
@@ -1253,221 +1266,9 @@
     </div>
   </div>
 
-  <div class="bottom-grid">
-    <!-- ════ CỘT 1: ĐIỀU KHIỂN ROBOT (WASD & BƯỚC ĐỊNH LƯỢNG) ════ -->
-    <div class="card" id="card-teleop">
-      <div class="card-hdr"
-        style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:4px;">
-        <span style="font-weight:700;">🎮 ĐIỀU KHIỂN ROBOT</span>
-        <div style="display:flex; gap:6px; align-items:center;">
-          <button class="tab-btn active" id="btn-mode-wasd" onclick="switchControlMode('wasd')">🎮 WASD</button>
-          <button class="tab-btn" id="btn-mode-step" onclick="switchControlMode('step')"
-            style="color:var(--emerald); border-color:var(--emerald);">📏 BƯỚC (CM & ĐỘ)</button>
-        </div>
-      </div>
-
-      <!-- 1. CHẾ ĐỘ LÁI TAY LIÊN TỤC WASD -->
-      <div id="wasd-ctrl-container">
-        <div id="brake-status-banner"
-          style="margin:12px 14px 0; padding:8px 12px; border-radius:6px; font-size:0.75rem; text-align:center; font-weight:700; border:1px solid var(--emerald); color:var(--emerald); background:rgba(0, 255, 163, 0.1);">
-          [AN TOAN] DUONG THOANG (CU LY: -- CM)
-        </div>
-        <div style="display:flex; justify-content:center; gap:6px; margin:10px 14px 6px;">
-          <button class="tab-btn" id="btn-teleop-auto-scan" onclick="toggleAutoScan()"
-            style="padding:5px 16px; font-size:0.75rem; cursor:pointer; border-color:var(--cyan); color:var(--cyan); font-weight:bold; background:rgba(0,240,255,0.12);"
-            title="JetBot tự xoay chậm đều đúng 360 độ (vòng kín IMU)">🔄 TỰ QUÉT 360°</button>
-        </div>
-        <div class="dpad-container" style="padding:10px 14px 16px;">
-          <div class="dpad-row"><button class="btn-drive" id="btn-up" onmousedown="sendDrive(speedLinear,0)"
-              onmouseup="emergencyStop()" ontouchstart="sendDrive(speedLinear,0)"
-              ontouchend="emergencyStop()">▲</button></div>
-          <div class="dpad-row">
-            <button class="btn-drive" id="btn-left" onmousedown="sendDrive(0,speedAngular)" onmouseup="emergencyStop()"
-              ontouchstart="sendDrive(0,speedAngular)" ontouchend="emergencyStop()">◀</button>
-            <button class="btn-drive btn-stop" id="btn-stop" onclick="emergencyStop()">■ DỪNG</button>
-            <button class="btn-drive" id="btn-right" onmousedown="sendDrive(0,-speedAngular)"
-              onmouseup="emergencyStop()" ontouchstart="sendDrive(0,-speedAngular)"
-              ontouchend="emergencyStop()">▶</button>
-          </div>
-          <div class="dpad-row"><button class="btn-drive" id="btn-down" onmousedown="sendDrive(-speedLinear,0)"
-              onmouseup="emergencyStop()" ontouchstart="sendDrive(-speedLinear,0)"
-              ontouchend="emergencyStop()">▼</button></div>
-        </div>
-      </div>
-
-      <!-- 2. CHẾ ĐỘ ĐIỀU KHIỂN BƯỚC ĐỊNH LƯỢNG CHUẨN XÁC (METRIC STEP TELEOP) -->
-      <div id="step-ctrl-container" style="display:none; padding:10px 14px 12px;">
-        <!-- Khung nhập số cm Tiến / Lùi -->
-        <div
-          style="background:rgba(255,255,255,0.02); border:1px solid rgba(0,240,255,0.18); border-radius:8px; padding:8px 10px; margin-bottom:8px;">
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-            <span style="font-size:0.75rem; color:var(--cyan); font-weight:700;">TIẾN / LÙI (CENTIMET)</span>
-            <div style="display:flex; align-items:center; gap:4px;">
-              <input type="number" id="step-dist-input" value="20" min="1" max="500" oninput="updateStepLabels()"
-                style="width:58px; background:#070b12; border:1px solid var(--cyan); color:#fff; border-radius:4px; padding:2px 4px; font-family:'Orbitron',monospace; font-size:0.82rem; text-align:center;">
-              <span style="font-size:0.72rem; color:var(--dim);">cm</span>
-            </div>
-          </div>
-          <div style="display:flex; gap:4px; justify-content:center; flex-wrap:wrap;">
-            <button class="tab-btn" id="chip-dist-1" onclick="setStepDist(1)" style="padding:2px 6px; font-size:0.68rem;">1cm</button>
-            <button class="tab-btn" id="chip-dist-2" onclick="setStepDist(2)" style="padding:2px 6px; font-size:0.68rem;">2cm</button>
-            <button class="tab-btn" id="chip-dist-5" onclick="setStepDist(5)" style="padding:2px 6px; font-size:0.68rem;">5cm</button>
-            <button class="tab-btn" id="chip-dist-10" onclick="setStepDist(10)" style="padding:2px 6px; font-size:0.68rem;">10cm</button>
-            <button class="tab-btn active" id="chip-dist-20" onclick="setStepDist(20)" style="padding:2px 6px; font-size:0.68rem;">20cm</button>
-            <button class="tab-btn" id="chip-dist-30" onclick="setStepDist(30)" style="padding:2px 6px; font-size:0.68rem;">30cm</button>
-            <button class="tab-btn" id="chip-dist-40" onclick="setStepDist(40)" style="padding:2px 6px; font-size:0.68rem;">40cm</button>
-            <button class="tab-btn" id="chip-dist-50" onclick="setStepDist(50)" style="padding:2px 6px; font-size:0.68rem;">50cm</button>
-            <button class="tab-btn" id="chip-dist-60" onclick="setStepDist(60)" style="padding:2px 6px; font-size:0.68rem;">60cm</button>
-            <button class="tab-btn" id="chip-dist-70" onclick="setStepDist(70)" style="padding:2px 6px; font-size:0.68rem;">70cm</button>
-            <button class="tab-btn" id="chip-dist-80" onclick="setStepDist(80)" style="padding:2px 6px; font-size:0.68rem;">80cm</button>
-            <button class="tab-btn" id="chip-dist-100" onclick="setStepDist(100)" style="padding:2px 6px; font-size:0.68rem;">100cm</button>
-          </div>
-        </div>
-
-        <!-- Khung nhập số độ Quay Trái / Phải -->
-        <div
-          style="background:rgba(255,255,255,0.02); border:1px solid rgba(0,255,163,0.18); border-radius:8px; padding:8px 10px; margin-bottom:8px;">
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-            <span style="font-size:0.75rem; color:var(--emerald); font-weight:700;">GÓC QUAY (ĐỘ °)</span>
-            <div style="display:flex; align-items:center; gap:4px;">
-              <input type="number" id="step-deg-input" value="45" min="1" max="360" oninput="updateStepLabels()"
-                style="width:58px; background:#070b12; border:1px solid var(--emerald); color:#fff; border-radius:4px; padding:2px 4px; font-family:'Orbitron',monospace; font-size:0.82rem; text-align:center;">
-              <span style="font-size:0.72rem; color:var(--dim);">độ</span>
-            </div>
-          </div>
-          <div style="display:flex; gap:4px; justify-content:center; flex-wrap:wrap;">
-            <button class="tab-btn" id="chip-deg-15" onclick="setStepDeg(15)" style="padding:2px 6px; font-size:0.68rem;">15°</button>
-            <button class="tab-btn" id="chip-deg-30" onclick="setStepDeg(30)" style="padding:2px 6px; font-size:0.68rem;">30°</button>
-            <button class="tab-btn active" id="chip-deg-45" onclick="setStepDeg(45)" style="padding:2px 6px; font-size:0.68rem;">45°</button>
-            <button class="tab-btn" id="chip-deg-60" onclick="setStepDeg(60)" style="padding:2px 6px; font-size:0.68rem;">60°</button>
-            <button class="tab-btn" id="chip-deg-90" onclick="setStepDeg(90)" style="padding:2px 6px; font-size:0.68rem;">90°</button>
-            <button class="tab-btn" id="chip-deg-120" onclick="setStepDeg(120)" style="padding:2px 6px; font-size:0.68rem;">120°</button>
-            <button class="tab-btn" id="chip-deg-180" onclick="setStepDeg(180)" style="padding:2px 6px; font-size:0.68rem;">180°</button>
-            <button class="tab-btn" id="chip-deg-225" onclick="setStepDeg(225)" style="padding:2px 6px; font-size:0.68rem;">225°</button>
-            <button class="tab-btn" id="chip-deg-270" onclick="setStepDeg(270)" style="padding:2px 6px; font-size:0.68rem;">270°</button>
-            <button class="tab-btn" id="chip-deg-315" onclick="setStepDeg(315)" style="padding:2px 6px; font-size:0.68rem;">315°</button>
-            <button class="tab-btn" id="chip-deg-360" onclick="setStepDeg(360)" style="padding:2px 6px; font-size:0.68rem;">360°</button>
-          </div>
-        </div>
-
-        <!-- Banner trạng thái thực thi bước -->
-        <div id="step-status-banner"
-          style="margin-bottom:8px; padding:6px 10px; border-radius:6px; font-size:0.72rem; text-align:center; font-weight:700; border:1px solid var(--border); color:var(--cyan); background:rgba(0, 240, 255, 0.08);">
-          [SẴN SÀNG] SẴN SÀNG THỰC THI BƯỚC ĐỊNH LƯỢNG
-        </div>
-
-        <!-- D-Pad Bước Hành Động -->
-        <div class="dpad-container" style="padding:2px; gap:6px;">
-          <div class="dpad-row">
-            <button class="btn-drive" id="btn-step-fwd" onclick="executeStep('linear','forward')"
-              style="width:150px; height:42px; font-size:0.80rem; font-weight:700;">▲ TIẾN 20CM</button>
-          </div>
-          <div class="dpad-row">
-            <button class="btn-drive" id="btn-step-left" onclick="executeStep('turn','left')"
-              style="width:95px; height:42px; font-size:0.75rem; font-weight:700;">↺ TRÁI 45°</button>
-            <button class="btn-drive btn-stop" id="btn-step-stop" onclick="cancelStep()"
-              style="width:70px; height:42px; font-size:0.75rem; font-weight:700;">■ HỦY</button>
-            <button class="btn-drive" id="btn-step-right" onclick="executeStep('turn','right')"
-              style="width:95px; height:42px; font-size:0.75rem; font-weight:700;">↻ PHẢI 45°</button>
-          </div>
-          <div class="dpad-row">
-            <button class="btn-drive" id="btn-step-back" onclick="executeStep('linear','backward')"
-              style="width:150px; height:42px; font-size:0.80rem; font-weight:700;">▼ LÙI 20CM</button>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- ════ CỘT 2: QUỸ ĐẠO THỰC NGHIỆM KHÉP KÍN (GEOMETRIC BENCHMARK) ════ -->
-    <div class="card" id="card-patterns-bench">
-      <div class="card-hdr" style="display:flex; justify-content:space-between; align-items:center;">
-        <span style="font-weight:700; color:var(--amber);">📐 QUỸ ĐẠO THỰC NGHIỆM KHÉP KÍN</span>
-        <button class="tab-btn" onclick="stopPattern()"
-          style="padding:3px 12px; font-size:0.70rem; font-weight:700; color:var(--rose); border-color:var(--rose); background:rgba(255,50,50,0.12); cursor:pointer;">
-          ⏹ DỪNG
-        </button>
-      </div>
-
-      <div style="padding:12px 14px; display:flex; flex-direction:column; gap:10px;">
-        <!-- Banner trạng thái quỹ đạo -->
-        <div id="pattern-status-banner"
-          style="padding:7px 10px; border-radius:6px; font-size:0.72rem; text-align:center; font-weight:700; border:1px solid rgba(255,184,0,0.3); color:var(--amber); background:rgba(255,184,0,0.06);">
-          [SẴN SÀNG] KIỂM TRA ĐỘ KHÉP KÍN BẢN ĐỒ 2D VÀ THỰC TẾ (CỐ ĐỊNH 10% PWM)
-        </div>
-
-        <!-- 2 Hộp Quỹ Đạo: Chữ Nhật & Tam Giác Vuông Cân -->
-        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
-          <!-- Hộp 1: Hình Chữ Nhật -->
-          <div style="background:rgba(7,9,14,0.7); border:1px solid rgba(0,240,255,0.25); border-radius:8px; padding:10px 12px; display:flex; flex-direction:column; justify-content:space-between;">
-            <div>
-              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-                <span style="font-weight:700; font-size:0.75rem; color:var(--cyan);">🟦 HÌNH CHỮ NHẬT</span>
-                <span style="font-size:0.60rem; color:var(--dim);">4 Cạnh · 90°</span>
-              </div>
-              <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-bottom:6px;">
-                <div>
-                  <label style="font-size:0.60rem; color:var(--dim); display:block;">DÀI (CM)</label>
-                  <input type="number" id="pat-rect-l" value="80" step="5" min="15" max="300"
-                    style="width:100%; background:rgba(0,0,0,0.6); border:1px solid rgba(0,240,255,0.4); border-radius:4px; color:var(--cyan); font-family:'Orbitron',monospace; font-size:0.80rem; text-align:center; padding:3px;">
-                </div>
-                <div>
-                  <label style="font-size:0.60rem; color:var(--dim); display:block;">RỘNG (CM)</label>
-                  <input type="number" id="pat-rect-w" value="40" step="5" min="15" max="300"
-                    style="width:100%; background:rgba(0,0,0,0.6); border:1px solid rgba(0,240,255,0.4); border-radius:4px; color:var(--cyan); font-family:'Orbitron',monospace; font-size:0.80rem; text-align:center; padding:3px;">
-                </div>
-              </div>
-              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-                <span style="font-size:0.60rem; color:var(--dim);">HƯỚNG:</span>
-                <select id="pat-rect-dir" style="background:#07090e; border:1px solid rgba(0,240,255,0.3); color:var(--cyan); border-radius:4px; font-size:0.68rem; padding:2px 6px;">
-                  <option value="left">↺ Trái (CCW)</option>
-                  <option value="right">↻ Phải (CW)</option>
-                </select>
-              </div>
-            </div>
-            <button class="tab-btn" onclick="startPattern('rectangle')"
-              style="width:100%; padding:6px; font-weight:800; font-size:0.72rem; color:#000; background:var(--cyan); border-color:var(--cyan); cursor:pointer; margin-left:0;">
-              ▶️ CHẠY CHỮ NHẬT
-            </button>
-          </div>
-
-          <!-- Hộp 2: Tam Giác Vuông Cân -->
-          <div style="background:rgba(7,9,14,0.7); border:1px solid rgba(255,184,0,0.25); border-radius:8px; padding:10px 12px; display:flex; flex-direction:column; justify-content:space-between;">
-            <div>
-              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-                <span style="font-weight:700; font-size:0.75rem; color:var(--amber);">🔺 TAM GIÁC VUÔNG CÂN</span>
-                <span style="font-size:0.60rem; color:var(--dim);">a, a, a√2</span>
-              </div>
-              <div style="margin-bottom:6px;">
-                <div style="display:flex; justify-content:space-between; font-size:0.60rem; color:var(--dim);">
-                  <span>CẠNH GÓC VUÔNG A</span>
-                  <span id="pat-tri-c-lbl" style="color:var(--dim); font-family:'Orbitron',monospace;">Huyền ≈ 70.7cm</span>
-                </div>
-                <input type="number" id="pat-tri-a" value="50" step="5" min="15" max="250" oninput="updateTriHypotenuse(this.value)"
-                  style="width:100%; background:rgba(0,0,0,0.6); border:1px solid rgba(255,184,0,0.4); border-radius:4px; color:var(--amber); font-family:'Orbitron',monospace; font-size:0.80rem; text-align:center; padding:3px;">
-              </div>
-              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-                <span style="font-size:0.60rem; color:var(--dim);">HƯỚNG:</span>
-                <select id="pat-tri-dir" style="background:#07090e; border:1px solid rgba(255,184,0,0.3); color:var(--amber); border-radius:4px; font-size:0.68rem; padding:2px 6px;">
-                  <option value="left">↺ Trái (CCW)</option>
-                  <option value="right">↻ Phải (CW)</option>
-                </select>
-              </div>
-            </div>
-            <button class="tab-btn" onclick="startPattern('triangle')"
-              style="width:100%; padding:6px; font-weight:800; font-size:0.72rem; color:#000; background:var(--amber); border-color:var(--amber); cursor:pointer; margin-left:0;">
-              ▶️ CHẠY TAM GIÁC
-            </button>
-          </div>
-        </div>
-        <div style="font-size:0.65rem; color:var(--dim); text-align:center;">
-          💡 <i>Gợi ý: Đặt xe vào vạch mốc xuất phát, quan sát vết vẽ SLAM và đối chiếu vị trí ngoài đời thực.</i>
-        </div>
-      </div>
-    </div>
-
-    <!-- ════ CỘT 3: HÀNH TRÌNH XE & VẬT THỂ 3D (ODOMETER & RADAR VPU) ════ -->
-    <div style="display:flex; flex-direction:column; gap:12px;">
-      <!-- Card Hành Trình Xe (Trip Odometer) -->
+    <div class="bottom-grid" style="grid-template-columns: 1fr 1fr 1fr; margin-top: 14px;">
+    <!-- ════ CỘT 1: HÀNH TRÌNH XE (TRIP ODOMETER) ════ -->
+    <!-- Card Hành Trình Xe (Trip Odometer) -->
       <div class="card" id="card-trip-odometer">
         <div class="card-hdr" style="display:flex; justify-content:space-between; align-items:center;">
           <span style="display:flex; align-items:center; gap:6px;">
@@ -1516,76 +1317,96 @@
         </div>
       </div>
 
-      <!-- Card Giám Sát Đối Chiếu Góc Quay: Lệnh vs IMU Thực Tế -->
-      <div class="card" id="card-turn-monitor">
-        <div class="card-hdr" style="display:flex; justify-content:space-between; align-items:center;">
-          <span style="font-weight:700; color:var(--cyan); display:flex; align-items:center; gap:6px;">
-            <span>🧭</span> ĐỐI CHIẾU GÓC QUAY (IMU MONITOR)
-          </span>
-          <span id="turn-monitor-status-badge" style="font-size:0.62rem; padding:2px 6px; border-radius:3px; background:rgba(0,255,163,0.15); color:var(--emerald); border:1px solid var(--emerald); font-weight:700;">
-            IMU: SẴN SÀNG
-          </span>
+    <!-- ════ CỘT 2: ĐIỀU HƯỚNG TỰ HÀNH & A* PLANNER ════ -->
+    <div class="card" id="card-nav-planner">
+      <div class="card-hdr" style="display:flex; justify-content:space-between; align-items:center;">
+        <span style="display:flex; align-items:center; gap:6px; font-weight:700; color:var(--emerald);">
+          <span>🧠</span> ĐIỀU HƯỚNG TỰ HÀNH (NAV & A*)
+        </span>
+        <span id="demo-nav-state-badge" style="font-size:0.62rem; padding:2px 8px; border-radius:4px; background:rgba(0,255,163,0.12); color:var(--emerald); border:1px solid var(--emerald); font-weight:700;">
+          SẴN SÀNG
+        </span>
+      </div>
+
+      <div style="padding:10px 14px; display:flex; flex-direction:column; gap:8px;">
+        <!-- Cự ly đến đích & Trạng thái bám đường -->
+        <div style="background:rgba(0,255,163,0.04); border:1px solid rgba(0,255,163,0.25); border-radius:8px; padding:8px 12px; text-align:center;">
+          <div style="font-size:0.65rem; color:var(--dim); text-transform:uppercase; letter-spacing:0.5px;">CỰ LY ĐẾN ĐÍCH A* (DIST TO GOAL)</div>
+          <div id="demo-nav-dist"
+            style="font-family:'Orbitron',monospace; font-size:1.85rem; font-weight:900; color:var(--emerald); text-shadow:0 0 16px rgba(0,255,163,0.4); margin:2px 0;">
+            -- cm
+          </div>
+          <div style="display:flex; justify-content:space-around; align-items:center; font-size:0.68rem; color:var(--dim); border-top:1px solid rgba(255,255,255,0.06); padding-top:4px; margin-top:2px;">
+            <span>Mốc: <b id="demo-nav-wp" style="color:#fff; font-family:'Orbitron',monospace;">WP: 0 / 0</b></span>
+            <span>Lộ trình: <b id="demo-nav-collision" style="color:var(--emerald); font-weight:700;">ĐƯỜNG THOÁNG</b></span>
+          </div>
         </div>
-        <div style="padding:10px 14px; display:flex; flex-direction:column; gap:8px;">
-          <!-- Khung tóm tắt lần quay gần nhất -->
-          <div style="background:rgba(0,0,0,0.4); border:1px solid rgba(0,240,255,0.25); border-radius:6px; padding:8px 10px;">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
-              <span style="font-size:0.65rem; color:var(--dim);">LẦN QUAY GẦN NHẤT:</span>
-              <span id="turn-latest-cmd" style="font-size:0.75rem; font-weight:700; color:var(--cyan);">--</span>
+
+        <!-- Tiến độ A* & Cảm biến cự ly trước -->
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">
+          <div style="background:rgba(255,255,255,0.02); border:1px solid rgba(255,255,255,0.08); border-radius:6px; padding:6px 8px;">
+            <div style="display:flex; justify-content:space-between; font-size:0.62rem; color:var(--dim); margin-bottom:3px;">
+              <span>TIẾN ĐỘ A*</span>
+              <b id="demo-nav-progress-pct" style="color:var(--cyan); font-family:'Orbitron',monospace;">0%</b>
             </div>
-            <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:6px; text-align:center;">
-              <div style="background:rgba(255,255,255,0.02); padding:4px; border-radius:4px; border:1px solid rgba(255,255,255,0.06);">
-                <div style="font-size:0.58rem; color:var(--dim);">LỆNH YÊU CẦU</div>
-                <div id="turn-stat-target" style="font-family:'Orbitron',monospace; font-size:0.88rem; font-weight:700; color:#fff;">--°</div>
-              </div>
-              <div style="background:rgba(255,255,255,0.02); padding:4px; border-radius:4px; border:1px solid rgba(255,255,255,0.06);">
-                <div style="font-size:0.58rem; color:var(--dim);">IMU THỰC TẾ</div>
-                <div id="turn-stat-actual" style="font-family:'Orbitron',monospace; font-size:0.88rem; font-weight:700; color:var(--cyan);">--°</div>
-              </div>
-              <div style="background:rgba(255,255,255,0.02); padding:4px; border-radius:4px; border:1px solid rgba(255,255,255,0.06);">
-                <div style="font-size:0.58rem; color:var(--dim);">SAI SỐ LỆCH (Δ)</div>
-                <div id="turn-stat-error" style="font-family:'Orbitron',monospace; font-size:0.88rem; font-weight:700; color:var(--emerald);">--°</div>
-              </div>
-            </div>
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-top:6px; font-size:0.62rem; color:var(--dim); border-top:1px solid rgba(255,255,255,0.06); padding-top:4px;">
-              <span>Đánh giá: <b id="turn-stat-eval" style="color:var(--amber);">Chưa có lượt quay</b></span>
-              <span>2D SLAM: <b id="turn-stat-slam" style="color:var(--emerald);">ĐÃ ĐỒNG BỘ</b></span>
+            <div style="width:100%; height:8px; background:rgba(255,255,255,0.08); border-radius:4px; overflow:hidden;">
+              <div id="demo-nav-progress-bar" style="width:0%; height:100%; background:linear-gradient(90deg, var(--cyan), var(--emerald)); transition:width 0.3s;"></div>
             </div>
           </div>
-
-          <!-- Bảng lịch sử các lần quay -->
-          <div style="max-height:130px; overflow-y:auto; border:1px solid rgba(255,255,255,0.08); border-radius:6px; background:#07090e;">
-            <table style="width:100%; font-size:0.65rem; border-collapse:collapse; text-align:center;">
-              <thead>
-                <tr style="background:rgba(0,240,255,0.08); color:var(--cyan); border-bottom:1px solid rgba(0,240,255,0.2);">
-                  <th style="padding:4px;">#</th>
-                  <th style="padding:4px;">LỆNH</th>
-                  <th style="padding:4px;">IMU ĐO</th>
-                  <th style="padding:4px;">LỆCH (Δ)</th>
-                  <th style="padding:4px;">TRẠNG THÁI</th>
-                </tr>
-              </thead>
-              <tbody id="turn-history-table-body">
-                <tr><td colspan="5" style="padding:10px; color:var(--dim);">Chưa ghi nhận bước quay nào...</td></tr>
-              </tbody>
-            </table>
+          <div style="background:rgba(255,255,255,0.02); border:1px solid rgba(255,255,255,0.08); border-radius:6px; padding:6px 8px;">
+            <div style="font-size:0.62rem; color:var(--dim);">VẬT CẢN TRƯỚC (CLEARANCE)</div>
+            <div id="demo-nav-clearance"
+              style="font-family:'Orbitron',monospace; font-size:0.95rem; font-weight:700; color:var(--cyan); margin-top:1px;">-- cm
+            </div>
           </div>
         </div>
       </div>
+    </div>
 
-      <!-- Card Radar Vật Thể 3D VPU -->
-      <div class="card" id="card-vpu-objects">
-        <div class="card-hdr" style="display:flex; justify-content:space-between; align-items:center;">
-          <span>3D SEMANTIC OBJECTS (VPU)</span>
-          <span id="det-count" style="color:var(--amber); font-size:0.75rem;">0 VẬT THỂ</span>
+    <!-- ════ CỘT 3: THUẬT TOÁN ĐỊNH VỊ & KHÓA TỌA ĐỘ SLAM ════ -->
+    <div class="card" id="card-localization-metrics">
+      <div class="card-hdr" style="display:flex; justify-content:space-between; align-items:center;">
+        <span style="display:flex; align-items:center; gap:6px; font-weight:700; color:var(--cyan);">
+          <span>🧭</span> ĐỊNH VỊ & KHÓA TỌA ĐỘ (SLAM)
+        </span>
+        <span id="demo-loc-badge" style="font-size:0.62rem; padding:2px 8px; border-radius:4px; background:rgba(0,240,255,0.12); color:var(--cyan); border:1px solid var(--cyan); font-weight:700;">
+          🔒 ZERO-DRIFT
+        </span>
+      </div>
+
+      <div style="padding:10px 14px; display:flex; flex-direction:column; gap:8px;">
+        <!-- Tỷ lệ khớp quét CSM -->
+        <div style="background:rgba(0, 240, 255, 0.04); border:1px solid rgba(0, 240, 255, 0.25); border-radius:8px; padding:8px 12px; text-align:center;">
+          <div style="font-size:0.65rem; color:var(--dim); text-transform:uppercase; letter-spacing:0.5px;">ĐỘ KHỚP TIA QUÉT (CSM SCAN-MATCH SCORE)</div>
+          <div id="demo-loc-csm-score"
+            style="font-family:'Orbitron',monospace; font-size:1.85rem; font-weight:900; color:var(--cyan); text-shadow:0 0 16px rgba(0,240,255,0.4); margin:2px 0;">
+            98.5%
+          </div>
+          <div style="display:flex; justify-content:space-around; align-items:center; font-size:0.68rem; color:var(--dim); border-top:1px solid rgba(255,255,255,0.06); padding-top:4px; margin-top:2px;">
+            <span>Nguồn: <b id="demo-loc-source" style="color:#fff; font-family:'Orbitron',monospace;">CSM Scan-Matching</b></span>
+            <span>Trượt bánh: <b id="demo-loc-slip" style="color:var(--emerald); font-weight:700;">Tự Động Bù IMU</b></span>
+          </div>
         </div>
-        <div class="radar-box" id="radar-list" style="max-height:130px;">
-          <div style="text-align:center; color:var(--dim); padding:10px; font-size:0.72rem;">Đang quét vật thể 3D trong không gian...</div>
+
+        <!-- Sai số ước lượng & Chu kỳ định vị -->
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">
+          <div style="background:rgba(255,255,255,0.02); border:1px solid rgba(255,255,255,0.08); border-radius:6px; padding:6px 8px;">
+            <div style="font-size:0.62rem; color:var(--dim);">SAI SỐ ƯỚC LƯỢNG</div>
+            <div id="demo-loc-variance"
+              style="font-family:'Orbitron',monospace; font-size:0.75rem; font-weight:700; color:var(--emerald); margin-top:2px;">Góc: &lt;0.5° · Vị trí: ±1.2cm
+            </div>
+          </div>
+          <div style="background:rgba(255,255,255,0.02); border:1px solid rgba(255,255,255,0.08); border-radius:6px; padding:6px 8px;">
+            <div style="font-size:0.62rem; color:var(--dim);">CHU KỲ ĐỊNH VỊ</div>
+            <div id="demo-loc-hz"
+              style="font-family:'Orbitron',monospace; font-size:0.75rem; font-weight:700; color:var(--amber); margin-top:2px;">25.0 Hz · Trễ: 2.5ms
+            </div>
+          </div>
         </div>
       </div>
     </div>
   </div>
-  </div><!-- ĐÓNG TAB 1: BẢNG ĐIỀU KHIỂN COCKPIT -->
+</div><!-- ĐÓNG TAB 1: BẢNG ĐIỀU KHIỂN COCKPIT -->
 
   <!-- ══════════════════════════════════════════════════════════════════════ -->
   <!-- TAB 2: SOI CHI TIẾT THUẬT TOÁN TỪNG FRAME (ALGORITHM INSPECTOR)       -->
@@ -1608,6 +1429,9 @@
           <a href="/api/session/export" download class="tab-btn" style="padding:6px 14px; font-weight:700; color:var(--emerald); border-color:var(--emerald); background:rgba(0,255,163,0.15); cursor:pointer; text-decoration:none; display:inline-flex; align-items:center; gap:6px;">
             📥 TẢI DỮ LIỆU FRAME (ZIP)
           </a>
+          <button onclick="resetRecordingSession()" class="tab-btn" style="padding:6px 12px; font-size:0.72rem; font-weight:700; color:var(--purple); border-color:var(--purple); background:rgba(180,100,255,0.12); cursor:pointer;" title="Bắt đầu phiên ghi nhận hộp đen hoàn toàn mới">
+            ✨ LÀM MỚI PHIÊN (NEW SESSION)
+          </button>
           <div id="insp-record-badge" class="batt-badge" style="padding:5px 12px; font-size:0.72rem; font-family:'Orbitron',monospace; font-weight:700; color:var(--dim); border-color:var(--dim);">
             📹 GHI: CHỜ LỆNH
           </div>
@@ -2178,6 +2002,32 @@
             </div>
           </div>
 
+          <!-- motor_trim_backward_left -->
+          <div class="cfg-param-row">
+            <div class="cfg-param-top">
+              <span class="cfg-param-label">Bù Ga LÙI Bánh Trái (Trim Backward Left)</span>
+              <span class="cfg-param-code">motor_trim_backward_left</span>
+            </div>
+            <div class="cfg-param-desc">Hệ số nhân ga bánh trái khi LÙI (1.000 = 100%, tăng nếu xe lùi bị quẹo trái).</div>
+            <div class="cfg-param-controls">
+              <input type="range" class="cfg-slider" id="sld-motor_trim_backward_left" min="0.700" max="1.300" step="0.005" oninput="syncConfigInput('motor_trim_backward_left', this.value)">
+              <input type="number" class="cfg-num-input" id="num-motor_trim_backward_left" step="0.005" onchange="syncConfigInput('motor_trim_backward_left', this.value)">
+            </div>
+          </div>
+
+          <!-- motor_trim_backward_right -->
+          <div class="cfg-param-row">
+            <div class="cfg-param-top">
+              <span class="cfg-param-label">Bù Ga LÙI Bánh Phải (Trim Backward Right)</span>
+              <span class="cfg-param-code">motor_trim_backward_right</span>
+            </div>
+            <div class="cfg-param-desc">Hệ số nhân ga bánh phải khi LÙI (1.000 = 100%, tăng nếu xe lùi bị quẹo phải).</div>
+            <div class="cfg-param-controls">
+              <input type="range" class="cfg-slider" id="sld-motor_trim_backward_right" min="0.700" max="1.300" step="0.005" oninput="syncConfigInput('motor_trim_backward_right', this.value)">
+              <input type="number" class="cfg-num-input" id="num-motor_trim_backward_right" step="0.005" onchange="syncConfigInput('motor_trim_backward_right', this.value)">
+            </div>
+          </div>
+
           <!-- heading_lock_kp -->
           <div class="cfg-param-row">
             <div class="cfg-param-top">
@@ -2580,12 +2430,300 @@
     </div>
   </div>
 
+    <!-- ══════════════════════════════════════════════════════════════════════ -->
+  <!-- TAB 4: ĐIỀU KHIỂN & HIỆU CHUẨN XE (MANUAL TELEOP & BENCHMARK)         -->
+  <!-- ══════════════════════════════════════════════════════════════════════ -->
+  <div id="tab-teleop" class="main-tab-pane" style="display:none; padding:16px 0;">
+    <div class="bottom-grid" style="grid-template-columns: 1fr 1.05fr 0.95fr;">
+      <!-- ════ CỘT 1: ĐIỀU KHIỂN ROBOT (WASD & BƯỚC ĐỊNH LƯỢNG) ════ -->
+    <div class="card" id="card-teleop">
+      <div class="card-hdr"
+        style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:4px;">
+        <span style="font-weight:700;">🎮 ĐIỀU KHIỂN ROBOT</span>
+        <div style="display:flex; gap:6px; align-items:center;">
+          <button class="tab-btn active" id="btn-mode-wasd" onclick="switchControlMode('wasd')">🎮 WASD</button>
+          <button class="tab-btn" id="btn-mode-step" onclick="switchControlMode('step')"
+            style="color:var(--emerald); border-color:var(--emerald);">📏 BƯỚC (CM & ĐỘ)</button>
+        </div>
+      </div>
+
+      <!-- 1. CHẾ ĐỘ LÁI TAY LIÊN TỤC WASD -->
+      <div id="wasd-ctrl-container">
+        <div id="brake-status-banner"
+          style="margin:12px 14px 0; padding:8px 12px; border-radius:6px; font-size:0.75rem; text-align:center; font-weight:700; border:1px solid var(--emerald); color:var(--emerald); background:rgba(0, 255, 163, 0.1);">
+          [AN TOAN] DUONG THOANG (CU LY: -- CM)
+        </div>
+        <div style="display:flex; justify-content:center; gap:6px; margin:10px 14px 6px;">
+          <button class="tab-btn" id="btn-teleop-auto-scan" onclick="toggleAutoScan()"
+            style="padding:5px 16px; font-size:0.75rem; cursor:pointer; border-color:var(--cyan); color:var(--cyan); font-weight:bold; background:rgba(0,240,255,0.12);"
+            title="JetBot tự xoay chậm đều đúng 360 độ (vòng kín IMU)">🔄 TỰ QUÉT 360°</button>
+        </div>
+        <div class="dpad-container" style="padding:10px 14px 16px;">
+          <div class="dpad-row"><button class="btn-drive" id="btn-up" onmousedown="sendDrive(speedLinear,0)"
+              onmouseup="emergencyStop()" ontouchstart="sendDrive(speedLinear,0)"
+              ontouchend="emergencyStop()">▲</button></div>
+          <div class="dpad-row">
+            <button class="btn-drive" id="btn-left" onmousedown="sendDrive(0,speedAngular)" onmouseup="emergencyStop()"
+              ontouchstart="sendDrive(0,speedAngular)" ontouchend="emergencyStop()">◀</button>
+            <button class="btn-drive btn-stop" id="btn-stop" onclick="emergencyStop()">■ DỪNG</button>
+            <button class="btn-drive" id="btn-right" onmousedown="sendDrive(0,-speedAngular)"
+              onmouseup="emergencyStop()" ontouchstart="sendDrive(0,-speedAngular)"
+              ontouchend="emergencyStop()">▶</button>
+          </div>
+          <div class="dpad-row"><button class="btn-drive" id="btn-down" onmousedown="sendDrive(-speedLinear,0)"
+              onmouseup="emergencyStop()" ontouchstart="sendDrive(-speedLinear,0)"
+              ontouchend="emergencyStop()">▼</button></div>
+        </div>
+      </div>
+
+      <!-- 2. CHẾ ĐỘ ĐIỀU KHIỂN BƯỚC ĐỊNH LƯỢNG CHUẨN XÁC (METRIC STEP TELEOP) -->
+      <div id="step-ctrl-container" style="display:none; padding:10px 14px 12px;">
+        <!-- Khung nhập số cm Tiến / Lùi -->
+        <div
+          style="background:rgba(255,255,255,0.02); border:1px solid rgba(0,240,255,0.18); border-radius:8px; padding:8px 10px; margin-bottom:8px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+            <span style="font-size:0.75rem; color:var(--cyan); font-weight:700;">TIẾN / LÙI (CENTIMET)</span>
+            <div style="display:flex; align-items:center; gap:4px;">
+              <input type="number" id="step-dist-input" value="20" min="1" max="500" oninput="updateStepLabels()"
+                style="width:58px; background:#070b12; border:1px solid var(--cyan); color:#fff; border-radius:4px; padding:2px 4px; font-family:'Orbitron',monospace; font-size:0.82rem; text-align:center;">
+              <span style="font-size:0.72rem; color:var(--dim);">cm</span>
+            </div>
+          </div>
+          <div style="display:flex; gap:4px; justify-content:center; flex-wrap:wrap;">
+            <button class="tab-btn" id="chip-dist-1" onclick="setStepDist(1)" style="padding:2px 6px; font-size:0.68rem;">1cm</button>
+            <button class="tab-btn" id="chip-dist-2" onclick="setStepDist(2)" style="padding:2px 6px; font-size:0.68rem;">2cm</button>
+            <button class="tab-btn" id="chip-dist-5" onclick="setStepDist(5)" style="padding:2px 6px; font-size:0.68rem;">5cm</button>
+            <button class="tab-btn" id="chip-dist-10" onclick="setStepDist(10)" style="padding:2px 6px; font-size:0.68rem;">10cm</button>
+            <button class="tab-btn active" id="chip-dist-20" onclick="setStepDist(20)" style="padding:2px 6px; font-size:0.68rem;">20cm</button>
+            <button class="tab-btn" id="chip-dist-30" onclick="setStepDist(30)" style="padding:2px 6px; font-size:0.68rem;">30cm</button>
+            <button class="tab-btn" id="chip-dist-40" onclick="setStepDist(40)" style="padding:2px 6px; font-size:0.68rem;">40cm</button>
+            <button class="tab-btn" id="chip-dist-50" onclick="setStepDist(50)" style="padding:2px 6px; font-size:0.68rem;">50cm</button>
+            <button class="tab-btn" id="chip-dist-60" onclick="setStepDist(60)" style="padding:2px 6px; font-size:0.68rem;">60cm</button>
+            <button class="tab-btn" id="chip-dist-70" onclick="setStepDist(70)" style="padding:2px 6px; font-size:0.68rem;">70cm</button>
+            <button class="tab-btn" id="chip-dist-80" onclick="setStepDist(80)" style="padding:2px 6px; font-size:0.68rem;">80cm</button>
+            <button class="tab-btn" id="chip-dist-100" onclick="setStepDist(100)" style="padding:2px 6px; font-size:0.68rem;">100cm</button>
+          </div>
+        </div>
+
+        <!-- Khung nhập số độ Quay Trái / Phải -->
+        <div
+          style="background:rgba(255,255,255,0.02); border:1px solid rgba(0,255,163,0.18); border-radius:8px; padding:8px 10px; margin-bottom:8px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+            <span style="font-size:0.75rem; color:var(--emerald); font-weight:700;">GÓC QUAY (ĐỘ °)</span>
+            <div style="display:flex; align-items:center; gap:4px;">
+              <input type="number" id="step-deg-input" value="45" min="1" max="360" oninput="updateStepLabels()"
+                style="width:58px; background:#070b12; border:1px solid var(--emerald); color:#fff; border-radius:4px; padding:2px 4px; font-family:'Orbitron',monospace; font-size:0.82rem; text-align:center;">
+              <span style="font-size:0.72rem; color:var(--dim);">độ</span>
+            </div>
+          </div>
+          <div style="display:flex; gap:4px; justify-content:center; flex-wrap:wrap;">
+            <button class="tab-btn" id="chip-deg-15" onclick="setStepDeg(15)" style="padding:2px 6px; font-size:0.68rem;">15°</button>
+            <button class="tab-btn" id="chip-deg-30" onclick="setStepDeg(30)" style="padding:2px 6px; font-size:0.68rem;">30°</button>
+            <button class="tab-btn active" id="chip-deg-45" onclick="setStepDeg(45)" style="padding:2px 6px; font-size:0.68rem;">45°</button>
+            <button class="tab-btn" id="chip-deg-60" onclick="setStepDeg(60)" style="padding:2px 6px; font-size:0.68rem;">60°</button>
+            <button class="tab-btn" id="chip-deg-90" onclick="setStepDeg(90)" style="padding:2px 6px; font-size:0.68rem;">90°</button>
+            <button class="tab-btn" id="chip-deg-120" onclick="setStepDeg(120)" style="padding:2px 6px; font-size:0.68rem;">120°</button>
+            <button class="tab-btn" id="chip-deg-180" onclick="setStepDeg(180)" style="padding:2px 6px; font-size:0.68rem;">180°</button>
+            <button class="tab-btn" id="chip-deg-225" onclick="setStepDeg(225)" style="padding:2px 6px; font-size:0.68rem;">225°</button>
+            <button class="tab-btn" id="chip-deg-270" onclick="setStepDeg(270)" style="padding:2px 6px; font-size:0.68rem;">270°</button>
+            <button class="tab-btn" id="chip-deg-315" onclick="setStepDeg(315)" style="padding:2px 6px; font-size:0.68rem;">315°</button>
+            <button class="tab-btn" id="chip-deg-360" onclick="setStepDeg(360)" style="padding:2px 6px; font-size:0.68rem;">360°</button>
+          </div>
+        </div>
+
+        <!-- Banner trạng thái thực thi bước -->
+        <div id="step-status-banner"
+          style="margin-bottom:8px; padding:6px 10px; border-radius:6px; font-size:0.72rem; text-align:center; font-weight:700; border:1px solid var(--border); color:var(--cyan); background:rgba(0, 240, 255, 0.08);">
+          [SẴN SÀNG] SẴN SÀNG THỰC THI BƯỚC ĐỊNH LƯỢNG
+        </div>
+
+        <!-- D-Pad Bước Hành Động -->
+        <div class="dpad-container" style="padding:2px; gap:6px;">
+          <div class="dpad-row">
+            <button class="btn-drive" id="btn-step-fwd" onclick="executeStep('linear','forward')"
+              style="width:150px; height:42px; font-size:0.80rem; font-weight:700;">▲ TIẾN 20CM</button>
+          </div>
+          <div class="dpad-row">
+            <button class="btn-drive" id="btn-step-left" onclick="executeStep('turn','left')"
+              style="width:95px; height:42px; font-size:0.75rem; font-weight:700;">↺ TRÁI 45°</button>
+            <button class="btn-drive btn-stop" id="btn-step-stop" onclick="cancelStep()"
+              style="width:70px; height:42px; font-size:0.75rem; font-weight:700;">■ HỦY</button>
+            <button class="btn-drive" id="btn-step-right" onclick="executeStep('turn','right')"
+              style="width:95px; height:42px; font-size:0.75rem; font-weight:700;">↻ PHẢI 45°</button>
+          </div>
+          <div class="dpad-row">
+            <button class="btn-drive" id="btn-step-back" onclick="executeStep('linear','backward')"
+              style="width:150px; height:42px; font-size:0.80rem; font-weight:700;">▼ LÙI 20CM</button>
+          </div>
+        </div>
+      </div>
+    </div>
+      <!-- ════ CỘT 2: QUỸ ĐẠO THỰC NGHIỆM KHÉP KÍN (GEOMETRIC BENCHMARK) ════ -->
+    <div class="card" id="card-patterns-bench">
+      <div class="card-hdr" style="display:flex; justify-content:space-between; align-items:center;">
+        <span style="font-weight:700; color:var(--amber);">📐 QUỸ ĐẠO THỰC NGHIỆM KHÉP KÍN</span>
+        <button class="tab-btn" onclick="stopPattern()"
+          style="padding:3px 12px; font-size:0.70rem; font-weight:700; color:var(--rose); border-color:var(--rose); background:rgba(255,50,50,0.12); cursor:pointer;">
+          ⏹ DỪNG
+        </button>
+      </div>
+
+      <div style="padding:12px 14px; display:flex; flex-direction:column; gap:10px;">
+        <!-- Banner trạng thái quỹ đạo -->
+        <div id="pattern-status-banner"
+          style="padding:7px 10px; border-radius:6px; font-size:0.72rem; text-align:center; font-weight:700; border:1px solid rgba(255,184,0,0.3); color:var(--amber); background:rgba(255,184,0,0.06);">
+          [SẴN SÀNG] KIỂM TRA ĐỘ KHÉP KÍN BẢN ĐỒ 2D VÀ THỰC TẾ (CỐ ĐỊNH 10% PWM)
+        </div>
+
+        <!-- 2 Hộp Quỹ Đạo: Chữ Nhật & Tam Giác Vuông Cân -->
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
+          <!-- Hộp 1: Hình Chữ Nhật -->
+          <div style="background:rgba(7,9,14,0.7); border:1px solid rgba(0,240,255,0.25); border-radius:8px; padding:10px 12px; display:flex; flex-direction:column; justify-content:space-between;">
+            <div>
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                <span style="font-weight:700; font-size:0.75rem; color:var(--cyan);">🟦 HÌNH CHỮ NHẬT</span>
+                <span style="font-size:0.60rem; color:var(--dim);">4 Cạnh · 90°</span>
+              </div>
+              <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-bottom:6px;">
+                <div>
+                  <label style="font-size:0.60rem; color:var(--dim); display:block;">DÀI (CM)</label>
+                  <input type="number" id="pat-rect-l" value="80" step="5" min="15" max="300"
+                    style="width:100%; background:rgba(0,0,0,0.6); border:1px solid rgba(0,240,255,0.4); border-radius:4px; color:var(--cyan); font-family:'Orbitron',monospace; font-size:0.80rem; text-align:center; padding:3px;">
+                </div>
+                <div>
+                  <label style="font-size:0.60rem; color:var(--dim); display:block;">RỘNG (CM)</label>
+                  <input type="number" id="pat-rect-w" value="40" step="5" min="15" max="300"
+                    style="width:100%; background:rgba(0,0,0,0.6); border:1px solid rgba(0,240,255,0.4); border-radius:4px; color:var(--cyan); font-family:'Orbitron',monospace; font-size:0.80rem; text-align:center; padding:3px;">
+                </div>
+              </div>
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                <span style="font-size:0.60rem; color:var(--dim);">HƯỚNG:</span>
+                <select id="pat-rect-dir" style="background:#07090e; border:1px solid rgba(0,240,255,0.3); color:var(--cyan); border-radius:4px; font-size:0.68rem; padding:2px 6px;">
+                  <option value="left">↺ Trái (CCW)</option>
+                  <option value="right">↻ Phải (CW)</option>
+                </select>
+              </div>
+            </div>
+            <button class="tab-btn" onclick="startPattern('rectangle')"
+              style="width:100%; padding:6px; font-weight:800; font-size:0.72rem; color:#000; background:var(--cyan); border-color:var(--cyan); cursor:pointer; margin-left:0;">
+              ▶️ CHẠY CHỮ NHẬT
+            </button>
+          </div>
+
+          <!-- Hộp 2: Tam Giác Vuông Cân -->
+          <div style="background:rgba(7,9,14,0.7); border:1px solid rgba(255,184,0,0.25); border-radius:8px; padding:10px 12px; display:flex; flex-direction:column; justify-content:space-between;">
+            <div>
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                <span style="font-weight:700; font-size:0.75rem; color:var(--amber);">🔺 TAM GIÁC VUÔNG CÂN</span>
+                <span style="font-size:0.60rem; color:var(--dim);">a, a, a√2</span>
+              </div>
+              <div style="margin-bottom:6px;">
+                <div style="display:flex; justify-content:space-between; font-size:0.60rem; color:var(--dim);">
+                  <span>CẠNH GÓC VUÔNG A</span>
+                  <span id="pat-tri-c-lbl" style="color:var(--dim); font-family:'Orbitron',monospace;">Huyền ≈ 70.7cm</span>
+                </div>
+                <input type="number" id="pat-tri-a" value="50" step="5" min="15" max="250" oninput="updateTriHypotenuse(this.value)"
+                  style="width:100%; background:rgba(0,0,0,0.6); border:1px solid rgba(255,184,0,0.4); border-radius:4px; color:var(--amber); font-family:'Orbitron',monospace; font-size:0.80rem; text-align:center; padding:3px;">
+              </div>
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                <span style="font-size:0.60rem; color:var(--dim);">HƯỚNG:</span>
+                <select id="pat-tri-dir" style="background:#07090e; border:1px solid rgba(255,184,0,0.3); color:var(--amber); border-radius:4px; font-size:0.68rem; padding:2px 6px;">
+                  <option value="left">↺ Trái (CCW)</option>
+                  <option value="right">↻ Phải (CW)</option>
+                </select>
+              </div>
+            </div>
+            <button class="tab-btn" onclick="startPattern('triangle')"
+              style="width:100%; padding:6px; font-weight:800; font-size:0.72rem; color:#000; background:var(--amber); border-color:var(--amber); cursor:pointer; margin-left:0;">
+              ▶️ CHẠY TAM GIÁC
+            </button>
+          </div>
+        </div>
+        <div style="font-size:0.65rem; color:var(--dim); text-align:center;">
+          💡 <i>Gợi ý: Đặt xe vào vạch mốc xuất phát, quan sát vết vẽ SLAM và đối chiếu vị trí ngoài đời thực.</i>
+        </div>
+      </div>
+    </div>
+      <div style="display:flex; flex-direction:column; gap:12px;">
+        <!-- Card Giám Sát Đối Chiếu Góc Quay: Lệnh vs IMU Thực Tế -->
+      <div class="card" id="card-turn-monitor">
+        <div class="card-hdr" style="display:flex; justify-content:space-between; align-items:center;">
+          <span style="font-weight:700; color:var(--cyan); display:flex; align-items:center; gap:6px;">
+            <span>🧭</span> ĐỐI CHIẾU GÓC QUAY (IMU MONITOR)
+          </span>
+          <span id="turn-monitor-status-badge" style="font-size:0.62rem; padding:2px 6px; border-radius:3px; background:rgba(0,255,163,0.15); color:var(--emerald); border:1px solid var(--emerald); font-weight:700;">
+            IMU: SẴN SÀNG
+          </span>
+        </div>
+        <div style="padding:10px 14px; display:flex; flex-direction:column; gap:8px;">
+          <!-- Khung tóm tắt lần quay gần nhất -->
+          <div style="background:rgba(0,0,0,0.4); border:1px solid rgba(0,240,255,0.25); border-radius:6px; padding:8px 10px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+              <span style="font-size:0.65rem; color:var(--dim);">LẦN QUAY GẦN NHẤT:</span>
+              <span id="turn-latest-cmd" style="font-size:0.75rem; font-weight:700; color:var(--cyan);">--</span>
+            </div>
+            <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:6px; text-align:center;">
+              <div style="background:rgba(255,255,255,0.02); padding:4px; border-radius:4px; border:1px solid rgba(255,255,255,0.06);">
+                <div style="font-size:0.58rem; color:var(--dim);">LỆNH YÊU CẦU</div>
+                <div id="turn-stat-target" style="font-family:'Orbitron',monospace; font-size:0.88rem; font-weight:700; color:#fff;">--°</div>
+              </div>
+              <div style="background:rgba(255,255,255,0.02); padding:4px; border-radius:4px; border:1px solid rgba(255,255,255,0.06);">
+                <div style="font-size:0.58rem; color:var(--dim);">IMU THỰC TẾ</div>
+                <div id="turn-stat-actual" style="font-family:'Orbitron',monospace; font-size:0.88rem; font-weight:700; color:var(--cyan);">--°</div>
+              </div>
+              <div style="background:rgba(255,255,255,0.02); padding:4px; border-radius:4px; border:1px solid rgba(255,255,255,0.06);">
+                <div style="font-size:0.58rem; color:var(--dim);">SAI SỐ LỆCH (Δ)</div>
+                <div id="turn-stat-error" style="font-family:'Orbitron',monospace; font-size:0.88rem; font-weight:700; color:var(--emerald);">--°</div>
+              </div>
+            </div>
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-top:6px; font-size:0.62rem; color:var(--dim); border-top:1px solid rgba(255,255,255,0.06); padding-top:4px;">
+              <span>Đánh giá: <b id="turn-stat-eval" style="color:var(--amber);">Chưa có lượt quay</b></span>
+              <span>2D SLAM: <b id="turn-stat-slam" style="color:var(--emerald);">ĐÃ ĐỒNG BỘ</b></span>
+            </div>
+          </div>
+
+          <!-- Bảng lịch sử các lần quay -->
+          <div style="max-height:130px; overflow-y:auto; border:1px solid rgba(255,255,255,0.08); border-radius:6px; background:#07090e;">
+            <table style="width:100%; font-size:0.65rem; border-collapse:collapse; text-align:center;">
+              <thead>
+                <tr style="background:rgba(0,240,255,0.08); color:var(--cyan); border-bottom:1px solid rgba(0,240,255,0.2);">
+                  <th style="padding:4px;">#</th>
+                  <th style="padding:4px;">LỆNH</th>
+                  <th style="padding:4px;">IMU ĐO</th>
+                  <th style="padding:4px;">LỆCH (Δ)</th>
+                  <th style="padding:4px;">TRẠNG THÁI</th>
+                </tr>
+              </thead>
+              <tbody id="turn-history-table-body">
+                <tr><td colspan="5" style="padding:10px; color:var(--dim);">Chưa ghi nhận bước quay nào...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- Card Radar Vật Thể 3D VPU -->
+      <div class="card" id="card-vpu-objects">
+        <div class="card-hdr" style="display:flex; justify-content:space-between; align-items:center;">
+          <span>3D SEMANTIC OBJECTS (VPU)</span>
+          <span id="det-count" style="color:var(--amber); font-size:0.75rem;">0 VẬT THỂ</span>
+        </div>
+        <div class="radar-box" id="radar-list" style="max-height:130px;">
+          <div style="text-align:center; color:var(--dim); padding:10px; font-size:0.72rem;">Đang quét vật thể 3D trong không gian...</div>
+        </div>
+      </div>
+      </div>
+    </div>
+  </div>
+
   <script>
     // ════ THREE.JS 3D SCENE SETUP (VỚI FALLBACK AN TOÀN CHỐNG CRASH) ════
     const hasThree = (typeof THREE !== 'undefined' && typeof THREE.OrbitControls !== 'undefined');
     let scene = null, camera = null, renderer = null, controls = null;
     let robotGroup = null, pathGeo = null, ptsGeo = null, semanticGroup = null;
     const MAX_PTS = 3000;
+    let targetPose = { rx: 0.0, ry: 0.0, rz: 0.0, yaw: 0.0 };
+    let smoothPose = { rx: 0.0, ry: 0.0, rz: 0.0, yaw: 0.0, initialized: false };
 
     if (hasThree) {
       try {
@@ -2661,8 +2799,39 @@
 
         function animate() {
           requestAnimationFrame(animate);
-          controls.update();
-          renderer.render(scene, camera);
+          if (!smoothPose.initialized) {
+            smoothPose.rx = targetPose.rx;
+            smoothPose.ry = targetPose.ry;
+            smoothPose.rz = targetPose.rz;
+            smoothPose.yaw = targetPose.yaw;
+            smoothPose.initialized = true;
+          } else {
+            // Nội suy tuyến tính mượt mà 60 FPS (Linear & Angular Interpolation - Lerp)
+            smoothPose.rx += (targetPose.rx - smoothPose.rx) * 0.28;
+            smoothPose.ry += (targetPose.ry - smoothPose.ry) * 0.28;
+            smoothPose.rz += (targetPose.rz - smoothPose.rz) * 0.28;
+            let dy = targetPose.yaw - smoothPose.yaw;
+            while (dy < -Math.PI) dy += 2 * Math.PI;
+            while (dy > Math.PI) dy -= 2 * Math.PI;
+            smoothPose.yaw += dy * 0.28;
+          }
+
+          if (robotGroup) {
+            robotGroup.position.set(smoothPose.rx, smoothPose.ry, smoothPose.rz);
+            robotGroup.rotation.z = smoothPose.yaw;
+          }
+          if (controls) controls.update();
+          if (renderer && scene && camera) renderer.render(scene, camera);
+
+          // Cập nhật 2D Canvas siêu mượt 60 FPS khi xe đang xoay hoặc chuyển động
+          if (currentView === '2d' && lastStateData) {
+            const isMoving = Math.abs(targetPose.rx - smoothPose.rx) > 0.001 ||
+                             Math.abs(targetPose.ry - smoothPose.ry) > 0.001 ||
+                             Math.abs(targetPose.yaw - smoothPose.yaw) > 0.003;
+            if (isMoving) {
+              draw2DMap(lastStateData);
+            }
+          }
         }
         animate();
 
@@ -2680,6 +2849,27 @@
       console.warn("⚠️ Không tải được Three.js CDN. Tự động chuyển sang chế độ 2D Grid map an toàn.");
       const c = document.getElementById('three-viewport');
       if (c) c.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#00f0ff;font-family:sans-serif;font-size:0.85rem;text-align:center;padding:20px;">🌐 Chế độ 2D Grid Map & Web Cockpit Sẵn Sàng (Offline Mode)</div>';
+      function animate2D() {
+        requestAnimationFrame(animate2D);
+        if (!smoothPose.initialized) {
+          smoothPose.rx = targetPose.rx; smoothPose.ry = targetPose.ry; smoothPose.yaw = targetPose.yaw;
+          smoothPose.initialized = true;
+        } else {
+          smoothPose.rx += (targetPose.rx - smoothPose.rx) * 0.28;
+          smoothPose.ry += (targetPose.ry - smoothPose.ry) * 0.28;
+          let dy = targetPose.yaw - smoothPose.yaw;
+          while (dy < -Math.PI) dy += 2 * Math.PI;
+          while (dy > Math.PI) dy -= 2 * Math.PI;
+          smoothPose.yaw += dy * 0.28;
+        }
+        if (currentView === '2d' && lastStateData) {
+          const isMoving = Math.abs(targetPose.rx - smoothPose.rx) > 0.001 ||
+                           Math.abs(targetPose.ry - smoothPose.ry) > 0.001 ||
+                           Math.abs(targetPose.yaw - smoothPose.yaw) > 0.003;
+          if (isMoving) draw2DMap(lastStateData);
+        }
+      }
+      animate2D();
     }
 
     function reset3DCamera() {
@@ -2844,6 +3034,44 @@
         .catch(err => console.error(err));
     }
 
+    function returnToOrigin() {
+      console.log('🏠 [RETURN HOME] Yêu cầu lập kế hoạch quay về điểm xuất phát (0.00, 0.00)...');
+      fetch('/api/return_home')
+        .then(r => r.json())
+        .then(res => {
+          if (res.success) {
+            console.log(`🏠 [RETURN HOME] Đã tìm lộ trình về xuất phát: ${res.length_m}m (${res.waypoints_count} waypoints)`);
+            const chkAuto = document.getElementById('chk-auto-start');
+            if (chkAuto && chkAuto.checked) {
+              startAutoNav();
+            }
+          } else {
+            console.warn(`⚠️ [RETURN HOME] Fallback sang set_goal: ${res.message}`);
+            fetch('/api/set_goal?x=0.000&y=0.000')
+              .then(r => r.json())
+              .then(r2 => {
+                if (r2.success) {
+                  const chkAuto = document.getElementById('chk-auto-start');
+                  if (chkAuto && chkAuto.checked) startAutoNav();
+                } else {
+                  console.warn(`⚠️ [RETURN HOME] Không thể tìm đường về gốc: ${r2.message}`);
+                }
+              });
+          }
+        })
+        .catch(err => {
+          console.error('❌ [RETURN HOME] Lỗi gọi /api/return_home:', err);
+          fetch('/api/set_goal?x=0.000&y=0.000')
+            .then(r => r.json())
+            .then(r2 => {
+              if (r2.success) {
+                const chkAuto = document.getElementById('chk-auto-start');
+                if (chkAuto && chkAuto.checked) startAutoNav();
+              }
+            });
+        });
+    }
+
     function startAutoNav() {
       fetch('/api/start_nav')
         .then(r => r.json())
@@ -2942,9 +3170,9 @@
       try {
         mapCtx.scale(dpr, dpr);
 
-        const rx = (typeof d.robot_x === 'number') ? d.robot_x : 0.0;
-        const ry = (typeof d.robot_y === 'number') ? d.robot_y : 0.0;
-        const yaw = (typeof d.robot_yaw === 'number') ? d.robot_yaw : 0.0;
+        const rx = (smoothPose && smoothPose.initialized && typeof smoothPose.rx === 'number') ? smoothPose.rx : ((typeof d.robot_x === 'number') ? d.robot_x : 0.0);
+        const ry = (smoothPose && smoothPose.initialized && typeof smoothPose.ry === 'number') ? smoothPose.ry : ((typeof d.robot_y === 'number') ? d.robot_y : 0.0);
+        const yaw = (smoothPose && smoothPose.initialized && typeof smoothPose.yaw === 'number') ? smoothPose.yaw : ((typeof d.robot_yaw === 'number') ? d.robot_yaw : 0.0);
 
         // Nếu đang bật chế độ bám xe, đồng bộ mapPan theo robot
         if (followRobot) {
@@ -3258,86 +3486,129 @@
           mapCtx.restore();
         }
 
-        // 5. CÁC VẬT THỂ NGỮ NGHĨA 2D BOUNDING BOX (METRIC DIMENSIONS & CLEAR LABELS)
+        // 5. CÁC VẬT THỂ NGỮ NGHĨA AI: TACTICAL 2D CHẤM ĐƠN + MÀU THEO ĐỘ TỰ TIN (CONFIDENCE GRADIENT) + CHỐNG CHỒNG LẤN NHÃN
         const landmarks = (d.landmarks && d.landmarks.length > 0) ? d.landmarks : ((d.semantic_objects && d.semantic_objects.length > 0) ? d.semantic_objects : []);
         if (landmarks.length > 0) {
+          // Thống nhất bảng màu chuẩn 80_fpsmuot: Mốc AI ngữ nghĩa dùng tông Đỏ dạ quang (#ff2a6d -> #ff0033)
+          // tách biệt hoàn toàn với thang màu tường Đỏ -> Cam -> Vàng -> Xanh lục
+          function getConfidenceTheme(scorePct) {
+            const isHigh = Number(scorePct) >= 85;
+            const stroke = isHigh ? '#ff0033' : '#ff2a6d';
+            const fill = isHigh ? 'rgba(255, 0, 51, 0.25)' : 'rgba(255, 42, 109, 0.20)';
+            const glow = isHigh ? 'rgba(255, 0, 51, 0.75)' : 'rgba(255, 42, 109, 0.65)';
+            return { stroke, fill, glow };
+          }
+
+          // Danh sách các nhãn để xếp bố cục chống va chạm (Collision Layout)
+          const labelLayoutList = [];
+
           landmarks.forEach(obj => {
+            if (!obj.name || ['UNKNOWN', 'OBSTACLE', 'OBJ', 'NONE'].includes(String(obj.name).toUpperCase())) return;
+            // Chặn triệt để mốc rác vô tình lọt vào sát tâm/mũi xe (< 25cm)
+            const dToRobot = Math.hypot(obj.x - rx, obj.y - ry);
+            if (dToRobot < 0.25) return;
             const cp = worldToCanvas(obj.x, obj.y);
-            const isPerson = (obj.id === 0 || obj.name === 'PERSON');
-            const isPinned = (obj.pinned === true || (obj.seen && obj.seen >= 2));
+            const uName = String(obj.name).toUpperCase();
 
-            // VIỀN ĐỎ DẠ QUANG CHO TOÀN BỘ VẬT CẢN (THEO YÊU CẦU: QUÉT ĐƯỢC LÀ HIỆN VIỀN ĐỎ SẮC NÉT TRÊN MAP)
-            const primaryColor = isPerson ? '#ff2a6d' : (isPinned ? '#ff0033' : '#ff3366');
-            const fillColor = isPerson ? 'rgba(255, 42, 109, 0.22)' : (isPinned ? 'rgba(255, 0, 51, 0.25)' : 'rgba(255, 51, 102, 0.16)');
+            let rawScore = (obj.score !== undefined && obj.score > 0) ? obj.score : 0.0;
+            if (rawScore > 1.0) rawScore = rawScore / 100.0;
+            const scorePct = Math.min(100, Math.max(0, Math.round(rawScore * 100)));
+            if (scorePct <= 70) return; // Chỉ ghim vật thể trên bản đồ khi mô hình tự tin > 70%
 
-            // Kích thước thực tế vật thể tính theo mét (chiều rộng & chiều sâu)
-            const w_m = (obj.width !== undefined && obj.width > 0) ? obj.width : 0.40;
-            const d_m = (obj.depth !== undefined && obj.depth > 0) ? obj.depth : 0.40;
-            const boxW = Math.max(18, w_m * scale);
-            const boxD = Math.max(18, d_m * scale);
+            // Màu hiển thị động theo thang độ tự tin: Vàng nhạt ➔ Vàng đậm ➔ Máu đỏ
+            const theme = getConfidenceTheme(scorePct);
 
+            // ── VẼ 1 ĐIỂM CHẤM DUY NHẤT + TÊN & % TỰ TIN (KHÔNG VẼ BOUNDING BOX) ──
             mapCtx.save();
-            // A. Lớp phủ mờ diện tích chiếm dụng màu ĐỎ (Bounding Box Red Fill)
-            mapCtx.fillStyle = fillColor;
-            mapCtx.fillRect(cp.x - boxW / 2, cp.y - boxD / 2, boxW, boxD);
-
-            // B. Viền khung hộp bao kỹ thuật màu ĐỎ phát quang (Glowing Red Stroke)
-            mapCtx.strokeStyle = primaryColor;
-            mapCtx.lineWidth = isPinned ? 2.2 : 1.6;
-            mapCtx.shadowColor = primaryColor;
-            mapCtx.shadowBlur = isPinned ? 10 : 5;
-            mapCtx.strokeRect(cp.x - boxW / 2, cp.y - boxD / 2, boxW, boxD);
-
-            // B2. Bốn góc vuông Tactical Tech Red Brackets rực rỡ
-            const cLen = Math.min(10, Math.max(5, boxW * 0.25));
-            mapCtx.lineWidth = 2.5;
-            mapCtx.shadowBlur = 6;
+            mapCtx.shadowColor = theme.glow;
+            mapCtx.shadowBlur = 8;
+            mapCtx.fillStyle = theme.stroke;
             mapCtx.beginPath();
-            // Góc trên-trái
-            mapCtx.moveTo(cp.x - boxW / 2, cp.y - boxD / 2 + cLen);
-            mapCtx.lineTo(cp.x - boxW / 2, cp.y - boxD / 2);
-            mapCtx.lineTo(cp.x - boxW / 2 + cLen, cp.y - boxD / 2);
-            // Góc trên-phải
-            mapCtx.moveTo(cp.x + boxW / 2 - cLen, cp.y - boxD / 2);
-            mapCtx.lineTo(cp.x + boxW / 2, cp.y - boxD / 2);
-            mapCtx.lineTo(cp.x + boxW / 2, cp.y - boxD / 2 + cLen);
-            // Góc dưới-trái
-            mapCtx.moveTo(cp.x - boxW / 2, cp.y + boxD / 2 - cLen);
-            mapCtx.lineTo(cp.x - boxW / 2, cp.y + boxD / 2);
-            mapCtx.lineTo(cp.x - boxW / 2 + cLen, cp.y + boxD / 2);
-            // Góc dưới-phải
-            mapCtx.moveTo(cp.x + boxW / 2 - cLen, cp.y + boxD / 2);
-            mapCtx.lineTo(cp.x + boxW / 2, cp.y + boxD / 2);
-            mapCtx.lineTo(cp.x + boxW / 2, cp.y + boxD / 2 - cLen);
-            mapCtx.stroke();
+            mapCtx.arc(cp.x, cp.y, 4.5, 0, Math.PI * 2);
+            mapCtx.fill();
 
-            // C. Hồng tâm tâm vật thể (+) màu đỏ sáng
             mapCtx.shadowBlur = 0;
-            mapCtx.lineWidth = 1.4;
+            mapCtx.fillStyle = '#ffffff';
             mapCtx.beginPath();
-            mapCtx.moveTo(cp.x - 5, cp.y); mapCtx.lineTo(cp.x + 5, cp.y);
-            mapCtx.moveTo(cp.x, cp.y - 5); mapCtx.lineTo(cp.x, cp.y + 5);
-            mapCtx.stroke();
+            mapCtx.arc(cp.x, cp.y, 1.8, 0, Math.PI * 2);
+            mapCtx.fill();
+            mapCtx.restore();
 
-            // D. Nhãn định danh kỹ thuật chuẩn Aerospace viền ĐỎ
-            const distToRob = Math.hypot(obj.x - rx, obj.y - ry).toFixed(2);
-            const tagText = `[${obj.name} · ${distToRob}m]`;
-            mapCtx.font = 'bold 9px Orbitron, monospace';
-            const tagW = mapCtx.measureText(tagText).width;
-            const tagH = 13;
-            const tagX = cp.x - tagW / 2 - 5;
-            const tagY = cp.y - boxD / 2 - tagH - 4;
+            // Nhãn ngắn gọn chỉ gồm Tên vật thể + % tự tin
+            const tagText = `${uName} ${scorePct}%`;
+            mapCtx.font = 'bold 9.5px Orbitron, monospace';
+            const tagW = mapCtx.measureText(tagText).width + 8;
+            const tagH = 14;
+            const initialY = cp.y - 10 - tagH;
 
-            // Hộp nền nhãn đen viền ĐỎ tương phản cao
-            mapCtx.fillStyle = 'rgba(12, 4, 7, 0.94)';
-            mapCtx.fillRect(tagX, tagY, tagW + 10, tagH);
-            mapCtx.strokeStyle = primaryColor;
+            labelLayoutList.push({
+              centerX: cp.x,
+              targetY: initialY,
+              actualY: initialY,
+              x: cp.x - tagW / 2,
+              w: tagW,
+              h: tagH,
+              tagText: tagText,
+              theme: theme,
+              boxTop: cp.y - 6,
+              cp: cp
+            });
+          });
+
+          // D. THUẬT TOÁN CHỐNG CHỒNG LẤN NHÃN (LABEL COLLISION AVOIDANCE):
+          // Sắp xếp các nhãn theo tọa độ Y tăng dần
+          labelLayoutList.sort((a, b) => a.actualY - b.actualY);
+
+          for (let iter = 0; iter < 4; iter++) {
+            for (let i = 0; i < labelLayoutList.length; i++) {
+              for (let j = i + 1; j < labelLayoutList.length; j++) {
+                const la = labelLayoutList[i];
+                const lb = labelLayoutList[j];
+
+                // Kiểm tra va chạm hộp bao (Bounding Box Overlap)
+                const overlapX = (Math.abs(la.centerX - lb.centerX) < (la.w / 2 + lb.w / 2 + 6));
+                const overlapY = (Math.abs(la.actualY - lb.actualY) < (la.h + 3));
+
+                if (overlapX && overlapY) {
+                  // Đẩy nhãn dưới dịch thêm xuống hoặc nhãn trên dịch lên
+                  const shift = (la.h + 4) - Math.abs(la.actualY - lb.actualY);
+                  lb.actualY += shift;
+                }
+              }
+            }
+          }
+
+          // E. VẼ TẤT CẢ CÁC NHÃN ĐÃ ĐƯỢC ĐIỀU PHỐI TỌA ĐỘ TÁCH BẠCH
+          labelLayoutList.forEach(lbl => {
+            mapCtx.save();
+            mapCtx.font = 'bold 9.5px Orbitron, monospace';
+
+            // Nếu nhãn bị đẩy xa khỏi đỉnh hộp ban đầu -> Vẽ đường chỉ dẫn mỏng nối nhãn về tâm
+            if (Math.abs(lbl.actualY - lbl.targetY) > 8) {
+              mapCtx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
+              mapCtx.lineWidth = 1.0;
+              mapCtx.setLineDash([2, 2]);
+              mapCtx.beginPath();
+              mapCtx.moveTo(lbl.centerX, lbl.actualY + lbl.h);
+              mapCtx.lineTo(lbl.centerX, lbl.boxTop);
+              mapCtx.stroke();
+              mapCtx.setLineDash([]);
+            }
+
+            // Hộp nền nhãn đen trong suốt viền neon
+            mapCtx.shadowColor = lbl.theme.glow;
+            mapCtx.shadowBlur = 6;
+            mapCtx.fillStyle = 'rgba(6, 14, 22, 0.94)';
+            mapCtx.fillRect(lbl.x, lbl.actualY, lbl.w, lbl.h);
+
+            mapCtx.strokeStyle = lbl.theme.stroke;
             mapCtx.lineWidth = 1.2;
-            mapCtx.strokeRect(tagX, tagY, tagW + 10, tagH);
+            mapCtx.strokeRect(lbl.x, lbl.actualY, lbl.w, lbl.h);
 
-            // Chữ nhãn kỹ thuật màu ĐỎ rực
-            mapCtx.fillStyle = primaryColor;
-            mapCtx.fillText(tagText, tagX + 5, tagY + 9.5);
+            // Chữ nhãn sáng rõ màu neon
+            mapCtx.shadowBlur = 0;
+            mapCtx.fillStyle = lbl.theme.stroke;
+            mapCtx.fillText(lbl.tagText, lbl.x + 4, lbl.actualY + 10.2);
             mapCtx.restore();
           });
         }
@@ -3393,28 +3664,50 @@
         mapCtx.stroke();
         mapCtx.restore();
 
-        // Thân xe Robot JetBot chân thực (Footprint 18cm x 16cm + 2 Bánh xe + Mũi tên định hướng)
+        // Thân xe Robot JetBot chân thực (Footprint 18cm x 16cm + Dây cáp OAK lồi bên trái 7cm + 2 Bánh xe)
         mapCtx.save();
         mapCtx.translate(rp.x, rp.y);
         mapCtx.rotate(-yaw);
 
-        const robBodyL = 0.18 * scale; // Chiều dài 18cm
-        const robBodyW = 0.16 * scale; // Chiều rộng 16cm
+        const realL = (d.robot_length_m !== undefined) ? d.robot_length_m : 0.18;
+        const realW = (d.robot_width_m !== undefined) ? d.robot_width_m : 0.13;
+        const frontL = (d.robot_front_from_axle_m !== undefined) ? d.robot_front_from_axle_m : 0.080;
+        const rearL = (d.robot_rear_from_axle_m !== undefined) ? d.robot_rear_from_axle_m : 0.100;
+        const leftExt = (d.robot_left_extrude_m !== undefined) ? d.robot_left_extrude_m : 0.07;
+        const safeR = (d.nav_safe_rotation_radius_m !== undefined) ? d.nav_safe_rotation_radius_m : 0.168;
+
+        const robBodyL = realL * scale; // Chiều dài 18cm
+        const robBodyW = realW * scale; // Chiều rộng 13cm
+        const frontPx = frontL * scale;
+        const rearPx = rearL * scale;
         const wheelL = 0.08 * scale;
         const wheelW = 0.03 * scale;
+        const cableExtPx = leftExt * scale; // Dây lồi 7cm sang bên trái (-Y)
+
+        // Vòng tròn bảo vệ bao bọc thân xe + dây lồi 7cm (Bán kính quét xoay 16.8cm)
+        mapCtx.save();
+        mapCtx.strokeStyle = 'rgba(0, 240, 255, 0.45)';
+        mapCtx.fillStyle = 'rgba(0, 240, 255, 0.05)';
+        mapCtx.lineWidth = 1.2;
+        mapCtx.setLineDash([3, 3]);
+        mapCtx.beginPath();
+        mapCtx.arc(0, 0, safeR * scale, 0, Math.PI * 2);
+        mapCtx.fill();
+        mapCtx.stroke();
+        mapCtx.restore();
 
         // 2 Bánh xe JetBot
         mapCtx.fillStyle = '#222938';
         mapCtx.strokeStyle = '#00f0ff';
         mapCtx.lineWidth = 1;
-        // Bánh trái
+        // Bánh trái (-Y)
         mapCtx.fillRect(-wheelL / 2, -robBodyW / 2 - wheelW + 1, wheelL, wheelW);
         mapCtx.strokeRect(-wheelL / 2, -robBodyW / 2 - wheelW + 1, wheelL, wheelW);
-        // Bánh phải
+        // Bánh phải (+Y)
         mapCtx.fillRect(-wheelL / 2, robBodyW / 2 - 1, wheelL, wheelW);
         mapCtx.strokeRect(-wheelL / 2, robBodyW / 2 - 1, wheelL, wheelW);
 
-        // Thân xe (Chassis)
+        // Thân xe (Chassis: +8cm trước trục, -10cm sau trục)
         mapCtx.fillStyle = 'rgba(12, 22, 38, 0.9)';
         mapCtx.strokeStyle = '#00f0ff';
         mapCtx.lineWidth = 2;
@@ -3422,26 +3715,50 @@
         mapCtx.shadowBlur = 10;
         mapCtx.beginPath();
         if (mapCtx.roundRect) {
-          mapCtx.roundRect(-robBodyL / 2, -robBodyW / 2, robBodyL, robBodyW, 4);
+          mapCtx.roundRect(-rearPx, -robBodyW / 2, robBodyL, robBodyW, 4);
         } else {
-          mapCtx.rect(-robBodyL / 2, -robBodyW / 2, robBodyL, robBodyW);
+          mapCtx.rect(-rearPx, -robBodyW / 2, robBodyL, robBodyW);
         }
         mapCtx.fill();
         mapCtx.stroke();
 
+        // PHẦN DÂY CÁP OAK LỒI RA BÊN TRÁI 7CM (Được thể hiện rõ nét trên bản đồ 2D)
+        mapCtx.save();
+        mapCtx.fillStyle = 'rgba(255, 184, 0, 0.35)';
+        mapCtx.strokeStyle = '#ffb800';
+        mapCtx.lineWidth = 1.8;
+        mapCtx.shadowColor = '#ffb800';
+        mapCtx.shadowBlur = 8;
+        // Khối dây cáp nhô ra từ sườn trái (-Y)
+        const cableStartL = -0.04 * scale;
+        const cableLen = 0.08 * scale;
+        mapCtx.beginPath();
+        if (mapCtx.roundRect) {
+          mapCtx.roundRect(cableStartL, -robBodyW / 2 - wheelW - cableExtPx + 2, cableLen, cableExtPx, 3);
+        } else {
+          mapCtx.rect(cableStartL, -robBodyW / 2 - wheelW - cableExtPx + 2, cableLen, cableExtPx);
+        }
+        mapCtx.fill();
+        mapCtx.stroke();
+        // Nhãn nhỏ chỉ báo cáp OAK
+        mapCtx.font = 'bold 7px Orbitron, monospace';
+        mapCtx.fillStyle = '#ffb800';
+        mapCtx.fillText('CABLE 7cm', cableStartL - 4, -robBodyW / 2 - wheelW - cableExtPx - 2);
+        mapCtx.restore();
+
         // Mũi tên định hướng phát sáng
         mapCtx.fillStyle = '#00ffa3';
         mapCtx.beginPath();
-        mapCtx.moveTo(robBodyL / 2 + 6, 0);
-        mapCtx.lineTo(robBodyL / 4, -robBodyW / 3.5);
-        mapCtx.lineTo(robBodyL / 3, 0);
-        mapCtx.lineTo(robBodyL / 4, robBodyW / 3.5);
+        mapCtx.moveTo(frontPx + 6, 0);
+        mapCtx.lineTo(frontPx / 2, -robBodyW / 3.5);
+        mapCtx.lineTo(frontPx * 0.7, 0);
+        mapCtx.lineTo(frontPx / 2, robBodyW / 3.5);
         mapCtx.closePath();
         mapCtx.fill();
 
         // Vị trí Camera OAK-D S2 ở phía mũi xe
         mapCtx.fillStyle = '#ff2a6d';
-        mapCtx.fillRect(robBodyL / 2 - 3, -4, 4, 8);
+        mapCtx.fillRect(frontPx - 3, -4, 4, 8);
 
         mapCtx.restore();
 
@@ -3494,17 +3811,26 @@
       map_height: 200
     });
 
-    // ════ STATE POLLING & 3D UPDATES ════
-    async function pollState() {
+    // ═════════════════════════════════════════════════════════════════════════
+    // 📡 SERVER-SENT EVENTS (SSE) TELEMETRY STREAM (Thay thế hoàn toàn Polling)
+    // Server chủ động Push trạng thái 5Hz qua 1 luồng TCP duy nhất
+    // Giảm 95% tải TCP handshake, triệt tiêu nghẽn gói tin WiFi và CPU Jetson Nano
+    // ═════════════════════════════════════════════════════════════════════════
+
+    function handleStateUpdate(d) {
       try {
-        const tFetch0 = performance.now();
-        const res = await fetch('/api/state?map_ver=' + (typeof currentMapVer !== 'undefined' ? currentMapVer : -1));
-        const pingMs = Math.round(performance.now() - tFetch0);
-        const rawText = await res.text();
-        const d = JSON.parse(rawText);
-        d._client_ping_ms = pingMs;
-        d._client_state_bytes = rawText.length;
         lastStateData = d;
+        targetPose.rx = (typeof d.robot_x === 'number') ? d.robot_x : 0.0;
+        targetPose.ry = (typeof d.robot_y === 'number') ? d.robot_y : 0.0;
+        targetPose.rz = (typeof d.robot_z === 'number') ? d.robot_z : 0.0;
+        targetPose.yaw = (typeof d.robot_yaw === 'number') ? d.robot_yaw : 0.0;
+        if (!smoothPose.initialized) {
+          smoothPose.rx = targetPose.rx;
+          smoothPose.ry = targetPose.ry;
+          smoothPose.rz = targetPose.rz;
+          smoothPose.yaw = targetPose.yaw;
+          smoothPose.initialized = true;
+        }
 
         // Header Telemetry (Real-time Battery BMS)
         const bV = d.battery_v !== undefined ? d.battery_v.toFixed(2) : '--';
@@ -3580,12 +3906,9 @@
           }
         }
 
-        // 1-4. Cập nhật Three.js 3D (chỉ chạy khi có thư viện 3D)
+        // 1-4. Cập nhật Three.js 3D (Đường đi & Mây điểm, Tọa độ đã được animate() nội suy 60 FPS mượt mà)
         if (hasThree && robotGroup && scene) {
           try {
-            robotGroup.position.set(d.robot_x, d.robot_y, d.robot_z);
-            robotGroup.rotation.z = d.robot_yaw;
-
             if (d.path && d.path.length > 1 && pathGeo) {
               const flat = [];
               for (const pt of d.path) flat.push(pt[0], pt[1], pt[2] || 0.02);
@@ -3616,27 +3939,16 @@
                 semanticGroup.remove(semanticGroup.children[0]);
               }
               const objs = (d.semantic_objects && d.semantic_objects.length > 0) ? d.semantic_objects : [];
-              if (objs.length > 0) {
-                objs.forEach(obj => {
-                  const boxGeo = new THREE.BoxGeometry(0.35, 0.35, 0.5);
-                  const edgeGeo = new THREE.EdgesGeometry(boxGeo);
-                  const boxMat = new THREE.LineBasicMaterial({ color: obj.name === 'PERSON' ? 0xff2a6d : 0x00f0ff, linewidth: 2 });
-                  const wireBox = new THREE.LineSegments(edgeGeo, boxMat);
-                  wireBox.position.set(obj.x, obj.y, (obj.z !== undefined && Math.abs(obj.z) < 2) ? obj.z : 0.25);
-                  semanticGroup.add(wireBox);
-                });
-              } else if (d.detections && d.detections.length > 0) {
-                d.detections.forEach(det => {
-                  const wx = d.robot_x + (det.z * Math.cos(d.robot_yaw) - (-det.x) * Math.sin(d.robot_yaw));
-                  const wy = d.robot_y + (det.z * Math.sin(d.robot_yaw) + (-det.x) * Math.cos(d.robot_yaw));
-                  const boxGeo = new THREE.BoxGeometry(0.4, 0.4, 0.6);
-                  const edgeGeo = new THREE.EdgesGeometry(boxGeo);
-                  const boxMat = new THREE.LineBasicMaterial({ color: det.id === 0 ? 0xff2a6d : 0x00ffa3, linewidth: 2 });
-                  const wireBox = new THREE.LineSegments(edgeGeo, boxMat);
-                  wireBox.position.set(wx, wy, 0.3);
-                  semanticGroup.add(wireBox);
-                });
-              }
+              objs.forEach(obj => {
+                let rawS = (obj.score !== undefined && obj.score > 0) ? obj.score : 0.0;
+                if (rawS > 1.0) rawS = rawS / 100.0;
+                if (rawS <= 0.70) return;
+                const dotGeo = new THREE.SphereGeometry(0.06, 12, 12);
+                const dotMat = new THREE.MeshBasicMaterial({ color: obj.name === 'PERSON' ? 0xff2a6d : 0x00f0ff });
+                const dotMesh = new THREE.Mesh(dotGeo, dotMat);
+                dotMesh.position.set(obj.x, obj.y, (obj.z !== undefined && Math.abs(obj.z) < 2) ? obj.z : 0.15);
+                semanticGroup.add(dotMesh);
+              });
             }
           } catch (e) { }
         }
@@ -3704,6 +4016,8 @@
         if (d.trip_odometer) {
           updateTripUI(d.trip_odometer);
         }
+        // Cập nhật Cột 2 & Cột 3 Demo Cockpit (Nav & Localization)
+        updateDemoCockpitUI(d);
 
         // Cập nhật Bảng Đối Chiếu Góc Quay IMU (Turn Diagnostics Monitor)
         if (d.turn_diagnostics) {
@@ -3772,9 +4086,63 @@
         // Cập nhật trạng thái Tự hành Bám đường A* (Autonomous Navigator)
         updateNavStatus(d.nav_state, d.planned_path);
       } catch (e) { }
-      setTimeout(pollState, 140);
     }
-    pollState();
+
+    // ════ QUẢN LÝ KẾT NỐI SSE (Tự động kết nối lại khi gián đoạn) ════
+    let _sseConn = null;
+    let _sseReconnectDelay = 1500;
+    let _sseLastEventTime = performance.now();
+
+    function startSSE() {
+      if (_sseConn) {
+        try { _sseConn.close(); } catch(e) {}
+        _sseConn = null;
+      }
+      try {
+        _sseConn = new EventSource('/stream/state');
+        _sseConn.onopen = function () {
+          _sseReconnectDelay = 1500;
+        };
+        _sseConn.onmessage = function (evt) {
+          try {
+            const now = performance.now();
+            const d = JSON.parse(evt.data);
+            d._client_ping_ms = Math.max(1, Math.round(now - _sseLastEventTime));
+            _sseLastEventTime = now;
+            handleStateUpdate(d);
+          } catch (ex) {}
+        };
+        _sseConn.onerror = function () {
+          try { _sseConn.close(); } catch(e) {}
+          _sseConn = null;
+          _sseReconnectDelay = Math.min(_sseReconnectDelay * 1.5, 8000);
+          setTimeout(startSSE, _sseReconnectDelay);
+        };
+      } catch (e) {
+        setTimeout(startSSE, 3000);
+      }
+    }
+    startSSE();
+
+    // ════ POLLING PHỤ: THUMBNAILS TAB INSPECTOR (2Hz, chỉ khi mở Tab 2) ════
+    async function pollInspectorThumbs() {
+      try {
+        const isVis = (typeof isInspectorPaused !== 'undefined' && isInspectorPaused) || 
+                      (document.getElementById('insp-rgb-img')?.offsetParent !== null);
+        if (isVis) {
+          const mv = (typeof currentMapVer !== 'undefined') ? currentMapVer : -1;
+          const res = await fetch('/api/state?thumbs=1&map_ver=' + mv);
+          if (res.ok) {
+            const d = JSON.parse(await res.text());
+            if (d && d.frame_diag) {
+              renderAlgorithmInspector(d.frame_diag, d.recent_frame_logs || [], d);
+            }
+          }
+        }
+      } catch (e) {}
+      setTimeout(pollInspectorThumbs, 500);
+    }
+    pollInspectorThumbs();
 
     // Tự động khôi phục luồng stream nếu mạng gián đoạn
     const camImg = document.getElementById('cam-stream');
@@ -4073,7 +4441,7 @@
           }
         }
         fetch('/api/drive?v=' + curLinear.toFixed(3) + '&w=' + angular.toFixed(3), { cache: 'no-store' }).catch(() => { });
-      }, 120);
+      }, 180);
     }
 
     function setBtnActive(id, active) {
@@ -4426,6 +4794,138 @@
       if (driveTimer) emergencyStop();
     });
 
+    // ════ CẬP NHẬT GIAO DIỆN DEMO COCKPIT TAB 1 (CỘT 2 & CỘT 3) ════
+    function updateDemoCockpitUI(d) {
+      if (!d) return;
+
+      // ── CỘT 2: ĐIỀU HƯỚNG TỰ HÀNH & A* PLANNER ──
+      const navBadge = document.getElementById('demo-nav-state-badge');
+      const navDist = document.getElementById('demo-nav-dist');
+      const navWp = document.getElementById('demo-nav-wp');
+      const navBar = document.getElementById('demo-nav-progress-bar');
+      const navPct = document.getElementById('demo-nav-progress-pct');
+      const navClear = document.getElementById('demo-nav-clearance');
+      const navColl = document.getElementById('demo-nav-collision');
+
+      const nav = d.nav_state || {};
+      const isRunning = Boolean(nav.running);
+      const state = (nav.state || 'IDLE').toUpperCase();
+
+      if (navBadge) {
+        if (state === 'DRIVING') {
+          navBadge.innerText = 'ĐANG DẪN ĐƯỜNG A*';
+          navBadge.style.color = 'var(--cyan)';
+          navBadge.style.borderColor = 'var(--cyan)';
+          navBadge.style.background = 'rgba(0,240,255,0.15)';
+        } else if (state === 'REPLANNING') {
+          navBadge.innerText = 'ĐỔI HƯỚNG NÉ VẬT CẢN';
+          navBadge.style.color = 'var(--amber)';
+          navBadge.style.borderColor = 'var(--amber)';
+          navBadge.style.background = 'rgba(255,184,0,0.15)';
+        } else if (state === 'GOAL_REACHED') {
+          navBadge.innerText = 'ĐÃ ĐẾN ĐÍCH AN TOÀN';
+          navBadge.style.color = 'var(--emerald)';
+          navBadge.style.borderColor = 'var(--emerald)';
+          navBadge.style.background = 'rgba(0,255,163,0.15)';
+        } else if (state === 'RECOVERING') {
+          navBadge.innerText = 'TỰ ĐỘNG THOÁT KẸT';
+          navBadge.style.color = 'var(--rose)';
+          navBadge.style.borderColor = 'var(--rose)';
+          navBadge.style.background = 'rgba(255,42,109,0.15)';
+        } else {
+          navBadge.innerText = 'SẴN SÀNG';
+          navBadge.style.color = 'var(--emerald)';
+          navBadge.style.borderColor = 'var(--emerald)';
+          navBadge.style.background = 'rgba(0,255,163,0.10)';
+        }
+      }
+
+      const distM = (typeof nav.dist_to_goal === 'number') ? nav.dist_to_goal : 0.0;
+      if (navDist) {
+        if (isRunning || distM > 0.001) {
+          navDist.innerText = `${(distM * 100).toFixed(1)} cm`;
+        } else {
+          navDist.innerText = '-- cm';
+        }
+      }
+
+      if (navWp) {
+        navWp.innerText = `WP: ${nav.current_wp_idx || 0} / ${nav.total_waypoints || 0}`;
+      }
+
+      const progress = Math.max(0, Math.min(100, Math.round(nav.progress_pct || 0)));
+      if (navBar) navBar.style.width = `${progress}%`;
+      if (navPct) navPct.innerText = `${progress}%`;
+
+      const obsDistM = (typeof d.obstacle_distance === 'number') ? d.obstacle_distance : 2.5;
+      if (navClear) {
+        if (obsDistM < 5.0 && obsDistM > 0.01) {
+          const obsCm = Math.round(obsDistM * 100);
+          navClear.innerText = `${obsCm} cm`;
+          navClear.style.color = (obsCm <= 25) ? 'var(--rose)' : ((obsCm <= 40) ? 'var(--amber)' : 'var(--cyan)');
+        } else {
+          navClear.innerText = '> 250 cm';
+          navClear.style.color = 'var(--cyan)';
+        }
+      }
+
+      if (navColl) {
+        if (state === 'REPLANNING') {
+          navColl.innerText = 'PHÁT HIỆN VẬT CẢN';
+          navColl.style.color = 'var(--rose)';
+        } else if (state === 'DRIVING') {
+          navColl.innerText = 'ĐANG BÁM LỘ TRÌNH';
+          navColl.style.color = 'var(--cyan)';
+        } else {
+          navColl.innerText = 'ĐƯỜNG THOÁNG';
+          navColl.style.color = 'var(--emerald)';
+        }
+      }
+
+      // ── CỘT 3: THUẬT TOÁN ĐỊNH VỊ & KHÓA TỌA ĐỘ (SLAM) ──
+      const locScore = document.getElementById('demo-loc-csm-score');
+      const locSource = document.getElementById('demo-loc-source');
+      const locSlip = document.getElementById('demo-loc-slip');
+      const locHz = document.getElementById('demo-loc-hz');
+      const locBadge = document.getElementById('demo-loc-badge');
+
+      const csmObj = (d.frame_diag && d.frame_diag.csm) ? d.frame_diag.csm : null;
+      if (csmObj && csmObj.executed && typeof csmObj.score === 'number') {
+        window._lastValidCsmScore = Math.max(0, Math.min(100, csmObj.score * 100.0));
+      }
+      if (locScore) {
+        if (typeof window._lastValidCsmScore === 'number') {
+          locScore.innerText = `${window._lastValidCsmScore.toFixed(1)}%`;
+        } else {
+          locScore.innerText = '--%';
+        }
+      }
+
+      if (locSource && d.odometry_source) {
+        locSource.innerText = d.odometry_source;
+      }
+      if (locSlip) {
+        locSlip.innerText = d.imu_active ? 'Tự Động Bù IMU' : 'Dead-Reckoning';
+        locSlip.style.color = d.imu_active ? 'var(--emerald)' : 'var(--amber)';
+      }
+
+      const latObj = (d.frame_diag && d.frame_diag.latencies) ? d.frame_diag.latencies : null;
+      const slamLatency = (latObj && typeof latObj.total_ms === 'number')
+        ? latObj.total_ms.toFixed(1)
+        : '--';
+      const hzVal = (typeof d.algo_hz === 'number' && d.algo_hz > 0) ? d.algo_hz.toFixed(1) : '--';
+      if (locHz) {
+        locHz.innerText = `${hzVal} Hz · Trễ: ${slamLatency}ms`;
+      }
+
+      if (locBadge) {
+        const isMatched = (d.scan_matched === true);
+        locBadge.innerText = isMatched ? '🔒 ZERO-DRIFT' : (d.imu_active ? '🧭 IMU LOCKED' : '⚠️ DEAD-RECKONING');
+        locBadge.style.color = isMatched ? 'var(--cyan)' : (d.imu_active ? 'var(--emerald)' : 'var(--amber)');
+        locBadge.style.borderColor = locBadge.style.color;
+      }
+    }
+
     // ════ ĐỒNG HỒ HÀNH TRÌNH CHUYẾN ĐI (TRIP ODOMETER) ════
     let latestTripCm = 0.0;
 
@@ -4772,17 +5272,21 @@
       const tabCockpit = document.getElementById('tab-cockpit');
       const tabInsp = document.getElementById('tab-inspector');
       const tabConfig = document.getElementById('tab-config');
+      const tabTeleop = document.getElementById('tab-teleop');
       const btnCockpit = document.getElementById('tab-nav-cockpit');
       const btnInsp = document.getElementById('tab-nav-inspector');
       const btnConfig = document.getElementById('tab-nav-config');
+      const btnTeleop = document.getElementById('tab-nav-teleop');
 
       if (tabCockpit) tabCockpit.style.display = (tabName === 'cockpit') ? 'block' : 'none';
       if (tabInsp) tabInsp.style.display = (tabName === 'inspector') ? 'block' : 'none';
       if (tabConfig) tabConfig.style.display = (tabName === 'config') ? 'block' : 'none';
+      if (tabTeleop) tabTeleop.style.display = (tabName === 'teleop') ? 'block' : 'none';
 
       if (btnCockpit) btnCockpit.classList.toggle('active', tabName === 'cockpit');
       if (btnInsp) btnInsp.classList.toggle('active', tabName === 'inspector');
       if (btnConfig) btnConfig.classList.toggle('active', tabName === 'config');
+      if (btnTeleop) btnTeleop.classList.toggle('active', tabName === 'teleop');
 
       if (tabName === 'config') {
         loadConfigFull();
@@ -4827,6 +5331,17 @@
           updateInspectorControlsUI();
         })
         .catch(err => console.warn('Lỗi resume debug:', err));
+    }
+
+    async function resetRecordingSession() {
+      if (!confirm("Bắt đầu phiên ghi nhận hộp đen hoàn toàn mới?\n(Các frame sắp tới sẽ được lưu vào session mới, không ảnh hưởng file ZIP đã tải)")) return;
+      try {
+        const res = await fetch('/api/session/reset');
+        const data = await res.json();
+        alert(`✅ Đã khởi tạo phiên ghi mới: ${data.session_id}`);
+      } catch (e) {
+        alert("Lỗi kết nối tới máy chủ JetBot");
+      }
     }
 
     function updateInspectorControlsUI() {
@@ -5056,14 +5571,20 @@
         }
         if (bMsg) bMsg.innerHTML = `⚠️ Chu kỳ SLAM đạt <b>${totMs.toFixed(1)} ms (> 85ms)</b>. CPU Jetson Nano đang bị quá tải tính toán.`;
         if (bAdv) bAdv.innerText = 'Tăng DEPTH_SKIP_FRAMES hoặc giảm bớt số tia CSM trong config.py để tăng FPS.';
-      } else if (ping > 90 || (camFps > 14 && fpsSent < camFps * 0.65)) {
+      } else if (ping > 90 || (camFps > 14 && fpsSent < Math.min(20.0, camFps * 0.65))) {
         if (bBadge) {
           bBadge.innerText = 'NGHẼN SÓNG WIFI / MẠNG';
           bBadge.style.color = 'var(--amber)';
           bBadge.style.borderColor = 'var(--amber)';
           bBadge.style.background = 'rgba(255,184,0,0.15)';
         }
-        if (bMsg) bMsg.innerHTML = `⚠️ Độ trễ Ping cao <b>(${ping} ms)</b> hoặc luồng Video bị giảm khung hình do sóng WiFi chập chờn.`;
+        if (bMsg) {
+          if (ping > 90) {
+            bMsg.innerHTML = `⚠️ Độ trễ Ping cao <b>(${ping} ms > 90ms)</b> do khoảng cách hoặc sóng WiFi yếu.`;
+          } else {
+            bMsg.innerHTML = `⚠️ Luồng Video bị giảm khung hình <b>(${fpsSent.toFixed(1)} FPS)</b> do đường truyền WiFi.`;
+          }
+        }
         if (bAdv) bAdv.innerText = 'Chuyển sang băng tần WiFi 5GHz hoặc di chuyển JetBot lại gần Router để luồng mượt hơn.';
       } else if (camFps < 10.0) {
         if (bBadge) {
@@ -5411,11 +5932,20 @@
         // Lấy mẫu các điểm vật thể/landmark cục bộ
         if (state && state.landmarks && Array.isArray(state.landmarks)) {
           state.landmarks.forEach(lm => {
+            let rawS = (lm.score !== undefined && lm.score > 0) ? lm.score : 0.0;
+            if (rawS > 1.0) rawS = rawS / 100.0;
+            const sc = Math.round(rawS * 100);
+            if (sc <= 70) return;
             const pt = toC(lm.x, lm.y);
-            ctx.fillStyle = 'rgba(255, 42, 109, 0.8)';
-            ctx.beginPath(); ctx.arc(pt.x, pt.y, 5, 0, Math.PI * 2); ctx.fill();
+            // Màu theo độ tự tin: Vàng nhạt ➔ Vàng đậm ➔ Máu đỏ
+            const tC = Math.max(0, Math.min(1, (sc - 70) / 30.0));
+            const rC = tC <= 0.5 ? 255 : Math.round(255 - ((tC - 0.5) / 0.5) * 35);
+            const gC = tC <= 0.5 ? Math.round(245 - (tC / 0.5) * 80) : Math.round(165 - ((tC - 0.5) / 0.5) * 150);
+            const bC = tC <= 0.5 ? Math.round(120 - (tC / 0.5) * 120) : Math.round(((tC - 0.5) / 0.5) * 25);
+            ctx.fillStyle = `rgb(${rC}, ${gC}, ${bC})`;
+            ctx.beginPath(); ctx.arc(pt.x, pt.y, 4.5, 0, Math.PI * 2); ctx.fill();
             ctx.font = '9px Orbitron';
-            ctx.fillText(lm.name || 'OBJ', pt.x + 7, pt.y + 3);
+            ctx.fillText(`${lm.name || 'OBJ'} ${sc}%`, pt.x + 7, pt.y + 3);
           });
         }
       }
@@ -5671,7 +6201,7 @@
     // ══════════════════════════════════════════════════════════════════════
     let fullConfigData = null;
     const CONFIG_PARAMS_LIST = [
-      'motor_trim_left', 'motor_trim_right', 'heading_lock_kp',
+      'motor_trim_left', 'motor_trim_right', 'motor_trim_backward_left', 'motor_trim_backward_right', 'heading_lock_kp',
       'step_forward_scale', 'step_backward_scale', 'default_speed_pwm',
       'step_turn_left_scale', 'step_turn_right_scale', 'step_turn_min_pwm', 'step_turn_start_latency_s',
       'manual_decel_time_ms', 'safety_brake_dist_m', 'safety_warn_dist_m',

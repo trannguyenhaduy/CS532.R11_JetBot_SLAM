@@ -42,28 +42,40 @@ HTML_PAGE = get_cockpit_html()
 
 class WebHandler(BaseHTTPRequestHandler):
     server_instance = None
+    # HTTP/1.0: Mỗi request hoàn tất và đóng kết nối ngay - tránh 100% lỗi BrokenPipeError
+    # do Python 3.6 trên Jetson Nano (Ubuntu 18.04) không xử lý tốt HTTP/1.1 Keep-Alive
+    protocol_version = "HTTP/1.0"
 
     def setup(self):
         super().setup()
         import socket
         try:
             self.connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-            # Khóa bộ đệm phát 64KB chống ứ đọng khung hình cũ khi WiFi bị giật
-            self.connection.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 65536)
+            # Khóa bộ đệm phát 16KB để triệt tiêu hoàn toàn nghẽn đệm hàng đợi (Bufferbloat) trên WiFi
+            self.connection.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 16384)
         except Exception:
             pass
 
     def log_message(self, format, *args):
         pass  # Tắt log spam HTTP request
 
+    def _safe_send(self, body: bytes):
+        """Ghi phản hồi an toàn - bỏ qua ngắt kết nối đột ngột của trình duyệt"""
+        try:
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
+
     def do_GET(self):
         inst = self.server_instance
         if self.path in ['/', '/index.html']:
+            content = HTML_PAGE or get_cockpit_html()
+            body = content.encode('utf-8')
             self.send_response(200)
             self.send_header('Content-Type', 'text/html; charset=utf-8')
+            self.send_header('Content-Length', str(len(body)))
             self.end_headers()
-            content = get_cockpit_html() or HTML_PAGE
-            self.wfile.write(content.encode('utf-8'))
+            self._safe_send(body)
         elif self.path.startswith('/stream.mjpg'):
             self.send_response(200)
             self.send_header('Content-Type', 'multipart/x-mixed-replace; boundary=frame')
@@ -73,38 +85,84 @@ class WebHandler(BaseHTTPRequestHandler):
             self.send_header('Connection', 'close')
             self.end_headers()
             last_id = -1
+            last_send_time = 0.0
+            max_fps = 30.0
+            try:
+                import config
+                max_fps = float(getattr(config, 'STREAM_MAX_FPS', 30.0))
+            except Exception:
+                max_fps = 30.0
+            min_frame_interval = 1.0 / max(1.0, max_fps)
+    
             while inst and getattr(inst, 'is_running', True):
-                frame_evt = getattr(inst, 'new_frame_event', None)
-                if frame_evt:
-                    frame_evt.wait(timeout=0.015)
-                    frame_evt.clear()
-
+                now = time.time()
+                elapsed = now - last_send_time
+                if elapsed < min_frame_interval:
+                    time.sleep(min_frame_interval - elapsed)
+                    now = time.time()
+    
                 frame_id, jpeg = inst.get_latest_jpeg_with_id()
                 if jpeg and (frame_id != last_id or frame_id == 0):
                     last_id = frame_id
+                    last_send_time = now
                     try:
-                        self.wfile.write(b'--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ' +
+                        self._safe_send(b'--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ' +
                                          str(len(jpeg)).encode() + b'\r\n\r\n' + jpeg + b'\r\n')
                         self.wfile.flush()
                         if inst and hasattr(inst, 'record_stream_frame'):
                             inst.record_stream_frame(len(jpeg))
                     except Exception:
                         break
-                elif not frame_evt:
-                    time.sleep(0.003)
+                else:
+                    time.sleep(0.002)
         elif self.path.startswith('/api/state'):
             client_map_ver = -1
+            include_thumbs = False
             if '?' in self.path:
                 for p in self.path.split('?')[1].split('&'):
                     if p.startswith('map_ver='):
                         try: client_map_ver = int(p.split('=')[1])
                         except Exception: client_map_ver = -1
-            state_data = inst.get_state_dict(client_map_ver=client_map_ver) if inst else {}
+                    elif p.startswith('thumbs='):
+                        include_thumbs = (p.split('=')[1] in ('1', 'true', 'True'))
+            state_data = inst.get_state_dict(client_map_ver=client_map_ver, include_thumbs=include_thumbs) if inst else {}
+            body = json.dumps(state_data).encode('utf-8')
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
             self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_header('Content-Length', str(len(body)))
             self.end_headers()
-            self.wfile.write(json.dumps(state_data).encode('utf-8'))
+            self._safe_send(body)
+        elif self.path.startswith('/stream/state'):
+            # SSE: Server chu dong day trang thai ve trinh duyet (thay the HTTP polling 200ms)
+            # 1 ket noi TCP duy nhat - giam overhead CPU va WiFi so voi mo/dong ket noi moi 200ms
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/event-stream; charset=utf-8')
+            self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_header('Connection', 'keep-alive')
+            self.send_header('X-Accel-Buffering', 'no')
+            self.end_headers()
+            last_map_ver = -1
+            push_interval = 0.20  # 5 Hz
+            while inst and getattr(inst, 'is_running', True):
+                t0 = time.time()
+                try:
+                    state = inst.get_state_dict(client_map_ver=last_map_ver, include_thumbs=False) if inst else {}
+                    last_map_ver = state.get('map_version', last_map_ver)
+                    payload = json.dumps(state, ensure_ascii=False)
+                    event_bytes = ('data: ' + payload + '\n\n').encode('utf-8')
+                    self.wfile.write(event_bytes)
+                    self.wfile.flush()
+                except (BrokenPipeError, ConnectionResetError, OSError):
+                    break
+                except Exception:
+                    break
+                elapsed = time.time() - t0
+                remaining = push_interval - elapsed
+                if remaining > 0:
+                    time.sleep(remaining)
+            return
         elif self.path.startswith('/api/drive'):
             v, w = 0.0, 0.0
             if '?' in self.path:
@@ -118,11 +176,14 @@ class WebHandler(BaseHTTPRequestHandler):
             if inst:
                 try: inst.on_drive_command(v, w)
                 except Exception as e: print(f"⚠️ [WEB DRIVE ERR]: {e}")
+            body = b'OK'
             self.send_response(200)
+            self.send_header('Content-Type', 'text/plain')
             self.send_header('Access-Control-Allow-Origin', '*')
             self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+            self.send_header('Content-Length', str(len(body)))
             self.end_headers()
-            self.wfile.write(b'OK')
+            self._safe_send(body)
         elif self.path.startswith('/api/camera_mode'):
             mode = 'ai'
             if '?' in self.path:
@@ -138,7 +199,7 @@ class WebHandler(BaseHTTPRequestHandler):
             self.send_header('Content-Type', 'application/json')
             self.send_header('Access-Control-Allow-Origin', '*')
             self.end_headers()
-            self.wfile.write(json.dumps({"status": "OK", "mode": res_mode}).encode())
+            self._safe_send(json.dumps({"status": "OK", "mode": res_mode}).encode())
             return
         elif self.path.startswith('/api/map/save'):
             map_name = "room_map"
@@ -152,7 +213,7 @@ class WebHandler(BaseHTTPRequestHandler):
             self.send_header('Content-Type', 'application/json')
             self.send_header('Access-Control-Allow-Origin', '*')
             self.end_headers()
-            self.wfile.write(json.dumps({"status": "OK" if ok else "ERROR", "result": res}).encode())
+            self._safe_send(json.dumps({"status": "OK" if ok else "ERROR", "result": res}).encode())
             return
         elif self.path.startswith('/api/map/reset'):
             ok = False
@@ -162,7 +223,7 @@ class WebHandler(BaseHTTPRequestHandler):
             self.send_header('Content-Type', 'application/json')
             self.send_header('Access-Control-Allow-Origin', '*')
             self.end_headers()
-            self.wfile.write(json.dumps({"status": "OK", "reset": bool(ok)}).encode())
+            self._safe_send(json.dumps({"status": "OK", "reset": bool(ok)}).encode())
             return
         elif self.path.startswith('/api/step_move'):
             step_type = 'linear'
@@ -171,7 +232,7 @@ class WebHandler(BaseHTTPRequestHandler):
             deg = 45.0
             speed_pct = None
             val_override = None
-
+    
             if '?' in self.path:
                 for p in self.path.split('?')[1].split('&'):
                     if p.startswith('type='): step_type = p.split('=')[1].lower()
@@ -191,9 +252,9 @@ class WebHandler(BaseHTTPRequestHandler):
                     elif p.startswith('speed='):
                         try: speed_pct = float(p.split('=')[1])
                         except Exception: pass
-
+    
             target_val = val_override if val_override is not None else (deg if step_type == 'turn' else dist_cm)
-
+    
             ok, msg = False, "No handler"
             if inst and hasattr(inst, 'execute_step_move'):
                 ok, msg = inst.execute_step_move(step_type, target_val, direction, speed_pct=speed_pct)
@@ -202,7 +263,7 @@ class WebHandler(BaseHTTPRequestHandler):
             self.send_header('Access-Control-Allow-Origin', '*')
             self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
             self.end_headers()
-            self.wfile.write(json.dumps({"status": "OK" if ok else "ERROR", "message": msg}).encode())
+            self._safe_send(json.dumps({"status": "OK" if ok else "ERROR", "message": msg}).encode())
             return
         elif self.path.startswith('/api/step_cancel'):
             ok = False
@@ -213,7 +274,7 @@ class WebHandler(BaseHTTPRequestHandler):
             self.send_header('Access-Control-Allow-Origin', '*')
             self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
             self.end_headers()
-            self.wfile.write(json.dumps({"status": "OK", "cancelled": ok}).encode())
+            self._safe_send(json.dumps({"status": "OK", "cancelled": ok}).encode())
             return
         elif self.path.startswith('/api/trip_reset'):
             ok = False
@@ -224,7 +285,7 @@ class WebHandler(BaseHTTPRequestHandler):
             self.send_header('Access-Control-Allow-Origin', '*')
             self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
             self.end_headers()
-            self.wfile.write(json.dumps({"status": "OK", "reset": bool(ok)}).encode())
+            self._safe_send(json.dumps({"status": "OK", "reset": bool(ok)}).encode())
             return
         elif self.path.startswith('/api/motor_trim'):
             trim_l = 1.0
@@ -267,7 +328,7 @@ class WebHandler(BaseHTTPRequestHandler):
             self.send_header('Access-Control-Allow-Origin', '*')
             self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
             self.end_headers()
-            self.wfile.write(json.dumps({"status": "OK", "left": trim_l, "right": trim_r, "updated": bool(ok), "saved": bool(should_save)}).encode())
+            self._safe_send(json.dumps({"status": "OK", "left": trim_l, "right": trim_r, "updated": bool(ok), "saved": bool(should_save)}).encode())
             return
         elif self.path.startswith('/api/calibration'):
             params = {}
@@ -295,7 +356,7 @@ class WebHandler(BaseHTTPRequestHandler):
             self.send_header('Access-Control-Allow-Origin', '*')
             self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
             self.end_headers()
-            self.wfile.write(json.dumps({"status": "OK", "updated": bool(ok), "saved": bool(save_disk), "calibration": curr_calib}).encode())
+            self._safe_send(json.dumps({"status": "OK", "updated": bool(ok), "saved": bool(save_disk), "calibration": curr_calib}).encode())
             return
         elif self.path.startswith('/api/pattern_move'):
             p_type = 'rectangle'
@@ -345,7 +406,7 @@ class WebHandler(BaseHTTPRequestHandler):
             self.send_header('Access-Control-Allow-Origin', '*')
             self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
             self.end_headers()
-            self.wfile.write(json.dumps({"status": "OK" if ok else "ERROR", "message": msg}).encode())
+            self._safe_send(json.dumps({"status": "OK" if ok else "ERROR", "message": msg}).encode())
             return
         elif self.path.startswith('/api/auto_scan'):
             duration = None
@@ -369,7 +430,7 @@ class WebHandler(BaseHTTPRequestHandler):
             self.send_header('Access-Control-Allow-Origin', '*')
             self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
             self.end_headers()
-            self.wfile.write(json.dumps({"status": "OK", "auto_scanning": bool(active)}).encode())
+            self._safe_send(json.dumps({"status": "OK", "auto_scanning": bool(active)}).encode())
             return
         elif self.path.startswith('/api/plan_path') or self.path.startswith('/api/set_goal'):
             gx, gy = None, None
@@ -392,7 +453,7 @@ class WebHandler(BaseHTTPRequestHandler):
             self.send_header('Access-Control-Allow-Origin', '*')
             self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
             self.end_headers()
-            self.wfile.write(json.dumps(res).encode())
+            self._safe_send(json.dumps(res).encode())
             return
         elif self.path.startswith('/api/clear_goal'):
             ok = False
@@ -404,7 +465,25 @@ class WebHandler(BaseHTTPRequestHandler):
             self.send_header('Access-Control-Allow-Origin', '*')
             self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
             self.end_headers()
-            self.wfile.write(json.dumps({"status": "OK", "cleared": bool(ok)}).encode())
+            self._safe_send(json.dumps({"status": "OK", "cleared": bool(ok)}).encode())
+            return
+        elif self.path.startswith('/api/return_home') or self.path.startswith('/api/return_origin'):
+            res = {"success": False, "message": "Server chưa sẵn sàng"}
+            if inst:
+                if hasattr(inst, 'return_home_cb') and inst.return_home_cb:
+                    res = inst.return_home_cb()
+                elif hasattr(inst, 'return_home'):
+                    res = inst.return_home()
+                elif hasattr(inst, 'plan_to_goal'):
+                    res = inst.plan_to_goal(0.0, 0.0)
+                elif hasattr(inst, 'plan_path'):
+                    res = inst.plan_path(0.0, 0.0)
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+            self.end_headers()
+            self._safe_send(json.dumps(res).encode())
             return
         elif self.path.startswith('/api/start_nav'):
             res = {"success": False, "message": "Server chưa sẵn sàng"}
@@ -416,7 +495,7 @@ class WebHandler(BaseHTTPRequestHandler):
             self.send_header('Access-Control-Allow-Origin', '*')
             self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
             self.end_headers()
-            self.wfile.write(json.dumps(res).encode())
+            self._safe_send(json.dumps(res).encode())
             return
         elif self.path.startswith('/api/stop_nav') or self.path.startswith('/api/cancel_nav'):
             res = {"success": False, "message": "Server chưa sẵn sàng"}
@@ -428,7 +507,7 @@ class WebHandler(BaseHTTPRequestHandler):
             self.send_header('Access-Control-Allow-Origin', '*')
             self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
             self.end_headers()
-            self.wfile.write(json.dumps(res).encode())
+            self._safe_send(json.dumps(res).encode())
             return
         elif self.path.startswith('/api/toggle'):
             flag_name = None
@@ -441,7 +520,7 @@ class WebHandler(BaseHTTPRequestHandler):
                 self.send_header('Content-Type', 'application/json')
                 self.send_header('Access-Control-Allow-Origin', '*')
                 self.end_headers()
-                self.wfile.write(json.dumps({"flag": flag_name, "state": res}).encode())
+                self._safe_send(json.dumps({"flag": flag_name, "state": res}).encode())
                 return
             self.send_response(400)
             self.end_headers()
@@ -461,7 +540,7 @@ class WebHandler(BaseHTTPRequestHandler):
             self.send_header('Access-Control-Allow-Origin', '*')
             self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
             self.end_headers()
-            self.wfile.write(json.dumps({"status": "OK", "debug_paused": bool(res)}).encode())
+            self._safe_send(json.dumps({"status": "OK", "debug_paused": bool(res)}).encode())
             return
         elif self.path.startswith('/api/debug_step'):
             res = False
@@ -474,7 +553,7 @@ class WebHandler(BaseHTTPRequestHandler):
             self.send_header('Access-Control-Allow-Origin', '*')
             self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
             self.end_headers()
-            self.wfile.write(json.dumps({"status": "OK", "step_requested": bool(res)}).encode())
+            self._safe_send(json.dumps({"status": "OK", "step_requested": bool(res)}).encode())
             return
         elif self.path.startswith('/api/session/export'):
             session_id = None
@@ -482,12 +561,12 @@ class WebHandler(BaseHTTPRequestHandler):
                 for p in self.path.split('?')[1].split('&'):
                     if p.startswith('session_id='):
                         session_id = p.split('=')[1].strip()
-
+    
             recorder = getattr(inst, 'recorder', None)
             zip_path = None
             if recorder and hasattr(recorder, 'create_session_zip'):
                 zip_path = recorder.create_session_zip(session_id=session_id)
-
+    
             if zip_path and os.path.exists(zip_path):
                 filename = os.path.basename(zip_path)
                 file_size = os.path.getsize(zip_path)
@@ -503,7 +582,7 @@ class WebHandler(BaseHTTPRequestHandler):
                             chunk = f.read(65536)
                             if not chunk:
                                 break
-                            self.wfile.write(chunk)
+                            self._safe_send(chunk)
                 except Exception as ex:
                     print(f"⚠️ [WEB EXPORT ZIP ERR]: {ex}")
                 return
@@ -512,7 +591,7 @@ class WebHandler(BaseHTTPRequestHandler):
                 self.send_header('Content-Type', 'application/json')
                 self.send_header('Access-Control-Allow-Origin', '*')
                 self.end_headers()
-                self.wfile.write(json.dumps({"error": "Chưa có session frame nào được ghi nhận hoặc không thể nén file ZIP."}).encode())
+                self._safe_send(json.dumps({"error": "Chưa có session frame nào được ghi nhận hoặc không thể nén file ZIP."}).encode())
                 return
         elif self.path.startswith('/api/session/stats'):
             recorder = getattr(inst, 'recorder', None)
@@ -521,7 +600,16 @@ class WebHandler(BaseHTTPRequestHandler):
             self.send_header('Content-Type', 'application/json')
             self.send_header('Access-Control-Allow-Origin', '*')
             self.end_headers()
-            self.wfile.write(json.dumps(stats).encode())
+            self._safe_send(json.dumps(stats).encode())
+            return
+        elif self.path.startswith('/api/session/reset'):
+            recorder = getattr(inst, 'recorder', None)
+            new_id = recorder.reset_session() if (recorder and hasattr(recorder, 'reset_session')) else None
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self._safe_send(json.dumps({"status": "OK", "session_id": new_id}).encode())
             return
         elif self.path.startswith('/api/config/full'):
             res = {}
@@ -535,7 +623,7 @@ class WebHandler(BaseHTTPRequestHandler):
             payload = dict(res) if isinstance(res, dict) else {}
             payload["status"] = "OK"
             payload["config"] = res
-            self.wfile.write(json.dumps(payload).encode())
+            self._safe_send(json.dumps(payload).encode())
             return
         elif self.path.startswith('/api/config/select_profile'):
             pid = 1
@@ -552,7 +640,7 @@ class WebHandler(BaseHTTPRequestHandler):
             self.send_header('Access-Control-Allow-Origin', '*')
             self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
             self.end_headers()
-            self.wfile.write(json.dumps({"status": "OK" if ok else "ERROR", "message": msg, "profile_id": pid}).encode())
+            self._safe_send(json.dumps({"status": "OK" if ok else "ERROR", "message": msg, "profile_id": pid}).encode())
             return
         elif self.path.startswith('/api/config/update'):
             params = {}
@@ -575,12 +663,12 @@ class WebHandler(BaseHTTPRequestHandler):
             self.send_header('Access-Control-Allow-Origin', '*')
             self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
             self.end_headers()
-            self.wfile.write(json.dumps({"status": "OK" if ok else "ERROR", "message": msg}).encode())
+            self._safe_send(json.dumps({"status": "OK" if ok else "ERROR", "message": msg}).encode())
             return
         else:
             self.send_response(404)
             self.end_headers()
-
+    
     def do_POST(self):
         inst = self.server_instance
         if self.path.startswith('/api/drive'):
@@ -600,7 +688,7 @@ class WebHandler(BaseHTTPRequestHandler):
             self.send_header('Access-Control-Allow-Origin', '*')
             self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
             self.end_headers()
-            self.wfile.write(b'OK')
+            self._safe_send(b'OK')
         elif self.path.startswith('/api/map/save'):
             map_name = "room_map"
             if '?' in self.path:
@@ -613,7 +701,7 @@ class WebHandler(BaseHTTPRequestHandler):
             self.send_header('Content-Type', 'application/json')
             self.send_header('Access-Control-Allow-Origin', '*')
             self.end_headers()
-            self.wfile.write(json.dumps({"status": "OK" if ok else "ERROR", "result": res}).encode())
+            self._safe_send(json.dumps({"status": "OK" if ok else "ERROR", "result": res}).encode())
             return
         elif self.path.startswith('/api/map/reset'):
             ok = False
@@ -623,7 +711,7 @@ class WebHandler(BaseHTTPRequestHandler):
             self.send_header('Content-Type', 'application/json')
             self.send_header('Access-Control-Allow-Origin', '*')
             self.end_headers()
-            self.wfile.write(json.dumps({"status": "OK", "reset": bool(ok)}).encode())
+            self._safe_send(json.dumps({"status": "OK", "reset": bool(ok)}).encode())
             return
         elif self.path.startswith('/api/step_move'):
             step_type = 'linear'
@@ -663,7 +751,7 @@ class WebHandler(BaseHTTPRequestHandler):
             self.send_header('Access-Control-Allow-Origin', '*')
             self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
             self.end_headers()
-            self.wfile.write(json.dumps({"status": "OK" if ok else "ERROR", "message": msg}).encode())
+            self._safe_send(json.dumps({"status": "OK" if ok else "ERROR", "message": msg}).encode())
             return
         elif self.path.startswith('/api/step_cancel'):
             ok = False
@@ -674,7 +762,7 @@ class WebHandler(BaseHTTPRequestHandler):
             self.send_header('Access-Control-Allow-Origin', '*')
             self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
             self.end_headers()
-            self.wfile.write(json.dumps({"status": "OK", "cancelled": ok}).encode())
+            self._safe_send(json.dumps({"status": "OK", "cancelled": ok}).encode())
             return
         elif self.path.startswith('/api/trip_reset'):
             ok = False
@@ -685,7 +773,7 @@ class WebHandler(BaseHTTPRequestHandler):
             self.send_header('Access-Control-Allow-Origin', '*')
             self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
             self.end_headers()
-            self.wfile.write(json.dumps({"status": "OK", "reset": bool(ok)}).encode())
+            self._safe_send(json.dumps({"status": "OK", "reset": bool(ok)}).encode())
             return
         elif self.path.startswith('/api/auto_scan'):
             duration = None
@@ -708,7 +796,7 @@ class WebHandler(BaseHTTPRequestHandler):
             self.send_header('Content-Type', 'application/json')
             self.send_header('Access-Control-Allow-Origin', '*')
             self.end_headers()
-            self.wfile.write(json.dumps({"status": "OK", "auto_scanning": bool(active)}).encode())
+            self._safe_send(json.dumps({"status": "OK", "auto_scanning": bool(active)}).encode())
             return
         elif self.path.startswith('/api/toggle'):
             # API bật/tắt tính năng động từ Web
@@ -720,7 +808,7 @@ class WebHandler(BaseHTTPRequestHandler):
                 res = inst.toggle_feature(flag_name)
                 self.send_response(200)
                 self.end_headers()
-                self.wfile.write(json.dumps({"flag": flag_name, "state": res}).encode())
+                self._safe_send(json.dumps({"flag": flag_name, "state": res}).encode())
                 return
         elif self.path.startswith('/api/config/select_profile'):
             pid = 1
@@ -737,7 +825,7 @@ class WebHandler(BaseHTTPRequestHandler):
             self.send_header('Access-Control-Allow-Origin', '*')
             self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
             self.end_headers()
-            self.wfile.write(json.dumps({"status": "OK" if ok else "ERROR", "message": msg, "profile_id": pid}).encode())
+            self._safe_send(json.dumps({"status": "OK" if ok else "ERROR", "message": msg, "profile_id": pid}).encode())
             return
         elif self.path.startswith('/api/config/update'):
             params = {}
@@ -770,7 +858,7 @@ class WebHandler(BaseHTTPRequestHandler):
             self.send_header('Access-Control-Allow-Origin', '*')
             self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
             self.end_headers()
-            self.wfile.write(json.dumps({"status": "OK" if ok else "ERROR", "message": msg}).encode())
+            self._safe_send(json.dumps({"status": "OK" if ok else "ERROR", "message": msg}).encode())
             return
         elif self.path.startswith('/api/config/create_profile'):
             name = None
@@ -796,7 +884,7 @@ class WebHandler(BaseHTTPRequestHandler):
             self.send_header('Access-Control-Allow-Origin', '*')
             self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
             self.end_headers()
-            self.wfile.write(json.dumps({"status": "OK" if ok else "ERROR", "message": msg, "profile_id": new_pid, "config": cfg}).encode())
+            self._safe_send(json.dumps({"status": "OK" if ok else "ERROR", "message": msg, "profile_id": new_pid, "config": cfg}).encode())
             return
         elif self.path.startswith('/api/config/delete_profile'):
             pid = None
@@ -823,7 +911,7 @@ class WebHandler(BaseHTTPRequestHandler):
             self.send_header('Access-Control-Allow-Origin', '*')
             self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
             self.end_headers()
-            self.wfile.write(json.dumps({"status": "OK" if ok else "ERROR", "message": msg, "config": cfg}).encode())
+            self._safe_send(json.dumps({"status": "OK" if ok else "ERROR", "message": msg, "config": cfg}).encode())
             return
         else:
             self.send_response(400)
@@ -956,12 +1044,15 @@ class WebCockpitServer:
             return 0, self.jpeg_provider_cb()
         return 0, None
 
-    def get_state_dict(self, client_map_ver=-1):
+    def get_state_dict(self, client_map_ver=-1, include_thumbs=False):
         if self.state_provider_cb:
             try:
-                return self.state_provider_cb(client_map_ver=client_map_ver)
+                return self.state_provider_cb(client_map_ver=client_map_ver, include_thumbs=include_thumbs)
             except TypeError:
-                return self.state_provider_cb()
+                try:
+                    return self.state_provider_cb(client_map_ver=client_map_ver)
+                except TypeError:
+                    return self.state_provider_cb()
         return {}
 
     def on_drive_command(self, v, w):

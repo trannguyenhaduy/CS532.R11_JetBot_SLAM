@@ -1,235 +1,279 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Cấu hình tập trung cho toàn bộ hệ thống JetBot (Centralized Configuration)
-Chứa tất cả các cờ tính năng (Feature Flags) và thông số kỹ thuật.
+Hệ thống cấu hình tập trung (Centralized Configuration System)
+Quản lý cờ tính năng (Feature Flags), thông số động học, hình học xe và thuật toán SLAM/A*.
 """
 
-# ─── THÔNG TIN PHIÊN BẢN HỆ THỐNG (SYSTEM VERSIONING) ─────────────────────────
+# ==============================================================================
+# KHỐI 1: THÔNG TIN PHIÊN BẢN HỆ THỐNG & CHẾ ĐỘ VẬN HÀNH
+# ==============================================================================
 SYSTEM_VERSION     = "v2.4.0-SAFETY-DUAL-ROS"
-VERSION_CODENAME   = "AEGIS JETBOT (Bảo Vệ Toàn Diện & Phanh Tự Hành)"
+VERSION_CODENAME   = "AEGIS JETBOT"
 BUILD_TAG          = "v2.4.0-safety-dual-ros"
-WORKFLOW_MODE      = "1-Terminal Mode (python3 main.py - Chạy trực tiếp đơn giản, nhẹ CPU)"
+WORKFLOW_MODE      = "1-Terminal Mode"
 
-# ─── CỜ BẬT / TẮT TÍNH NĂNG (FEATURE FLAGS) ───────────────────────────────────
-ENABLE_MOTORS       = True   # Bật/Tắt module động cơ (PCA9685 I2C 0x60)
-ENABLE_BATTERY      = True   # Bật/Tắt module đọc pin INA219 (I2C 0x41)
-ENABLE_CAMERA       = True   # Bật/Tắt module Camera OAK-D S2
-ENABLE_IMU          = True   # Bật/Tắt cảm biến quán tính IMU phần cứng trên OAK-D S2
-ENABLE_CLOSED_LOOP_IMU = True # Bật vòng điều khiển quay kín theo góc IMU thời gian thực (chuẩn xác ±1°)
-ENABLE_YOLO         = False  # Tạm TẮT (sẵn sàng nạp YOLO VPU khi bật True)
-ENABLE_FOLLOWER     = False  # Bật/Tắt module tự hành bám người (MẶC ĐỊNH TẮT ĐỂ ƯU TIÊN LÁI TAY)
-ENABLE_MAPPER             = True   # Bật/Tắt module bản đồ 2D Occupancy Grid SLAM
-ENABLE_SEMANTIC_LANDMARKS = False  # Mặc định TẮT nhãn AI & Bounding Box trên bản đồ 2D (chỉ hiện tường & vị trí xe thực tế)
-ENABLE_SCAN_MATCHING      = True   # Bật thuật toán Correlative Scan Matching (CSM) tự cân bằng tọa độ vòng kín
-ENABLE_VISUAL_GYRO        = False  # TẮT con quay thị giác (tránh tự cộng dồn góc xoay ngẫu nhiên khi dừng xe)
-SCAN_MATCH_SEARCH_DIST_M  = 0.08   # Cửa sổ tìm kiếm vị trí (±8cm)
-SCAN_MATCH_SEARCH_YAW_DEG = 0.0    # KHÓA CỨNG GÓC YAW (0.0 độ): CSM chỉ nắn vị trí (X, Y), không xoay yaw xe gây trôi dạt
-SCAN_MATCH_MIN_SCORE      = 0.28   # Ngưỡng tin cậy tối thiểu để hít tọa độ (28% số tia khớp tường)
-ENABLE_WEB                = True   # Bật/Tắt trạm điều khiển Web Cockpit (Port 8080)
-ENABLE_SAFETY_BRAKE       = True   # Bật tính năng phanh khẩn cấp Virtual Bumper (< 20cm)
-ENABLE_PATH_PLANNER       = True   # Bật module tìm đường tối ưu A* (Global Path Planner)
-ROBOT_RADIUS_M            = 0.12   # Bán kính thân xe JetBot (12cm)
-COSTMAP_INFLATION_RADIUS_M = 0.20  # Bán kính vùng đệm an toàn chống cạ tường (20cm)
-ENABLE_HEADING_LOCK       = True   # Bật/Tắt khóa hướng đi thẳng chủ động bằng IMU (Active Heading Lock)
-HEADING_LOCK_KP           = 0.50   # Hệ số P khóa hướng mượt mà (0.45 - 0.55), không gây rung lắc giật cục
-MOTOR_TRIM_LEFT           = 1.000  # Cân bằng tĩnh bánh trái (Hardware Wheel Trim)
-MOTOR_TRIM_RIGHT          = 1.020  # Cân bằng tĩnh bánh phải (+2% bù ma sát hộp số)
 
-# ─── THÔNG SỐ TRẠM ĐIỀU KHIỂN WEB ─────────────────────────────────────────────
-WEB_PORT = 8080
-WEB_HOST = '0.0.0.0'
+# ==============================================================================
+# KHỐI 2: CỜ BẬT / TẮT CÁC PHÂN HỆ TÍNH NĂNG (FEATURE FLAGS)
+# ==============================================================================
+ENABLE_MOTORS               = True   # Kích hoạt module điều khiển động cơ (I2C PCA9685 0x60)
+ENABLE_BATTERY              = True   # Kích hoạt module đo điện áp pin (I2C INA219 0x41)
+ENABLE_CAMERA               = True   # Kích hoạt module Camera OAK-D S2
+ENABLE_IMU                  = True   # Kích hoạt cảm biến quán tính IMU phần cứng trên OAK-D S2
+ENABLE_CLOSED_LOOP_IMU      = False  # Điều khiển quay vòng hở theo thời gian, IMU đo góc thực tế
+ENABLE_YOLO                 = True   # Kích hoạt module nhận diện vật thể AI (VPU / Spatial Detector)
+AI_CONFIDENCE_THRESHOLD     = 0.40   # Ngưỡng độ tin cậy tối thiểu để hiển thị đối tượng nhận diện
+ENABLE_FOLLOWER             = False  # Module bám người (mặc định tắt, ưu tiên điều hướng tự hành)
+ENABLE_MAPPER               = True   # Kích hoạt module bản đồ 2D Occupancy Grid SLAM
+ENABLE_SEMANTIC_LANDMARKS   = True   # Kích hoạt gán nhãn mốc vật thể ngữ nghĩa trên bản đồ 2D
+SEMANTIC_PIN_MIN_CONFIDENCE = 0.70   # Ngưỡng tin cậy tối thiểu để ghim nhãn mốc lên bản đồ
+SEMANTIC_MIN_SEEN_CONFIRM   = 2      # Số lần nhận diện tối thiểu để xác nhận vị trí mốc
+SEMANTIC_MERGE_DIST_M       = 0.50   # Bán kính gom cụm khử trùng lặp mốc không gian (mét)
+SEMANTIC_NMS_IOU_THRESH     = 0.38   # Ngưỡng IoU Non-Maximum Suppression trên mặt phẳng ảnh
+SEMANTIC_DRAW_BBOX_MAP      = False  # Hiển thị mốc dạng điểm tọa độ và nhãn trên bản đồ 2D
+ENABLE_SCAN_MATCHING        = True   # Kích hoạt thuật toán Correlative Scan Matching (CSM) 2D
+ENABLE_VISUAL_GYRO          = False  # Con quay thị giác (Visual Gyroscope)
+SCAN_MATCH_SEARCH_DIST_M    = 0.08   # Bán kính cửa sổ tìm kiếm vị trí của CSM (mét)
+SCAN_MATCH_SEARCH_YAW_DEG   = 0.0    # Góc tìm kiếm hướng của CSM (0.0: khóa góc Yaw, chỉ nắn vị trí)
+SCAN_MATCH_MIN_SCORE        = 0.28   # Ngưỡng điểm số khớp tối thiểu để chấp nhận hiệu chỉnh vị trí
+ENABLE_WEB                  = True   # Kích hoạt trạm điều khiển Web Cockpit
+ENABLE_SAFETY_BRAKE         = True   # Kích hoạt hệ thống phanh an toàn Virtual Bumper
+ENABLE_PATH_PLANNER         = True   # Kích hoạt thuật toán lập kế hoạch đường đi toàn cục A*
+ENABLE_AUTONOMOUS_NAVIGATOR = True   # Kích hoạt bộ điều khiển bám đường tự hành
 
-# ─── THÔNG SỐ PHẦN CỨNG XE (JETBOT BASELINE) ──────────────────────────────────
-I2C_BUS = 1
-PCA9685_ADDR = 0x60
-INA219_ADDR  = 0x41
 
-# ══════════════════════════════════════════════════════════════════════════════
-# 📐 THÔNG SỐ HÌNH HỌC KHUNG XE & VỊ TRÍ GẮN CAMERA OAK-D (ROBOT & CAMERA EXTRINSICS)
-# ══════════════════════════════════════════════════════════════════════════════
-# Gốc tọa độ chuẩn của Robot (0, 0, 0) nằm tại mặt sàn, ngay chính giữa đường nối tâm 2 bánh xe chủ động.
-WHEEL_SEPARATION_M       = 0.12   # Khoảng cách giữa 2 tâm vệt bánh xe vi sai (mét, ví dụ 0.12 = 12cm)
-MAX_LINEAR_SPEED         = 0.20   # Vận tốc tiến tối đa (m/s) - Giảm xuống 0.20 m/s để phanh kịp thời
-MAX_ANGULAR_SPEED        = 1.60   # Vận tốc quay tối đa (rad/s) ~ 91.7 deg/s
+# ==============================================================================
+# KHỐI 3: THÔNG SỐ HÌNH HỌC KHUNG XE & NGOẠI TẠI CẢM BIẾN (EXTRINSICS)
+# ==============================================================================
+# Gốc tọa độ xe (0, 0, 0) đặt tại mặt sàn, chính giữa đường nối tâm hai bánh xe chủ động
+ROBOT_LENGTH_M              = 0.180  # Chiều dài thân xe (mét)
+ROBOT_WIDTH_M               = 0.130  # Khoảng cách cơ học giữa hai bánh xe (mét)
+ROBOT_FRONT_FROM_AXLE_M     = 0.080  # Khoảng cách từ trục bánh đến mũi trước xe (mét)
+ROBOT_REAR_FROM_AXLE_M      = 0.100  # Khoảng cách từ trục bánh đến đuôi sau xe (mét)
+ROBOT_RIGHT_EXTRUSION_M     = 0.000  # Độ nhô phần cứng bên sườn phải xe (mét)
+ROBOT_LEFT_EXTRUSION_M      = 0.070  # Độ nhô cáp kết nối bên sườn trái xe (mét)
+NAV_SAFE_ROTATION_RADIUS_M  = 0.168  # Bán kính an toàn quét xoay tại chỗ: sqrt(0.10^2 + 0.135^2)
+ROBOT_RADIUS_M              = 0.110  # Bán kính thân xe cơ sở cho vùng LETHAL A* (mét)
+OBSTACLE_ALERT_MARGIN_M     = 0.060  # Bán kính vùng cảnh giác cận cản (Alert Cushion) quanh vật cản (mét)
+ROBOT_CLEAR_PADDING_M       = 0.035  # Vùng đệm xóa footprint thân xe trên bản đồ SLAM (mét)
+COSTMAP_INFLATION_RADIUS_M  = 0.220  # Bán kính phình to vùng đệm an toàn trên Costmap (mét)
+ENABLE_ASYMMETRIC_CLEARANCE = True   # Bù lệch hướng sang phải để bảo vệ cáp nhô bên sườn trái
+LEFT_CABLE_SAFETY_BIAS_M    = 0.035  # Độ lệch an toàn sang phải khi qua hành lang hẹp (mét)
 
-# ── Vị trí không gian 3 chiều của Camera OAK-D so với gốc tọa độ xe (Tâm trục bánh, mặt sàn) ──
-CAMERA_OFFSET_FORWARD_M  = 0.050  # [Trục X] Độ nhô ra phía trước của thấu kính OAK-D so với trục bánh (m, VD: 0.09 = 9cm)
-CAMERA_OFFSET_LATERAL_M  = -0.015 # [Trục Y] Độ lệch ngang của camera so với trục dọc giữa xe (m, Âm: LỆCH PHẢI, Dương: LỆCH TRÁI. VD: -0.015 = lệch phải 1.5cm)
-CAMERA_HEIGHT_M          = 0.120  # [Trục Z] Chiều cao từ mặt sàn lên đến tâm thấu kính OAK-D (m, VD: 0.12 = 12cm)
-CAMERA_PITCH_DEG         = 0.0    # [Góc Pitch] Độ nghiêng thấu kính camera (độ, Dương: cúp xuống sàn, Âm: ngửa lên trời, 0.0: song song sàn)
-CAMERA_MAX_MAP_DIST_M    = 2.80   # Cự ly tin cậy tối đa cho Stereo Depth 2D (tránh nhiễu tán xạ > 2.8m)
-RAY_SAMPLE_COUNT         = 120    # Số tia quét phân bố đều trên FOV ngang của OAK-D
-MAPPING_DEFAULT_SPEED_V  = 0.15   # Tốc độ tiến chuẩn khi lập bản đồ (15% PWM) - Triệt tiêu nhòe camera
-MAPPING_DEFAULT_SPEED_W  = 0.85   # Tốc độ quay chuẩn khi lập bản đồ (~48 deg/s) - Cho điểm quét sắc nét
+# Vị trí không gian của camera OAK-D S2 so với gốc tọa độ xe
+WHEEL_SEPARATION_M          = 0.120  # Khoảng cách giữa 2 tâm vệt tiếp xúc bánh xe (mét)
+CAMERA_OFFSET_FORWARD_M     = 0.050  # Khoảng cách từ trục bánh trước đến thấu kính camera (mét)
+CAMERA_OFFSET_LATERAL_M     = -0.015 # Độ lệch ngang thấu kính (âm: lệch phải, dương: lệch trái)
+CAMERA_HEIGHT_M             = 0.120  # Chiều cao từ mặt sàn đến tâm thấu kính (mét)
+CAMERA_PITCH_DEG            = 3.5    # Góc nghiêng thấu kính so với phương ngang (độ)
+CAMERA_MAX_MAP_DIST_M       = 2.80   # Cự ly đo đạc hiệu dụng tối đa cho bản đồ 2D (mét)
+RAY_SAMPLE_COUNT            = 120    # Số tia quét lấy mẫu từ mây điểm Stereo Depth
 
-# ─── CẤU HÌNH ĐẢO KÊNH ĐỘNG CƠ (MOTOR ORIENTATION) ────────────────────────────
-SWAP_MOTORS        = False  # False: Khắc phục lỗi xoay trái/phải bị ngược (chuẩn theo lệnh phím A/D)
-INVERT_LINEAR      = False  # False: Chiều tiến/lùi đã đồng bộ theo chuẩn Adafruit_MotorHAT Waveshare
-INVERT_LEFT_MOTOR  = False  # True: Đảo cực tính bánh trái nếu bị quay lùi khi tiến
-INVERT_RIGHT_MOTOR = False  # True: Đảo cực tính bánh phải nếu bị quay lùi khi tiến
 
-# ─── THÔNG SỐ AN TOÀN (HARNESS SAFETY) ────────────────────────────────────────
-SAFETY_BRAKE_DIST_M   = 0.20  # Ngưỡng phanh Virtual Bumper: 0.20m (20cm) khóa tiến tức thì
-SAFETY_WARNING_DIST_M = 0.40  # Ngưỡng cảnh báo giảm tốc: 0.40m (40cm)
-WATCHDOG_TIMEOUT_S    = 0.50  # Thời gian tự ngắt động cơ khi mất lệnh lái
+# ==============================================================================
+# KHỐI 4: HIỆU CHUẨN ĐỘNG CƠ & CHUYỂN ĐỘNG VI SAI
+# ==============================================================================
+I2C_BUS                     = 1
+PCA9685_ADDR                = 0x60
+INA219_ADDR                 = 0x41
+SWAP_MOTORS                 = False  # Đảo kênh động cơ trái / phải
+INVERT_LINEAR               = False  # Đảo chiều tiến / lùi tổng thể
+INVERT_LEFT_MOTOR           = True   # Đảo chiều cực tính động cơ trái
+INVERT_RIGHT_MOTOR          = True   # Đảo chiều cực tính động cơ phải
 
-# ─── THÔNG SỐ TỐI ƯU HÓA TÀI NGUYÊN (CPU THROTTLING) ──────────────────────────
-DEPTH_SKIP_FRAMES = 1       # Cập nhật mây điểm 3D tức thời (đã vector hóa NumPy siêu tốc < 0.8ms)
-DEPTH_DOWNSAMPLE_STEP = 25  # Bước nhảy lấy mẫu ma trận điểm ảnh (pixel)
-IMAGE_SKIP_FRAMES = 1       # Phát stream liên tục mượt mà 20-30 FPS (không drop frame ảo)
+# Vận tốc giới hạn
+MAX_LINEAR_SPEED            = 0.20   # Vận tốc tiến tối đa (m/s)
+MAX_ANGULAR_SPEED           = 1.60   # Vận tốc quay tối đa (rad/s)
+DEFAULT_SPEED_PWM           = 0.15   # Mức xung PWM cơ bản khi chạy thẳng
+MAPPING_DEFAULT_SPEED_V     = 0.15   # Vận tốc tiến khi lập bản đồ
+MAPPING_DEFAULT_SPEED_W     = 0.85   # Vận tốc quay khi lập bản đồ
 
-# ─── THÔNG SỐ TỰ QUÉT 360 ĐỘ & ĐỊNH HƯỚNG THỊ GIÁC CAMERA (VISUAL ANCHOR 360° SCAN) ───
-AUTO_SCAN_MODE        = "visual_anchor" # Tự động đánh dấu khung hình mốc & quay chậm đều khép vòng lặp Camera
-AUTO_SCAN_SPEED_PWM   = 0.12            # Mức xung PWM quay đều êm dịu (12% PWM) chống nhòe camera
-AUTO_SCAN_CREEP_PWM   = 0.09            # Mức xung PWM bò chậm khi đến gần 360° (score >= 0.50) để hãm đà quán tính
-AUTO_SCAN_TARGET_DEG  = 360.0           # Góc mục tiêu chuẩn 1 vòng tròn 360 độ (2*pi rad)
-AUTO_SCAN_DURATION_S  = 4.8             # Thời gian dự phòng khi pin 11.1V (tự bù áp theo INA219)
+# Hệ số hiệu chuẩn quãng đường và góc quay thực tế
+STEP_FORWARD_SCALE          = 0.43   # Tỉ lệ hiệu chuẩn bước tiến
+STEP_BACKWARD_SCALE         = 0.48   # Tỉ lệ hiệu chuẩn bước lùi
+STEP_TURN_LEFT_SCALE        = 0.70   # Tỉ lệ hiệu chuẩn quay trái
+STEP_TURN_RIGHT_SCALE       = 0.70   # Tỉ lệ hiệu chuẩn quay phải
+STEP_TURN_MIN_PWM           = 0.11   # Mức xung PWM tối thiểu thắng ma sát tĩnh khi quay tại chỗ
+STEP_TURN_SPEED_RATIO       = 1.0    # Tỉ số tốc độ quay so với tốc độ tiến
+MOTOR_TRIM_LEFT             = 0.995  # Bù trừ hệ số động cơ trái khi tiến
+MOTOR_TRIM_RIGHT            = 1.015  # Bù trừ hệ số động cơ phải khi tiến
+MOTOR_TRIM_BACKWARD_LEFT    = 1.010  # Bù trừ hệ số động cơ trái khi lùi
+MOTOR_TRIM_BACKWARD_RIGHT   = 0.990  # Bù trừ hệ số động cơ phải khi lùi
+ENABLE_HEADING_LOCK         = False  # Khóa hướng chuyển động bằng bộ điều khiển phản hồi
+HEADING_LOCK_KP             = 0.50   # Hệ số khuếch đại tỉ lệ P khóa hướng
+ENABLE_SOFT_STOP            = True   # Dừng động cơ có kiểm soát gia tốc hạ dốc
+MANUAL_SOFT_DECEL           = True   # Giảm tốc mượt mà khi dừng lái thủ công
+MANUAL_DECEL_TIME_MS        = 180    # Thời gian hạ dốc gia tốc dừng (ms)
+STEP_USE_ACTIVE_BRAKE       = False  # Xung phanh ngược tích cực khi dừng bước
 
-# ─── THÔNG SỐ HIỆU CHUẨN ĐỒNG NHẤT HỆ THỐNG (UNIFIED MOTION CALIBRATION) ────────────
-# [DÙNG CHUNG DUY NHẤT 1 BỘ THAM SỐ CHO CẢ 2 CHẾ ĐỘ: BƯỚC ĐỊNH LƯỢNG & LÁI THỦ CÔNG / ODOMETRY]
-# Tỉ lệ bù trừ giữa thế giới thực tế và mô hình lý thuyết:
-#   - Nếu xe thực tế đi xa gấp 2 lần giá trị set -> đặt SCALE = 0.50
-#   - Ở chế độ Bước: Thời gian chạy tự động nhân với SCALE để dừng đúng cự ly mong muốn.
-#   - Ở chế độ Thủ công (WASD): Bộ đo hành trình & Bản đồ SLAM tự động quy đổi vận tốc thực (v / SCALE)
-#     để đo đúng 100% khoảng cách xe đã di chuyển trên sàn thực tế!
-STEP_FORWARD_SCALE       = 0.42  # Hệ số hiệu chuẩn TIẾN (dùng chung cho cả Bước cm và Lái tay WASD)
-STEP_BACKWARD_SCALE      = 0.48  # Hệ số hiệu chuẩn LÙI (bù lực cản bánh mắt trâu khi bị kéo ngược)
-STEP_TURN_LEFT_SCALE     = 0.60  # Hệ số hiệu chuẩn QUAY TRÁI (CCW - dự phòng vòng hở khi không có IMU)
-STEP_TURN_RIGHT_SCALE    = 0.60  # Hệ số hiệu chuẩn QUAY PHẢI (CW - dự phòng vòng hở khi không có IMU)
-DEFAULT_SPEED_PWM        = 0.08  # Mức ga cơ bản chạy thẳng (8% PWM - chạy êm, đầm, không trượt bánh)
 
-# ─── BÙ MÔ-MEN XOAY TẠI CHỖ (IN-PLACE TURN TORQUE COMPENSATION) ────────────────
-STEP_TURN_MIN_PWM        = 0.11  # Mức xung PWM tối thiểu khi quay tại chỗ (11% đủ thắng ma sát trượt ngang)
-STEP_TURN_SPEED_RATIO    = 1.0   # Tỉ lệ điều chỉnh tốc độ quay so với tốc độ tiến
+# ==============================================================================
+# KHỐI 5: HỆ THỐNG AN TOÀN & PHANH TỰ HÀNH (VIRTUAL BUMPER)
+# ==============================================================================
+SAFETY_BRAKE_DIST_M         = 0.140  # Khoảng cách dừng khẩn cấp Virtual Bumper (mét)
+SAFETY_WARNING_DIST_M       = 0.280  # Khoảng cách kích hoạt cảnh báo cận cản (mét)
+LANE_MARGIN_M               = 0.010  # Dung sai bề rộng vệt di chuyển thân xe (mét)
+OBSTACLE_MIN_HEIGHT_M       = 0.070  # Độ cao tối thiểu so với sàn để phân loại cản tĩnh (mét)
+SAFETY_BRAKE_MIN_HEIGHT_M   = 0.035  # Độ cao tối thiểu kích hoạt phanh khẩn cấp (mét)
+WATCHDOG_TIMEOUT_S          = 0.50   # Thời gian ngắt động cơ khi mất tín hiệu điều khiển (giây)
 
-# ─── GIẢM TỐC TỪ TỪ ĐỒNG NHẤT 100% (UNIFIED SMOOTH DECELERATION & SOFT STOP) ───
-ENABLE_SOFT_STOP         = True  # Cờ tổng thể: True = Dừng êm từ từ | False = Cắt điện tức thì
-MANUAL_SOFT_DECEL        = True  # Giữ tương thích: Cho phép hạ dốc mượt mà khi dừng xe
-MANUAL_DECEL_TIME_MS     = 180   # Thời gian hạ dốc mượt mà (180ms) dùng chung cho cả Lái tay và Bước cm/độ
-STEP_USE_ACTIVE_BRAKE    = False # False: Ngắt êm tự nhiên (không giật ngược). True: Dùng xung phanh ngược cứng
-# ─── THÔNG SỐ TỰ HÀNH BÁM ĐƯỜNG (AUTONOMOUS NAVIGATOR & PATH FOLLOWER) ───────────
-ENABLE_AUTONOMOUS_NAVIGATOR = True  # Bật bộ điều khiển bám đường tự hành A*
-NAV_LINEAR_SPEED            = 0.12  # Vận tốc tiến tự hành (m/s) ~15-20% PWM đầm xe
-NAV_TURN_SPEED              = 1.20  # Vận tốc quay tại chỗ (rad/s) ~11-13% PWM êm ái
-NAV_GOAL_TOLERANCE_M        = 0.06  # Bán kính chạm đích dừng xe (6cm)
-NAV_WAYPOINT_TOLERANCE_M    = 0.10  # Bán kính chuyển waypoint tiếp theo (10cm)
-NAV_HEADING_TOLERANCE_RAD   = 0.35  # Dung sai góc lệch (~20 độ) trước khi chuyển từ quay sang tiến
-NAV_KP_ANGULAR              = 1.6   # Hệ số P chỉnh lái bám đường
-ENABLE_FRAME_RECORDER       = False # True: Ghi frame chẩn đoán xuống thư mục logs khi di chuyển
 
-# ══════════════════════════════════════════════════════════════════════════════
-# 🗂️ HỆ THỐNG PROFILES CẤU HÌNH ĐỘNG HỌC & ĐỊA HÌNH (RUNTIME PROFILE MANAGEMENT)
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
+# KHỐI 6: CẤU HÌNH STEREO DEPTH & QUÉT BẢN ĐỒ
+# ==============================================================================
+DEPTH_SKIP_FRAMES           = 1      # Bước nhảy khung hình độ sâu
+DEPTH_DOWNSAMPLE_STEP       = 25     # Bước lấy mẫu không gian trên ma trận điểm ảnh
+IMAGE_SKIP_FRAMES           = 1      # Bước nhảy khung hình stream RGB
+AUTO_SCAN_MODE              = "visual_anchor" # Chế độ quay quét lập bản đồ
+AUTO_SCAN_SPEED_PWM         = 0.12   # Mức xung PWM quay quét quan sát
+AUTO_SCAN_CREEP_PWM         = 0.09   # Mức xung PWM hãm đà quán tính trước khi dừng
+AUTO_SCAN_TARGET_DEG        = 360.0  # Góc quét mục tiêu (độ)
+AUTO_SCAN_DURATION_S        = 4.8    # Thời gian ước lượng một chu kỳ quét (giây)
+
+
+# ==============================================================================
+# KHỐI 7: BẢN ĐỒ 2D OCCUPANCY SLAM & ĐIỀU HƯỚNG
+# ==============================================================================
+PATH_PLAN_MIN_CONFIDENCE_HITS = 3    # Số lần quét trúng tối thiểu để xác nhận tường cố định
+PATH_PLAN_UNKNOWN_SPACE_PENALTY = 4.5 # Trọng số phạt chi phí khi đi qua vùng chưa khám phá
+NAV_ALLOW_UNKNOWN_EXPLORATION   = True # Cho phép tìm đường qua vùng chưa khám phá khi cần
+PATH_PLAN_ALLOW_TIGHT_GAPS  = True   # Cho phép lập đường đi qua khe hẹp an toàn (>= 28cm)
+PATH_PLAN_BUFFER_PENALTY_SCALE = 0.015 # Hệ số tỉ lệ phạt vùng đệm an toàn mềm
+PATH_PLAN_TIGHT_LETHAL_RADIUS_M = 0.090 # Bán kính cản LETHAL khi qua khe hẹp thích nghi (mét)
+PATH_PLAN_TIGHT_INFLATION_RADIUS_M = 0.130 # Bán kính phình to khi qua khe hẹp thích nghi (mét)
+PATH_PLAN_DOUGLAS_PEUCKER_EPSILON_M = 0.060 # Ngưỡng tối giản điểm mốc trung gian (mét)
+
+
+# ==============================================================================
+# KHỐI 8: BỘ ĐIỀU KHIỂN TỰ HÀNH & CƠ CHẾ CẢNH GIÁC CẬN CẢN
+# ==============================================================================
+NAV_MODE                    = "stepped" # Chế độ tự hành từng bước (Sense-Plan-Act)
+NAV_STEP_DIST_CM            = 40.0   # Độ dài bước tiến cơ sở (cm)
+NAV_DYNAMIC_STEP_ENABLED    = True   # Tự động điều chỉnh bước tiến theo độ thoáng không gian
+NAV_STEP_MAX_DIST_CM        = 55.0   # Độ dài bước tiến tối đa khi không gian thoáng (cm)
+NAV_STEP_MIN_DIST_CM        = 25.0   # Độ dài bước tiến tối thiểu khi gần chướng ngại vật (cm)
+NAV_PROXIMITY_ALERT_DIST_M  = 0.260  # Cự ly kích hoạt trạng thái Cảnh Giác Cận Cản (mét)
+NAV_PROXIMITY_STEP_MAX_CM   = 15.0   # Độ dài bước tối đa khi trong vùng cảnh giác (cm)
+NAV_PROXIMITY_LOOK_AGAIN    = True   # Kích hoạt cơ chế nhìn lại cản trước khi bước qua
+NAV_PROXIMITY_PEEK_DEG      = 22.0   # Góc liếc nhìn lại mép cản bên sườn (độ)
+NAV_PROXIMITY_SAFE_CLEARANCE_M = 0.180 # Cự ly tối thiểu sau khi nhìn lại để cho phép bước (mét)
+NAV_COSTMAP_AWARE_PEEK      = True   # Bỏ qua liếc góc cua nếu vùng rẽ đã được xác thực thoáng
+VIRTUAL_OBSTACLE_RADIUS_M   = 0.090  # Bán kính cản ảo tạm thời khi gặp tắc đường (mét)
+VIRTUAL_OBSTACLE_DURATION_S = 14.0   # Thời gian duy trì cản ảo tạm thời (giây)
+NAV_STUCK_ZONE_RADIUS_M     = 0.250  # Bán kính gom cụm nhận diện vùng kẹt lặp lại (mét)
+NAV_STUCK_ZONE_ESCALATE_COUNT = 2    # Số lần kẹt lặp lại để kích hoạt phục hồi nâng cấp
+NAV_STUCK_ZONE_ESCALATE_DURATION_S = 60.0 # Thời gian phong tỏa vùng kẹt lặp lại (giây)
+NAV_MAX_REPLAN_FAIL_STREAK  = 5      # Số lần thử tìm đường lại tối đa trước khi báo kẹt
+NAV_INIT_SCAN_ROUNDS        = 0      # Số vòng quay quan sát khởi tạo khi bắt đầu hành trình
+NAV_OBSERVE_SECTOR_DEG      = 45.0   # Góc quay mỗi nấc quan sát (độ)
+NAV_OBSERVE_STEPS           = 8      # Số nấc quan sát hoàn thành một chu kỳ 360 độ
+NAV_OBSERVE_MODE            = "event_driven" # Chiến thuật quan sát theo sự kiện
+NAV_KNOWN_FREE_MAX_STEP_CM  = 80.0   # Bước tiến trên hành lang đã xác nhận an toàn (cm)
+NAV_MAX_CROSS_TRACK_ERR_M   = 0.280  # Ngưỡng lệch hành lang tối đa trước khi replan (mét)
+NAV_PEEK_ANGLE_DEG          = 40.0   # Góc liếc quan sát góc cua thông thường (độ)
+NAV_PEEK_TRIGGER_ANGLE_DEG  = 30.0   # Ngưỡng góc rẽ kích hoạt liếc quan sát (độ)
+NAV_PEEK_TRIGGER_DIST_M     = 0.650  # Cự ly cản trước mặt kích hoạt liếc quan sát (mét)
+NAV_SWEEP_ANGLE_DEG         = 55.0   # Góc quét bán nguyệt mở rộng tầm nhìn (độ)
+NAV_SWEEP_INTERVAL_M        = 1.50   # Quãng đường chạy thẳng tích lũy kích hoạt quét bán nguyệt (mét)
+NAV_SWEEP_INTERVAL_STEPS    = 5      # Số bước chạy thẳng tích lũy kích hoạt quét bán nguyệt
+NAV_FINAL_SPRINT_DIST_M     = 1.20   # Cự ly bắt đầu giai đoạn tiếp cận đích cuối (mét)
+NAV_LINEAR_SPEED            = 0.120  # Vận tốc tiến khi tự hành (m/s)
+NAV_TURN_SPEED              = 1.200  # Vận tốc quay tại chỗ khi tự hành (rad/s)
+NAV_GOAL_TOLERANCE_M        = 0.060  # Sai số vị trí chấp nhận đến đích (mét)
+NAV_WAYPOINT_TOLERANCE_M    = 0.100  # Bán kính chuyển tiếp điểm mốc waypoint (mét)
+NAV_HEADING_TOLERANCE_RAD   = 0.350  # Dung sai góc hướng trước khi chuyển sang tiến (rad)
+NAV_KP_ANGULAR              = 1.600  # Hệ số khuếch đại tỉ lệ P bám hướng
+
+
+# ==============================================================================
+# KHỐI 9: CẤU HÌNH TRẠM ĐIỀU KHIỂN WEB & TRUYỀN STREAM
+# ==============================================================================
+WEB_PORT                    = 8080
+WEB_HOST                    = '0.0.0.0'
+ENABLE_FRAME_RECORDER       = False  # Ghi khung hình và dữ liệu xuống đĩa lưu trữ
+STREAM_MAX_FPS              = 30     # Tần số khung hình phát luồng video (FPS)
+STREAM_JPEG_QUALITY         = 55     # Chất lượng nén ảnh JPEG (1-100)
+STREAM_WIDTH                = 640    # Chiều rộng khung hình truyền phát (pixel)
+STREAM_HEIGHT               = 480    # Chiều cao khung hình truyền phát (pixel)
+
+
+# ==============================================================================
+# KHỐI 10: HỆ THỐNG HỒ SƠ CẤU HÌNH ĐỘNG HỌC (RUNTIME CONFIG PROFILES)
+# ==============================================================================
 ACTIVE_CONFIG_PROFILE = 1
 PROFILES = {}
 
 def load_profiles_from_disk():
     global ACTIVE_CONFIG_PROFILE, PROFILES
-    import json, os
-    cur_dir = os.path.dirname(os.path.abspath(__file__))
-    prof_file = os.path.join(cur_dir, "config_profiles.json")
-    if os.path.exists(prof_file):
-        try:
-            with open(prof_file, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            ACTIVE_CONFIG_PROFILE = int(data.get("active_profile", 1))
-            PROFILES = {int(k): v for k, v in data.get("profiles", {}).items()}
-        except Exception:
-            pass
-
-    if not PROFILES:
-        PROFILES = {}
-
-    # Profile 1 luôn là Chuẩn Mặc Định kế thừa 100% từ các giá trị khai báo trực tiếp trong config.py:
-    # (Đảm bảo người dùng sửa trực tiếp trong config.py là hệ thống nhận ngay lập tức, không bao giờ bị ghi đè)
-    PROFILES[1] = {
-        "id": 1,
-        "name": "Config 1: Chuẩn Mặc Định (Giáp Master)",
-        "description": "Hiệu chuẩn chuẩn xác: Bù ga L:1.000 R:1.020, Bước Tiến 0.42 / Lùi 0.48, Khóa hướng Kp=0.50, Ga 8%",
-        "motor_trim_left": MOTOR_TRIM_LEFT,
-        "motor_trim_right": MOTOR_TRIM_RIGHT,
-        "step_forward_scale": STEP_FORWARD_SCALE,
-        "step_backward_scale": STEP_BACKWARD_SCALE,
-        "step_turn_left_scale": STEP_TURN_LEFT_SCALE,
-        "step_turn_right_scale": STEP_TURN_RIGHT_SCALE,
-        "default_speed_pwm": DEFAULT_SPEED_PWM,
-        "step_turn_min_pwm": STEP_TURN_MIN_PWM,
-        "manual_decel_time_ms": MANUAL_DECEL_TIME_MS,
-        "step_turn_start_latency_s": 0.08,
-        "heading_lock_kp": HEADING_LOCK_KP,
-        "safety_brake_dist_m": SAFETY_BRAKE_DIST_M,
-        "safety_warn_dist_m": SAFETY_WARNING_DIST_M,
-        "camera_offset_forward_m": CAMERA_OFFSET_FORWARD_M,
-        "camera_offset_lateral_m": CAMERA_OFFSET_LATERAL_M,
-        "camera_height_m": CAMERA_HEIGHT_M,
-        "camera_pitch_deg": CAMERA_PITCH_DEG,
-        "wheel_separation_m": WHEEL_SEPARATION_M,
-        "created_at": "config.py (Gốc chuẩn)"
+    ACTIVE_CONFIG_PROFILE = 1
+    PROFILES = {
+        1: {
+            "id": 1,
+            "name": "Config 1: Mac Dinh (config.py)",
+            "description": "Thong so tieu chuan cho khung xe JetBot va camera OAK-D S2",
+            "motor_trim_left": MOTOR_TRIM_LEFT,
+            "motor_trim_right": MOTOR_TRIM_RIGHT,
+            "motor_trim_backward_left": MOTOR_TRIM_BACKWARD_LEFT,
+            "motor_trim_backward_right": MOTOR_TRIM_BACKWARD_RIGHT,
+            "step_forward_scale": STEP_FORWARD_SCALE,
+            "step_backward_scale": STEP_BACKWARD_SCALE,
+            "step_turn_left_scale": STEP_TURN_LEFT_SCALE,
+            "step_turn_right_scale": STEP_TURN_RIGHT_SCALE,
+            "default_speed_pwm": DEFAULT_SPEED_PWM,
+            "step_turn_min_pwm": STEP_TURN_MIN_PWM,
+            "manual_decel_time_ms": MANUAL_DECEL_TIME_MS,
+            "step_turn_start_latency_s": 0.08,
+            "heading_lock_kp": HEADING_LOCK_KP,
+            "safety_brake_dist_m": SAFETY_BRAKE_DIST_M,
+            "safety_warn_dist_m": SAFETY_WARNING_DIST_M,
+            "camera_offset_forward_m": CAMERA_OFFSET_FORWARD_M,
+            "camera_offset_lateral_m": CAMERA_OFFSET_LATERAL_M,
+            "camera_height_m": CAMERA_HEIGHT_M,
+            "camera_pitch_deg": CAMERA_PITCH_DEG,
+            "wheel_separation_m": WHEEL_SEPARATION_M,
+            "created_at": "config.py"
+        }
     }
 
-    # Nạp trim động cơ từ robot_dynamics.json nếu có (chỉ kế thừa trim cân bằng 2 bánh, không đè lên tham số config.py)
-    dyn_file = os.path.join(cur_dir, "robot_dynamics.json")
-    if os.path.exists(dyn_file):
-        try:
-            with open(dyn_file, "r", encoding="utf-8") as f:
-                dyn = json.load(f)
-            if 1 in PROFILES:
-                if "motor_trim_left" in dyn: PROFILES[1]["motor_trim_left"] = float(dyn["motor_trim_left"])
-                if "motor_trim_right" in dyn: PROFILES[1]["motor_trim_right"] = float(dyn["motor_trim_right"])
-        except Exception:
-            pass
-
 def apply_profile(profile_id: int):
+    """Áp dụng hồ sơ cấu hình vào bộ nhớ runtime."""
     global ACTIVE_CONFIG_PROFILE
-    global MOTOR_TRIM_LEFT, MOTOR_TRIM_RIGHT
-    global STEP_FORWARD_SCALE, STEP_BACKWARD_SCALE
-    global STEP_TURN_LEFT_SCALE, STEP_TURN_RIGHT_SCALE
-    global DEFAULT_SPEED_PWM, STEP_TURN_MIN_PWM
-    global MANUAL_DECEL_TIME_MS, STEP_TURN_START_LATENCY_S
-    global HEADING_LOCK_KP, SAFETY_BRAKE_DIST_M, SAFETY_WARN_DIST_M
-    global CAMERA_OFFSET_FORWARD_M, CAMERA_OFFSET_LATERAL_M, CAMERA_HEIGHT_M, CAMERA_PITCH_DEG, WHEEL_SEPARATION_M
-
+    if not PROFILES:
+        load_profiles_from_disk()
     pid = int(profile_id)
     if pid not in PROFILES:
         return False
     ACTIVE_CONFIG_PROFILE = pid
-    cur = PROFILES[pid]
-    MOTOR_TRIM_LEFT           = cur.get("motor_trim_left", 1.000)
-    MOTOR_TRIM_RIGHT          = cur.get("motor_trim_right", 1.020)
-    STEP_FORWARD_SCALE        = cur.get("step_forward_scale", 0.42)
-    STEP_BACKWARD_SCALE       = cur.get("step_backward_scale", 0.48)
-    STEP_TURN_LEFT_SCALE      = cur.get("step_turn_left_scale", 0.60)
-    STEP_TURN_RIGHT_SCALE     = cur.get("step_turn_right_scale", 0.60)
-    DEFAULT_SPEED_PWM         = cur.get("default_speed_pwm", 0.08)
-    STEP_TURN_MIN_PWM         = cur.get("step_turn_min_pwm", 0.11)
-    MANUAL_DECEL_TIME_MS      = cur.get("manual_decel_time_ms", 180)
-    STEP_TURN_START_LATENCY_S = cur.get("step_turn_start_latency_s", 0.08)
-    HEADING_LOCK_KP           = cur.get("heading_lock_kp", 0.50)
-    SAFETY_BRAKE_DIST_M       = cur.get("safety_brake_dist_m", 0.20)
-    SAFETY_WARN_DIST_M        = cur.get("safety_warn_dist_m", 0.45)
-    CAMERA_OFFSET_FORWARD_M   = cur.get("camera_offset_forward_m", 0.090)
-    CAMERA_OFFSET_LATERAL_M   = cur.get("camera_offset_lateral_m", -0.015)
-    CAMERA_HEIGHT_M           = cur.get("camera_height_m", 0.120)
-    CAMERA_PITCH_DEG          = cur.get("camera_pitch_deg", 0.0)
-    WHEEL_SEPARATION_M        = cur.get("wheel_separation_m", 0.120)
+    p = PROFILES[pid]
+    global MOTOR_TRIM_LEFT, MOTOR_TRIM_RIGHT, MOTOR_TRIM_BACKWARD_LEFT, MOTOR_TRIM_BACKWARD_RIGHT
+    global STEP_FORWARD_SCALE, STEP_BACKWARD_SCALE, STEP_TURN_LEFT_SCALE, STEP_TURN_RIGHT_SCALE
+    global DEFAULT_SPEED_PWM, STEP_TURN_MIN_PWM, MANUAL_DECEL_TIME_MS, HEADING_LOCK_KP
+    global SAFETY_BRAKE_DIST_M, SAFETY_WARNING_DIST_M
+    global CAMERA_OFFSET_FORWARD_M, CAMERA_OFFSET_LATERAL_M, CAMERA_HEIGHT_M, CAMERA_PITCH_DEG, WHEEL_SEPARATION_M
+    MOTOR_TRIM_LEFT = float(p.get("motor_trim_left", MOTOR_TRIM_LEFT))
+    MOTOR_TRIM_RIGHT = float(p.get("motor_trim_right", MOTOR_TRIM_RIGHT))
+    MOTOR_TRIM_BACKWARD_LEFT = float(p.get("motor_trim_backward_left", MOTOR_TRIM_BACKWARD_LEFT))
+    MOTOR_TRIM_BACKWARD_RIGHT = float(p.get("motor_trim_backward_right", MOTOR_TRIM_BACKWARD_RIGHT))
+    STEP_FORWARD_SCALE = float(p.get("step_forward_scale", STEP_FORWARD_SCALE))
+    STEP_BACKWARD_SCALE = float(p.get("step_backward_scale", STEP_BACKWARD_SCALE))
+    STEP_TURN_LEFT_SCALE = float(p.get("step_turn_left_scale", STEP_TURN_LEFT_SCALE))
+    STEP_TURN_RIGHT_SCALE = float(p.get("step_turn_right_scale", STEP_TURN_RIGHT_SCALE))
+    DEFAULT_SPEED_PWM = float(p.get("default_speed_pwm", DEFAULT_SPEED_PWM))
+    STEP_TURN_MIN_PWM = float(p.get("step_turn_min_pwm", STEP_TURN_MIN_PWM))
+    MANUAL_DECEL_TIME_MS = int(p.get("manual_decel_time_ms", MANUAL_DECEL_TIME_MS))
+    HEADING_LOCK_KP = float(p.get("heading_lock_kp", HEADING_LOCK_KP))
+    SAFETY_BRAKE_DIST_M = float(p.get("safety_brake_dist_m", SAFETY_BRAKE_DIST_M))
+    SAFETY_WARNING_DIST_M = float(p.get("safety_warn_dist_m", SAFETY_WARNING_DIST_M))
+    CAMERA_OFFSET_FORWARD_M = float(p.get("camera_offset_forward_m", CAMERA_OFFSET_FORWARD_M))
+    CAMERA_OFFSET_LATERAL_M = float(p.get("camera_offset_lateral_m", CAMERA_OFFSET_LATERAL_M))
+    CAMERA_HEIGHT_M = float(p.get("camera_height_m", CAMERA_HEIGHT_M))
+    CAMERA_PITCH_DEG = float(p.get("camera_pitch_deg", CAMERA_PITCH_DEG))
+    WHEEL_SEPARATION_M = float(p.get("wheel_separation_m", WHEEL_SEPARATION_M))
     return True
 
 def save_profiles_to_disk():
-    import json, os
-    cur_dir = os.path.dirname(os.path.abspath(__file__))
-    prof_file = os.path.join(cur_dir, "config_profiles.json")
-    try:
-        data = {
-            "active_profile": ACTIVE_CONFIG_PROFILE,
-            "profiles": {str(k): v for k, v in PROFILES.items()}
-        }
-        with open(prof_file, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
-        return True
-    except Exception:
-        return False
+    return True
 
-# Nạp profiles và áp dụng ngay khi khởi tạo
 load_profiles_from_disk()
 apply_profile(ACTIVE_CONFIG_PROFILE)
