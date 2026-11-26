@@ -12,7 +12,7 @@
 
 ## 📑 MỤC LỤC CHI TIẾT
 
-1. [TỔNG QUAN HỆ THỐNG & ĐẶT VẤN ĐỀ NGHIÊN CỨU](#1-tổng-quan-hệ-thống--đặt-vấn-đề-nghiên-cứu)
+1. [TỔNG QUAN HỆ THỐNG & ĐẶT VẤN ĐỀ NGHIÊN CỨU]
    - 1.1. Bối cảnh & 6 Thách thức đặc thù của khung gầm vi sai mini JetBot
    - 1.2. Mục tiêu nghiên cứu & Các giải pháp kỹ thuật cốt lõi
    - 1.3. Mô hình triển khai: 1-Terminal Mode (`python3 main.py`) vs Dual ROS Hybrid Mode
